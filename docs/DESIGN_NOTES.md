@@ -1108,22 +1108,25 @@ The reasoning graph is self-verifying.
 No Rust crate. Pure Python + JSON + .st + git.
 
 ```
-v5/self/
-  loop.py              ← turn loop (persistent 5.4, pre/post, governor)
-  governor.py          ← deterministic linear algebra (stack, convergence, OMO)
-  step.py              ← step data structures, hash computation, chain tracking
+cors/
+  step.py              ← step primitive, gap, chain, trajectory
+  compile.py           ← compiler: ledger stack, governor, admission, OMO, chains
+  loop.py              ← turn loop: persistent 5.4, pre/post, synthesis
 
   skills/
     loader.py          ← loads .st files, hashes, registers
-    *.st               ← predefined step packages
+    *.st               ← predefined step packages (skills, identities, commitments)
 
   tools/
-    hash_resolve.py    ← resolve blob/tree/commit hashes from git
+    hash_resolve.py    ← resolve blob/tree/commit/step hashes
+    st_builder.py      ← build .st files from semantic intent
     code_exec.py       ← shell execution
-    web_search.py      ← web research
-    ...
+    ...                ← observation + mutation tools
 
-  trajectory.json      ← reasoning trajectory (step hashes)
+  docs/                ← module specs, architecture, principles
+  tests/               ← principle validation tests
+
+  trajectory.json      ← reasoning trajectory (step hashes, append-only)
   chains/              ← extracted long chains
   .git/                ← content storage (blobs, trees, commits)
 ```
@@ -1132,8 +1135,157 @@ v5/self/
 |--------------------------|-----|
 | delta.rs | step.py |
 | quadrant.rs | gone (internal/external collapsed) |
-| ledger.rs | governor.py (stack-based) |
-| compile.rs | governor.py (pop + route) |
-| render.rs | loop.py (~10 lines: render recent chain hashes) |
+| ledger.rs | compile.py (stack-based ledger) |
+| compile.rs | compile.py (pop + route + governor) |
+| render.rs | loop.py (render recent chain hashes) |
 | memory.rs | trajectory.json + git |
 | kernel.rs | loop.py |
+
+---
+
+## Vocab as Deterministic Bridge
+
+The LLM maps gaps to vocab. The kernel maps vocab to tools or `.st` files. Clean separation:
+
+```
+LLM:    "this gap is research_needed"  (semantic judgment)
+Kernel: research_needed → research.st  (deterministic lookup)
+```
+
+Vocab routing table:
+
+```
+Observe vocab → tools:
+  scan_needed         → tools/scan_tree.py
+  pattern_needed      → tools/file_grep.py
+  hash_resolve_needed → tools/hash_resolve.py
+  research_needed     → skills/research.st (expands into child gaps)
+  email_needed        → tools/email_check.py
+  url_needed          → tools/url_fetch.py
+
+Mutate vocab → tools:
+  script_edit_needed  → tools/file_edit.py
+  content_needed      → tools/file_write.py
+  command_needed      → tools/code_exec.py
+  message_needed      → tools/email_send.py
+  git_revert_needed   → tools/git_ops.py
+```
+
+Some vocab maps to a single tool (one step). Some maps to a `.st` file (expands into child gaps on the ledger). The compiler doesn't distinguish — it pops the stack and routes.
+
+### .st file resolution as ledger intervention
+
+When the compiler pops a gap whose vocab maps to a `.st` file:
+
+```
+Compiler pops: { vocab: "research_needed" }
+  → kernel: research_needed maps to research.st
+  → research.st resolves → its steps inject as child gaps on the ledger
+  → compiler now addresses those child gaps depth-first
+  → each child gap has its own vocab, post_diff, and hash refs
+```
+
+The `.st` file replaces direct execution with a structured sequence.
+
+---
+
+## No Micro Loop
+
+The chain IS the micro loop. The chain length self-adjusts to model intelligence. Same compiler, same stack, same OMO — different depths depending on how efficiently the model resolves gaps.
+
+---
+
+## post_diff as Universal Configuration
+
+Every gap on the ledger carries `post_diff`. The compiler reads it when popping:
+
+```
+pop → post_diff: true  → execute → LLM reasons → may branch
+pop → post_diff: false → execute → move on → no reasoning
+```
+
+A single turn mixes strict and exploratory steps on the same ledger. Configurable per `.st` step, per injected gap, per origin gap. The strictness dial — from pure workflow to full autonomy.
+
+---
+
+## .st as Manifestation
+
+A `.st` file manifests a specialized agent from the base model for the duration of a chain. It can carry an `inject` field for scoped prompt control:
+
+```json
+{
+  "action": "enter_research_mode",
+  "inject": {
+    "system": "Prioritize source verification. Score every claim against evidence.",
+    "temperature": 0.3
+  },
+  "post_diff": false
+}
+```
+
+The kernel reads `inject` and modifies the LLM's context. When the chain closes, the injection expires. Manifestations can nest — a research agent can invoke a code reviewer within its chain, which dissolves when done.
+
+Manifestation types:
+
+| .st type | Trigger | Example |
+|----------|---------|---------|
+| Skill | on_vocab:X | research.st — deep research pipeline |
+| Identity | on_contact:X | admin.st — user preferences + context |
+| Monitor | every_turn / scheduled | monitor_api.st — health checks |
+| Commitment | manual / on_mention | london_councils.st — tracked task |
+
+All the same format. All hash-addressable. All executable by the same compiler.
+
+---
+
+## Identity as .st
+
+Users are `.st` files. `admin.st` fires on contact match, injecting identity as deterministic steps. The user's hash appears on every step they trigger. Identity evolves — agent updates the `.st` file, git commits, hash changes, future turns use the latest version.
+
+---
+
+## HEAD Always Injected
+
+Every turn: `git rev-parse HEAD` → commit tree injected as hash data. Top-level trees and blobs visible. Deeper content resolved on demand. One hash = entire workspace state. No pre-commit ceremony. Commits only on mutation.
+
+```
+[commit_abc123] HEAD
+  [tree_aaa] skills/
+  [tree_bbb] tools/
+  [blob_f1a] config.json
+  [blob_c4d] main.py
+```
+
+---
+
+## The Complete Architecture
+
+```
+cors/
+  step.py              ← step primitive, gap, chain, trajectory, hash computation
+  compile.py           ← compiler: ledger stack, admission/placement, OMO, chain lifecycle
+  loop.py              ← turn loop: persistent 5.4, pre/post iteration, synthesis
+
+  skills/
+    loader.py          ← loads .st files, hashes, registers
+    admin.st           ← identity: Kenny (evolves)
+    research.st        ← skill: research pipeline
+    config_edit.st     ← skill: config editing
+    *.st               ← commitments, monitors, domain skills
+
+  tools/
+    hash_resolve.py    ← resolve blob/tree/commit/step hashes
+    st_builder.py      ← build .st files from semantic intent
+    code_exec.py       ← shell execution
+    file_edit.py       ← file editing
+    web_search.py      ← web research
+    ...
+
+  trajectory.json      ← reasoning trajectory (step hashes, append-only)
+  chains/              ← extracted long chains (.json)
+  .git/                ← content storage (blobs, trees, commits)
+  docs/                ← module specs, architecture, principles, design notes
+  tests/               ← principle validation (95 tests, all structural, no LLM)
+```
+
+Three Python files. One skill format. One trajectory file. Git as the database. Everything else is tools and skills — hot-swappable, hash-addressed, structurally composable.

@@ -33,6 +33,7 @@ class Skill:
     desc: str
     steps: list[SkillStep]
     source: str                 # file path for debugging
+    display_name: str = ""      # from identity.name or skill name — used in tree render
 
     def step_count(self) -> int:
         return len(self.steps)
@@ -57,6 +58,15 @@ class SkillRegistry:
 
     def resolve(self, hash: str) -> Skill | None:
         return self.by_hash.get(hash)
+
+    def resolve_name(self, hash: str) -> str | None:
+        """Hash → display name, or None if not a known skill.
+
+        Returns the identity-derived display name (e.g. 'kenny')
+        so the tree renders as kenny:72b1d5ffc964 instead of admin:72b1d5ffc964.
+        """
+        skill = self.by_hash.get(hash)
+        return skill.display_name if skill else None
 
     def resolve_by_name(self, name: str) -> Skill | None:
         return self.by_name.get(name)
@@ -103,12 +113,17 @@ def load_skill(path: str) -> Skill | None:
 
         skill_hash = compute_skill_hash(raw)
 
+        # Extract display name: identity.name → lowercase, else skill name
+        identity = data.get("identity", {})
+        display = identity.get("name", data["name"]).lower() if identity else data["name"]
+
         return Skill(
             hash=skill_hash,
             name=data["name"],
             desc=data.get("desc", ""),
             steps=steps,
             source=path,
+            display_name=display,
         )
     except Exception as e:
         print(f"  [skills] failed to load {path}: {e}")

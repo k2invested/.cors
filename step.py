@@ -436,36 +436,139 @@ class Trajectory:
 
     # ── Render ──
 
-    def render_recent(self, n: int = 5) -> str:
-        """Render recent reasoning chains for LLM context injection.
+    def _tag_ref(self, ref: str, layer: str, registry=None) -> str:
+        """Tag a hash reference with its type prefix.
 
-        Shows chains as units, not individual atoms. Each chain
-        displays its origin gap, step count, and semantic summary.
+        Resolves named entities from the skill registry:
+          72b1d5ffc964 → admin:72b1d5ffc964
+          a72c3c4dec0c → research:a72c3c4dec0c
+
+        Falls back to layer prefix:
+          step refs  → step:<hash>
+          content refs → <hash> (bare — could be blob, tree, or commit)
+        """
+        # Check skill registry first — named hashes take priority
+        if registry is not None:
+            name = registry.resolve_name(ref)
+            if name:
+                return f"{name}:{ref}"
+        # Check if it's a known step on the trajectory
+        if layer == "step":
+            return f"step:{ref}"
+        # Bare content hash (blob/tree/commit — resolved on demand)
+        return ref
+
+    def _render_refs(self, step_refs: list[str], content_refs: list[str], registry=None) -> str:
+        """Render a refs list with named tags."""
+        refs = []
+        for r in step_refs:
+            refs.append(self._tag_ref(r, "step", registry))
+        for r in content_refs:
+            refs.append(self._tag_ref(r, "content", registry))
+        return f" → refs:[{', '.join(refs)}]" if refs else ""
+
+    def render_recent(self, n: int = 5, registry=None) -> str:
+        """Render trajectory as a traversable hash tree.
+
+        The LLM sees the same shape everywhere — git trees, trajectory,
+        resolved content. Every node is a hash. Unresolved hashes are
+        leaves the LLM can request resolution for.
+
+        Known skill hashes render with their name prefix:
+          refs:[admin:72b1d5ffc964, commit:aa8b921]
+
+        When a skill evolves, the hash changes but the name stays:
+          refs:[admin:a1b2c3d4e5f6]  ← identity updated
+
+        Structure:
+          chain:<hash>  "summary" (status)
+            origin: <gap_hash> "gap description"
+            ├─ step:<hash> "desc" → refs:[admin:<hash>, commit:<sha>]
+            │   ├─ gap:<hash> "what needs doing" [vocab] → refs:[<hash>]
+            │   └─ gap:<hash> (dormant, score:0.15)
+            ├─ step:<hash> "desc" → commit:<sha>
+            │   └─ (resolved)
+            └─ ...
         """
         chains = self.recent_chains(n)
+
         if not chains:
-            # Fall back to recent steps if no chains yet
+            # No chains yet — render steps as a flat tree
             steps = self.recent(n)
             if not steps:
                 return "(empty trajectory)"
-            lines = []
-            for s in steps:
-                gap_descs = [g.desc[:80] for g in s.gaps if not g.dormant]
-                refs = s.step_refs + s.content_refs
-                lines.append(f"[{s.hash}] {s.desc[:120]}")
-                if refs:
-                    lines.append(f"  refs: {refs}")
-                if gap_descs:
-                    lines.append(f"  gaps: {gap_descs}")
-                if s.commit:
-                    lines.append(f"  commit: {s.commit}")
-            return "\n".join(lines)
+            return self._render_steps_as_tree(steps, registry)
 
         lines = []
         for chain in chains:
-            status = "resolved" if chain.resolved else f"active ({chain.length()} steps)"
-            lines.append(f"[{chain.hash}] {chain.desc or 'in progress'} ({status})")
+            # Chain header
+            status = "resolved" if chain.resolved else f"active, {chain.length()} steps"
+            desc = chain.desc or "in progress"
+            lines.append(f"chain:{chain.hash}  \"{desc}\" ({status})")
             lines.append(f"  origin: {chain.origin_gap}")
-            if chain.steps:
-                lines.append(f"  steps: {chain.steps}")
+
+            # Render each step as a branch
+            for i, step_hash in enumerate(chain.steps):
+                step = self.steps.get(step_hash)
+                if not step:
+                    lines.append(f"  {'├' if i < len(chain.steps)-1 else '└'}─ step:{step_hash} (unresolved)")
+                    continue
+
+                is_last_step = (i == len(chain.steps) - 1)
+                branch = "└" if is_last_step else "├"
+                cont = " " if is_last_step else "│"
+
+                # Step line — desc + refs
+                ref_str = self._render_refs(step.step_refs, step.content_refs, registry)
+                commit_str = f" → commit:{step.commit}" if step.commit else ""
+                lines.append(f"  {branch}─ step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}")
+
+                # Step's gaps as sub-branches
+                active = [g for g in step.gaps if not g.dormant and not g.resolved]
+                resolved = [g for g in step.gaps if g.resolved]
+                dormant = [g for g in step.gaps if g.dormant]
+                all_gaps = active + resolved + dormant
+
+                for j, gap in enumerate(all_gaps):
+                    is_last_gap = (j == len(all_gaps) - 1)
+                    gbranch = "└" if is_last_gap else "├"
+
+                    if gap.dormant:
+                        score = gap.scores.magnitude()
+                        lines.append(f"  {cont}   {gbranch}─ gap:{gap.hash} (dormant, score:{score:.2f})")
+                    elif gap.resolved:
+                        lines.append(f"  {cont}   {gbranch}─ gap:{gap.hash} (resolved)")
+                    else:
+                        # Active gap — show desc, vocab, refs
+                        gref_str = self._render_refs(gap.step_refs, gap.content_refs, registry)
+                        vocab_str = f" [{gap.vocab}]" if gap.vocab else ""
+                        lines.append(f"  {cont}   {gbranch}─ gap:{gap.hash} \"{gap.desc}\"{vocab_str}{gref_str}")
+
+        return "\n".join(lines)
+
+    def _render_steps_as_tree(self, steps: list["Step"], registry=None) -> str:
+        """Render loose steps (no chains yet) as a flat hash tree."""
+        lines = []
+        for i, step in enumerate(steps):
+            is_last = (i == len(steps) - 1)
+            branch = "└" if is_last else "├"
+            cont = " " if is_last else "│"
+
+            ref_str = self._render_refs(step.step_refs, step.content_refs, registry)
+            commit_str = f" → commit:{step.commit}" if step.commit else ""
+            lines.append(f"{branch}─ step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}")
+
+            for j, gap in enumerate(step.gaps):
+                is_last_gap = (j == len(step.gaps) - 1)
+                gbranch = "└" if is_last_gap else "├"
+
+                if gap.dormant:
+                    lines.append(f"{cont}   {gbranch}─ gap:{gap.hash} (dormant)")
+                elif gap.resolved:
+                    lines.append(f"{cont}   {gbranch}─ gap:{gap.hash} (resolved)")
+                else:
+                    gref_str = self._render_refs(gap.step_refs, gap.content_refs, registry)
+                    vocab_str = f" [{gap.vocab}]" if gap.vocab else ""
+                    lines.append(f"{cont}   {gbranch}─ gap:{gap.hash} \"{gap.desc}\"{vocab_str}{gref_str}")
+
         return "\n".join(lines)

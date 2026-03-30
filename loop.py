@@ -1,510 +1,888 @@
-"""Minimal v5 turn loop.
+"""loop.py — The Turn Loop (Layer 2)
 
-One turn: perception → governor → action → synth.
+One turn: message → first step → identity → iteration → synthesis.
 
-Components:
-  - Persistent 5.4 (pre-diff): reads trajectory, emits comments with hash refs
-  - Mini (post-diff): scores perception, builds gaps
-  - Governor: monitors convergence, gates action
-  - 5.4 (action): composes commands when governor says ACT
-  - Kernel: resolves hashes, executes commands, auto-commits
+The loop orchestrates a persistent LLM session (5.4) that iterates
+with itself. The LLM's context accumulates:
+  - Trajectory as a traversable hash tree (initial seed)
+  - HEAD commit tree (workspace state)
+  - User message
+  - Freshly resolved hash data (per iteration)
+  - Its own reasoning (pre-diff articulations, post-diff scores)
+
+The kernel's job: resolve hashes, execute tools, auto-commit, inject
+results back into the session. The LLM's job: navigate the hash tree,
+articulate gaps, compose commands.
+
+Turn flow:
+  1. Message arrives
+  2. Load trajectory + skills + HEAD
+  3. First LLM pass → first atomic step (pre-diff + post-diff)
+  4. Identity .st fires (admin.st surfaces user profile into context)
+  5. Compiler admits gaps → ledger populated
+  6. Loop: pop gap → execute by vocab → inject result → next step
+     - Deterministic: kernel resolves directly (scan, hash_resolve)
+     - Composed: 5.4 composes command (script_edit, command, content)
+     - Observation-only: resolve + inject, no post-diff (blob step)
+  7. Mutation → auto-commit → postcondition observation
+  8. HALT → synthesize response from session
+
+Mechanisms served: §2, §3, §5, §6, §17, §18, §19
 """
 
 import json
 import os
 import subprocess
 import time
-from openai import OpenAI
-from step import Step, PreDiff, PostDiff, Gap, ChainLink, Epistemic, blob_hash
+from pathlib import Path
 
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
-# ── Storage ──────────────────────────────────────────────────────────────
-
-SANDBOX = os.path.join(os.path.dirname(__file__), "sandbox")
-TRAJECTORY_FILE = os.path.join(SANDBOX, "trajectory.json")
-
-
-def init_sandbox():
-    """Initialize sandbox as a git repo with initial commit."""
-    os.makedirs(SANDBOX, exist_ok=True)
-    if not os.path.exists(os.path.join(SANDBOX, ".git")):
-        subprocess.run(["git", "init"], cwd=SANDBOX, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "kernel@step.v5"], cwd=SANDBOX, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "StepKernel"], cwd=SANDBOX, capture_output=True)
-    # Ensure trajectory file exists
-    if not os.path.exists(TRAJECTORY_FILE):
-        with open(TRAJECTORY_FILE, "w") as f:
-            json.dump([], f)
-    # Initial commit if none exists
-    result = subprocess.run(["git", "log", "--oneline", "-1"], cwd=SANDBOX, capture_output=True, text=True)
-    if not result.stdout.strip():
-        subprocess.run(["git", "add", "-A"], cwd=SANDBOX, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "initial state", "--allow-empty"], cwd=SANDBOX, capture_output=True)
+from step import Step, Gap, Epistemic, Trajectory
+from compile import (
+    Compiler, GovernorSignal,
+    is_observe, is_mutate,
+)
+from skills.loader import load_all, SkillRegistry, Skill
 
 
-def get_workspace_tree() -> str:
-    """Get the current workspace file listing."""
+# ── Configuration ────────────────────────────────────────────────────────
+
+CORS_ROOT    = Path(__file__).parent
+SKILLS_DIR   = CORS_ROOT / "skills"
+TRAJ_FILE    = CORS_ROOT / "trajectory.json"
+CHAINS_FILE  = CORS_ROOT / "chains.json"
+MAX_ITERATIONS = 30
+TRAJECTORY_WINDOW = 10   # how many recent chains to render for LLM
+
+
+# ── Git operations ───────────────────────────────────────────────────────
+
+def git(cmd: list[str], cwd: str = None) -> str:
+    """Run a git command, return stdout."""
     result = subprocess.run(
-        ["find", ".", "-not", "-path", "./.git/*", "-not", "-name", ".git", "-type", "f"],
-        cwd=SANDBOX, capture_output=True, text=True
+        ["git"] + cmd,
+        cwd=cwd or str(CORS_ROOT),
+        capture_output=True, text=True,
     )
-    files = sorted(result.stdout.strip().split("\n")) if result.stdout.strip() else []
-    return "\n".join(f"  {f}" for f in files)
-
-
-def get_current_commit() -> str:
-    """Get the current HEAD commit hash."""
-    result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=SANDBOX, capture_output=True, text=True)
     return result.stdout.strip()
 
 
-def load_trajectory() -> list[dict]:
-    """Load trajectory from disk."""
-    with open(TRAJECTORY_FILE) as f:
-        return json.load(f)
+def git_head() -> str:
+    """Current HEAD commit hash (short)."""
+    return git(["rev-parse", "--short", "HEAD"])
 
 
-def save_step(step: Step):
-    """Append step to trajectory."""
-    trajectory = load_trajectory()
-    trajectory.append(step.to_dict())
-    with open(TRAJECTORY_FILE, "w") as f:
-        json.dump(trajectory, f, indent=2)
+def git_tree(commit: str = "HEAD") -> str:
+    """List files at a commit as a tree."""
+    return git(["ls-tree", "--name-only", "-r", commit])
 
 
-def auto_commit(message: str) -> str:
-    """Git add + commit, return SHA."""
-    subprocess.run(["git", "add", "-A"], cwd=SANDBOX, capture_output=True)
-    subprocess.run(["git", "commit", "-m", message], cwd=SANDBOX, capture_output=True)
-    return get_current_commit()
+def git_show(ref: str) -> str:
+    """Resolve a git object (blob, tree, commit) to its content."""
+    result = subprocess.run(
+        ["git", "show", ref],
+        cwd=str(CORS_ROOT),
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        return result.stdout
+    return f"(unresolvable: {ref})"
 
 
-def read_file(path: str) -> str | None:
-    """Read a file from the sandbox."""
-    full = os.path.join(SANDBOX, path)
-    if os.path.exists(full):
-        with open(full) as f:
-            return f.read()
+def git_diff(from_ref: str, to_ref: str = "HEAD") -> str:
+    """Diff between two commits."""
+    return git(["diff", from_ref, to_ref])
+
+
+def auto_commit(message: str) -> str | None:
+    """Stage all changes and commit. Returns SHA or None if nothing to commit."""
+    # Check for changes
+    status = git(["status", "--porcelain"])
+    if not status:
+        return None
+    git(["add", "-A"])
+    git(["commit", "-m", message])
+    return git_head()
+
+
+# ── Hash resolution ──────────────────────────────────────────────────────
+
+def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
+    """Resolve any hash to its content.
+
+    Resolution order:
+      1. Step hash → step data from trajectory
+      2. Gap hash → gap data from trajectory
+      3. Git object → git show (blob/tree/commit)
+    """
+    # Try trajectory step
+    step = trajectory.resolve(ref)
+    if step:
+        refs = step.step_refs + step.content_refs
+        gaps = [f"  gap:{g.hash} \"{g.desc}\"" for g in step.gaps]
+        lines = [f"step:{ref} \"{step.desc}\""]
+        if refs:
+            lines.append(f"  refs: {refs}")
+        if gaps:
+            lines.extend(gaps)
+        if step.commit:
+            lines.append(f"  commit: {step.commit}")
+        return "\n".join(lines)
+
+    # Try trajectory gap
+    gap = trajectory.resolve_gap(ref)
+    if gap:
+        lines = [f"gap:{ref} \"{gap.desc}\""]
+        if gap.content_refs:
+            lines.append(f"  content_refs: {gap.content_refs}")
+        if gap.step_refs:
+            lines.append(f"  step_refs: {gap.step_refs}")
+        lines.append(f"  scores: rel={gap.scores.relevance:.2f} conf={gap.scores.confidence:.2f} gr={gap.scores.grounded:.2f}")
+        return "\n".join(lines)
+
+    # Try git object
+    content = git_show(ref)
+    if not content.startswith("(unresolvable"):
+        return content
+
     return None
 
 
-# ── Hash store ───────────────────────────────────────────────────────────
-
-hash_store: dict[str, dict] = {}  # hash → resolved data
-
-
-def register_commit(commit_sha: str, workspace_tree: str):
-    """Register a commit hash with its workspace data."""
-    hash_store[commit_sha] = {
-        "type": "commit",
-        "workspace_tree": workspace_tree,
-        "sha": commit_sha,
-    }
-
-
-def register_step(step: Step):
-    """Register a step's blob hash."""
-    hash_store[step.hash] = {
-        "type": "step",
-        "content": step.content,
-        "pre_refs": step.pre.refs(),
-        "gaps": [{"desc": g.desc, "refs": g.refs} for g in step.post.gaps],
-        "commit": step.post.commit,
-    }
+def resolve_all_refs(step_refs: list[str], content_refs: list[str],
+                     trajectory: Trajectory) -> str:
+    """Resolve all hash references and format as injection block."""
+    blocks = []
+    for ref in step_refs:
+        data = resolve_hash(ref, trajectory)
+        if data:
+            blocks.append(f"── resolved step:{ref} ──\n{data}")
+    for ref in content_refs:
+        data = resolve_hash(ref, trajectory)
+        if data:
+            blocks.append(f"── resolved {ref} ──\n{data}")
+    return "\n\n".join(blocks) if blocks else ""
 
 
-def resolve_hash(h: str) -> dict | None:
-    """Resolve a hash to its data."""
-    return hash_store.get(h)
+# ── Tool execution ───────────────────────────────────────────────────────
+
+TOOL_MAP = {
+    # Observation tools (deterministic — kernel resolves, no LLM needed)
+    "scan_needed":          "tools/scan_tree.py",
+    "hash_resolve_needed":  None,  # handled inline by resolve_hash
+    "pattern_needed":       "tools/file_grep.py",
+    "url_needed":           "tools/url_fetch.py",
+    "email_needed":         "tools/email_check.py",
+    "research_needed":      "tools/research_web.py",
+    "registry_needed":      "tools/registry_query.py",
+    "external_context":     None,  # LLM surfaces from context
+
+    # Mutation tools (composed — 5.4 writes the command)
+    "content_needed":       "tools/file_write.py",
+    "script_edit_needed":   "tools/file_edit.py",
+    "command_needed":       "tools/code_exec.py",
+    "message_needed":       "tools/email_send.py",
+    "json_patch_needed":    "tools/json_patch.py",
+    "git_revert_needed":    "tools/git_ops.py",
+}
+
+# Deterministic vocabs — kernel resolves without LLM
+DETERMINISTIC_VOCAB = {
+    "scan_needed", "hash_resolve_needed", "registry_needed",
+}
+
+# Observation-only vocabs — resolve into context, no post-diff (blob step)
+OBSERVATION_ONLY_VOCAB = {
+    "hash_resolve_needed", "external_context",
+}
 
 
-# ── LLM calls ────────────────────────────────────────────────────────────
+def execute_tool(tool_path: str, params: dict) -> tuple[str, int]:
+    """Execute a tool script as subprocess. Returns (output, exit_code)."""
+    full_path = CORS_ROOT / tool_path
+    if not full_path.exists():
+        return f"(tool not found: {tool_path})", 1
 
-PERCEPTION_SYSTEM = """You are a perception engine. You observe the current state and reason about it.
+    result = subprocess.run(
+        ["python3", str(full_path)],
+        input=json.dumps(params),
+        capture_output=True, text=True,
+        timeout=30,
+        cwd=str(CORS_ROOT),
+    )
+    output = result.stdout or result.stderr or "(no output)"
+    return output.strip(), result.returncode
+
+
+# ── LLM session ──────────────────────────────────────────────────────────
+
+class Session:
+    """Persistent LLM session for one turn.
+
+    Accumulates messages. The LLM's own outputs stay in context.
+    New data gets injected as user messages (resolved hashes, tool output).
+    """
+
+    def __init__(self, model: str = "gpt-4.1"):
+        self.model = model
+        self.messages: list[dict] = []
+
+    def set_system(self, content: str):
+        """Set the system message (once, at turn start)."""
+        self.messages = [{"role": "system", "content": content}]
+
+    def inject(self, content: str, role: str = "user"):
+        """Inject content into the session."""
+        self.messages.append({"role": role, "content": content})
+
+    def call(self, user_content: str = None) -> str:
+        """Call the LLM. Optionally inject user content first."""
+        if user_content:
+            self.inject(user_content)
+
+        from openai import OpenAI
+        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+        response = client.chat.completions.create(
+            model=self.model,
+            messages=self.messages,
+            temperature=0,
+        )
+
+        reply = response.choices[0].message.content
+        self.messages.append({"role": "assistant", "content": reply})
+        return reply
+
+    def message_count(self) -> int:
+        return len(self.messages)
+
+
+# ── System prompts ───────────────────────────────────────────────────────
+
+PRE_DIFF_SYSTEM = """You are a hash-native reasoning agent. Everything you know, reference, and produce is a step — addressed by hash, connected by chains.
+
+## What is a step?
+
+A step is meaningful movement. It is the universal primitive. Everything is a step at different scales:
+- A person is a step (identity hash — kenny:72b1d5ffc964)
+- A workflow is a step (skill hash — research:a72c3c4dec0c)
+- An idea is a step (reasoning articulation with hash refs)
+- An event is a step (observation with commit hash)
+- A task you did is a step (mutation with commit SHA)
+- A task you plan to do is a step (gap articulation with vocab mapping)
+- A file, a config, a conversation — all steps, all hashed, all chainable
+
+Steps connect to other steps via hash references, forming chains. Chains compress into single hashes. Everything is traversable.
+
+## What is a gap?
+
+A gap is a verifiable discrepancy between the current state and its referred context — either as missing information or unmet alignment.
+
+Two types (both diagnostic, never prescriptive):
+- Observational gaps — information is missing, inconsistent, or unverified
+- Misalignment gaps — the current state does not satisfy the referred context
+
+Articulation form:
+  Reference: [what the referred context requires]
+  Current: [what the evidence actually shows]
+  → Emit as single concise statement
+
+A gap is NOT a suggestion. It is a measurement. You measure what is missing or misaligned, grounded in specific hash references.
+
+If there are no gaps — nothing is missing, nothing is misaligned — emit empty gaps. The system will auto-synthesize.
+
+## How to score gaps (the epistemic triad)
+
+Every gap carries three scores:
+
+- relevance (0-1): how much does resolving this advance the trajectory toward the shared goal?
+  1.0 = critical path. 0.0 = does not advance.
+  Evaluative form: "If this gap were resolved, would it move the system closer to the goal?"
+
+- confidence (0-1): how safe and trustworthy is this to act on?
+  1.0 = safe to trust and proceed. 0.0 = unsafe, uncertain, or unverifiable.
+  Evaluative form: "Do I have enough evidence to act on this, or am I assuming?"
+
+- grounded (0-1): is this consistent with verified constraints and observed evidence?
+  1.0 = directly observed, references specific hashes. 0.0 = assumed or fabricated.
+  Evaluative form: "Can I point to the exact hash that grounds this gap?"
+
+Low-scoring gaps (all three below 0.2) become dormant — stored on the trajectory as peripheral vision, not acted on unless they recur.
+
+## Hash references (two layers, never mixed)
+
+When you articulate a gap, ground it in hashes:
+
+- step_refs: reasoning steps you followed to reach this gap (Layer 1 — the causal chain)
+- content_refs: data you need resolved — blobs, trees, commits, skill hashes (Layer 2 — the evidence)
+
+The kernel resolves content_refs for you. If you reference a hash, the kernel will inject its content into your context. If you don't reference hashes, you are reasoning from assumption — which means grounded = 0.
+
+## Vocab mapping
+
+Each gap maps to a vocab term that tells the kernel HOW to resolve it:
+
+OBSERVE (kernel resolves, you receive data):
+  scan_needed — read workspace files
+  pattern_needed — search file contents by pattern
+  hash_resolve_needed — resolve step/gap/blob hashes from trajectory
+  research_needed — web research
+  email_needed — check email
+  url_needed — fetch URL content
+  registry_needed — query agent registry
+  external_context — surface from current context
+
+MUTATE (you compose a command, kernel executes):
+  content_needed — write a new file
+  script_edit_needed — edit an existing file
+  command_needed — execute a shell command
+  message_needed — send an email/message
+  json_patch_needed — surgical JSON edit
+  git_revert_needed — git revert/checkout
+
+BRIDGE (internal routing):
+  judgment_needed — requires judgment call
+  task_needed — delegate to background task
+  commitment_needed — track a commitment
+  profile_needed — update contact profile
+  task_status_needed — check task progress
+
+If no action is needed, emit no gaps.
+
+## Your context
 
 You receive:
-- The current workspace commit (hash + file tree)
-- The trajectory (prior steps with hashes)
+- A trajectory rendered as a traversable hash tree (chains → steps → gaps → refs)
+- The current HEAD commit hash (workspace state)
 - A user message
+- Identity (who you're talking to — loaded as a skill hash)
 
-Your job: produce a JSON response with your reasoning and which hashes you attended to.
+## Output format
 
-If you need to see a file's contents, describe what you need in your reasoning.
-If you can answer from what's visible, say so.
+Reason naturally with embedded hash references. Then emit a JSON block:
 
-Respond with JSON:
-{
-  "chain": ["<hashes you attended to from the context>"],
-  "content": "<your reasoning — what you observed, what you think, what you need>",
-  "needs_file": "<filename if you need to read a file, null otherwise>"
-}
-
-Respond ONLY with JSON."""
-
-POST_SYSTEM = """You are a gap assessment engine. You read the perception output and determine what gaps remain.
-
-You receive the perception engine's reasoning and the context it saw.
-
-Your job: produce structured gaps that need to be resolved, or empty gaps if nothing more is needed.
-
-CRITICAL DISTINCTION:
-- If the user ASKED A QUESTION and the perception has the answer → NO gaps (auto-synth)
-- If the user REQUESTED A CHANGE/ACTION and it hasn't been done yet → GAP (action needed)
-- Knowing what needs to change is NOT the same as having changed it
-- A file edit, command execution, or any mutation that hasn't happened yet = gap
-
-Each gap needs:
-- desc: what needs to happen
-- refs: which hashes justify this gap
-- confidence: 0.0-1.0 how confident you are about what action to take (high = clear action, low = unclear)
-
-Respond with JSON:
+```json
 {
   "gaps": [
-    {"desc": "...", "refs": ["..."], "confidence": 0.8}
+    {
+      "desc": "concise gap articulation",
+      "step_refs": ["step hashes you followed"],
+      "content_refs": ["content hashes you need resolved"],
+      "vocab": "closest_vocab_term",
+      "relevance": 0.0,
+      "confidence": 0.0,
+      "grounded": 0.0
+    }
   ]
 }
+```
+"""
 
-Respond ONLY with JSON."""
+COMPOSE_SYSTEM = """You are composing a command to resolve a gap.
 
-ACTION_SYSTEM = """You are a command composer. You write shell commands to resolve gaps.
+You receive the gap description, its hash references (now resolved), and the workspace context.
 
-You receive: the gap to resolve, the workspace tree, and any file contents available.
+Produce a JSON response:
 
-Write a single shell command that resolves the gap. The command runs in the sandbox directory.
-This is macOS — use POSIX-compatible commands.
-
-For file edits, use python3 one-liners:
-  python3 -c "import json; d=json.load(open('file.json')); d['key']='value'; json.dump(d,open('file.json','w'),indent=2)"
-
-Do NOT use sed -i (macOS incompatible). Use python3 for JSON edits. Use cat/echo for simple writes.
-
-Respond with JSON:
+```json
 {
-  "command": "<the shell command>",
+  "command": "<shell command or tool params>",
   "reasoning": "<why this resolves the gap>"
 }
+```
 
-Respond ONLY with JSON."""
-
-SYNTH_SYSTEM = """You are the response synthesizer. You read the full trajectory of a turn and produce a natural response to the user.
-
-Keep it concise and conversational. Do not mention internal systems, hashes, or technical details.
-Just answer the user's question or confirm what was done.
-
-Respond with plain text, not JSON."""
-
-
-def call_llm(system: str, user_content: str, model: str = "gpt-4.1-mini") -> str:
-    """Single LLM call."""
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_content},
-        ],
-        temperature=0,
-    )
-    return response.choices[0].message.content
-
-
-# ── Turn loop ─────────────────────────────────────────────────────────────
-
-def render_context(commit_sha: str, trajectory: list[dict], user_message: str, extra: str = "") -> str:
-    """Render the context for LLM injection."""
-    workspace_tree = get_workspace_tree()
-    traj_str = ""
-    if trajectory:
-        for s in trajectory[-10:]:  # last 10 steps
-            refs = s.get("pre", {}).get("chain", [])
-            ref_hashes = [r["hash"] for r in refs]
-            gaps = s.get("post", {}).get("gaps", [])
-            gap_strs = [g["desc"] for g in gaps]
-            traj_str += f"\n[{s['hash']}] attending: {ref_hashes}\n"
-            traj_str += f"  \"{s['content'][:150]}\"\n"
-            if gaps:
-                traj_str += f"  gaps: {gap_strs}\n"
-            if s.get("post", {}).get("commit"):
-                traj_str += f"  commit: {s['post']['commit']}\n"
-    else:
-        traj_str = "(empty — first turn)"
-
-    ctx = f"""## Current State
-
-Commit: {commit_sha}
-Workspace tree:
-{workspace_tree}
-
-## Trajectory
-{traj_str}
-
-## User Message
-"{user_message}"
+For file edits, prefer python3 one-liners over sed (macOS compatible).
+For JSON mutations, use the json_patch tool format.
 """
-    if extra:
-        ctx += f"\n## Additional Context\n{extra}\n"
-    return ctx
+
+SYNTH_SYSTEM = """You are the response synthesizer. Read the full session and produce a natural response to the user.
+
+Keep it concise and conversational. Do not mention internal systems, hashes, or trajectory.
+Just answer the user's question or confirm what was done."""
 
 
-def run_turn(user_message: str) -> str:
-    """Run one turn. Returns the synthesis response."""
+# ── Turn loop ────────────────────────────────────────────────────────────
 
-    init_sandbox()
-    commit_sha = get_current_commit()
-    register_commit(commit_sha, get_workspace_tree())
-    trajectory = load_trajectory()
+def run_turn(user_message: str, contact_id: str = "admin") -> str:
+    """Run one complete turn. Returns the synthesis response.
+
+    Flow:
+      1. Load trajectory + skills + HEAD
+      2. First LLM pass → first atomic step (pre-diff + post-diff)
+      3. Identity .st fires (surfaces user profile)
+      4. Compiler admits gaps → ledger populated
+      5. Iteration loop: pop → execute → inject → next step
+      6. HALT → synthesize
+    """
+
+    # ── 1. INIT ──────────────────────────────────────────────────────
+
+    trajectory = Trajectory.load(str(TRAJ_FILE))
+    Trajectory.load_chains(str(CHAINS_FILE), trajectory)
+    registry = load_all(str(SKILLS_DIR))
+    head = git_head()
+    head_tree = git_tree()
+
+    session = Session(model=os.environ.get("KERNEL_COMPOSE_MODEL", "gpt-4.1"))
+    session.set_system(PRE_DIFF_SYSTEM)
 
     print(f"\n{'='*60}")
-    print(f"TURN: \"{user_message}\"")
-    print(f"Commit: {commit_sha}")
+    print(f"TURN: \"{user_message}\" (contact: {contact_id})")
+    print(f"HEAD: {head} | Trajectory: {len(trajectory.order)} steps")
     print(f"{'='*60}")
 
-    # ── Phase 1: Perception ──────────────────────────────────────────
+    # ── 2. FIRST STEP (origin) ───────────────────────────────────────
+    #
+    # The LLM sees: trajectory tree + HEAD + user message
+    # It produces: pre-diff reasoning + gap articulations (post-diff)
+    # This is the origin step — the root of this turn's causal chain
 
-    print("\n── PERCEPTION ──")
-    context = render_context(commit_sha, trajectory, user_message)
-    perception_raw = call_llm(PERCEPTION_SYSTEM, context)
-    print(f"Raw: {perception_raw[:300]}")
+    traj_tree = trajectory.render_recent(TRAJECTORY_WINDOW, registry=registry)
 
-    try:
-        perception = json.loads(perception_raw)
-    except json.JSONDecodeError:
-        perception = {"chain": [commit_sha], "content": perception_raw, "needs_file": None}
+    first_input = f"""## Trajectory
+{traj_tree}
 
-    # Build pre-diff from perception
-    chain = [ChainLink(hash=h, parent=None) for h in perception.get("chain", [])]
-    pre = PreDiff(chain=chain)
+## HEAD: commit:{head}
+{head_tree}
 
-    # If perception needs a file, resolve it and re-perceive
-    extra = ""
-    if perception.get("needs_file"):
-        fname = perception["needs_file"]
-        file_content = read_file(fname)
-        if file_content:
-            extra = f"File: {fname}\nContents:\n{file_content}"
-            print(f"  → Resolved file: {fname}")
-            context = render_context(commit_sha, trajectory, user_message, extra)
-            perception_raw = call_llm(PERCEPTION_SYSTEM, context)
-            print(f"  → Re-perception: {perception_raw[:200]}")
-            try:
-                perception = json.loads(perception_raw)
-            except json.JSONDecodeError:
-                perception = {"chain": [commit_sha], "content": perception_raw, "needs_file": None}
-            chain = [ChainLink(hash=h, parent=None) for h in perception.get("chain", [])]
-            pre = PreDiff(chain=chain)
+## Message from {contact_id}
+"{user_message}"
+"""
 
-    # ── Phase 2: Post-diff (gap assessment) ──────────────────────────
+    print("\n── FIRST STEP (origin) ──")
+    raw = session.call(first_input)
+    print(f"  LLM: {raw[:200]}...")
 
-    print("\n── GAP ASSESSMENT ──")
-    post_context = f"""Perception output:
-{json.dumps(perception, indent=2)}
-
-Context seen:
-{context}"""
-
-    post_raw = call_llm(POST_SYSTEM, post_context)
-    print(f"Raw: {post_raw[:300]}")
-
-    try:
-        post_data = json.loads(post_raw)
-    except json.JSONDecodeError:
-        post_data = {"gaps": []}
-
-    gaps = [
-        Gap(
-            desc=g["desc"],
-            refs=g.get("refs", []),
-            origin=commit_sha,
-            confidence=g.get("confidence", 0.5),
-        )
-        for g in post_data.get("gaps", [])
-    ]
-
-    post = PostDiff(gaps=gaps)
-
-    # Record perception step
-    step = Step.new(
-        content=perception.get("content", ""),
-        pre=pre,
-        post=post,
+    # Parse gaps from LLM output
+    origin_step, origin_gaps = _parse_step_output(
+        raw, step_refs=[], content_refs=[head]
     )
-    save_step(step)
-    register_step(step)
-    print(f"Step: {step.hash} | chain depth: {pre.depth()} | gaps: {len(gaps)}")
+    trajectory.append(origin_step)
 
-    # ── Phase 3: Governor ────────────────────────────────────────────
+    print(f"  step:{origin_step.hash} | gaps: {len(origin_gaps)}")
+    for g in origin_gaps:
+        tag = f" [{g.vocab}]" if g.vocab else ""
+        print(f"    gap:{g.hash} \"{g.desc}\"{tag}")
 
-    print("\n── GOVERNOR ──")
-    if not gaps:
-        print("No gaps → auto-synth")
-    else:
-        for g in gaps:
-            print(f"  Gap: {g.desc} (confidence: {g.confidence})")
+    # ── 3. IDENTITY (.st injection) ──────────────────────────────────
+    #
+    # Fire the contact's .st file. This surfaces identity, preferences,
+    # principles into the LLM's context — positioned AFTER the first
+    # step so it doesn't get pushed out of the context window.
 
-        # ── Phase 4: Action loop ─────────────────────────────────────
-        max_actions = 5
-        for action_i in range(max_actions):
-            print(f"\n── ACTION {action_i + 1} ──")
+    identity_skill = _find_identity_skill(contact_id, registry)
+    if identity_skill:
+        print(f"\n── IDENTITY: {identity_skill.display_name}:{identity_skill.hash} ──")
+        identity_block = _render_identity(identity_skill)
+        session.inject(identity_block)
 
-            # Select widest gap
-            target = min(gaps, key=lambda g: g.confidence)
-            print(f"Target: {target.desc}")
+        identity_step = Step.create(
+            desc=f"identity loaded: {identity_skill.display_name}",
+            content_refs=[identity_skill.hash],
+            step_refs=[origin_step.hash],
+        )
+        trajectory.append(identity_step)
+        print(f"  step:{identity_step.hash} → refs:[{identity_skill.display_name}:{identity_skill.hash}]")
 
-            # Compose command
-            action_context = f"""Gap to resolve: {target.desc}
-Evidence refs: {target.refs}
+    # ── 4. COMPILER ──────────────────────────────────────────────────
+    #
+    # Admit origin gaps onto the ledger. The compiler sequences them
+    # via the stack (LIFO, depth-first).
 
-Workspace tree:
-{get_workspace_tree()}
+    compiler = Compiler(trajectory)
 
-{extra}"""
-            action_raw = call_llm(ACTION_SYSTEM, action_context, model="gpt-4.1-mini")
-            print(f"Action: {action_raw[:200]}")
+    if not origin_gaps:
+        # No gaps → auto-synthesize
+        print("\n── AUTO-SYNTH (no gaps) ──")
+        response = _synthesize(session, user_message)
+        _save_turn(trajectory)
+        return response
 
-            try:
-                action = json.loads(action_raw)
-            except json.JSONDecodeError:
-                print("  → Failed to parse action, skipping")
-                break
+    # Emit origin gaps — each creates its own chain
+    compiler.emit_origin_gaps(origin_step)
 
-            command = action.get("command", "")
-            if not command:
-                break
+    print(f"\n── COMPILER ──")
+    print(compiler.render_ledger())
 
-            # Execute
-            print(f"  → Executing: {command}")
-            result = subprocess.run(
-                command, shell=True, cwd=SANDBOX,
-                capture_output=True, text=True, timeout=10,
+    # ── 5. ITERATION LOOP ────────────────────────────────────────────
+    #
+    # Pop gap → resolve hashes → execute by vocab → inject result →
+    # new step forms → compiler emits child gaps → repeat
+
+    for iteration in range(MAX_ITERATIONS):
+        entry, signal = compiler.next()
+
+        if entry is None or signal == GovernorSignal.HALT:
+            print(f"\n  HALT (iteration {iteration})")
+            break
+
+        gap = entry.gap
+        print(f"\n── ITERATION {iteration + 1}: gap:{gap.hash[:8]} ──")
+        print(f"  \"{gap.desc}\"")
+        print(f"  signal: {signal.name} | vocab: {gap.vocab} | chain: {entry.chain_id[:8]}")
+
+        # ── Governor signals ──
+
+        if signal == GovernorSignal.REVERT:
+            print("  → REVERT: divergence detected, skipping")
+            compiler.resolve_current_gap(gap.hash)
+            continue
+
+        # ── Resolve hash references ──
+
+        resolved_data = resolve_all_refs(gap.step_refs, gap.content_refs, trajectory)
+
+        # ── Execute by vocab ──
+
+        vocab = gap.vocab
+        step_result = None
+
+        if vocab in OBSERVATION_ONLY_VOCAB:
+            # ── Observation-only: resolve hashes, inject, blob step (no post-diff) ──
+            print(f"  → observation-only ({vocab})")
+
+            if resolved_data:
+                session.inject(f"## Resolved hash data for gap:{gap.hash}\n{resolved_data}")
+
+            step_result = Step.create(
+                desc=f"resolved: {gap.desc}",
+                step_refs=[origin_step.hash],
+                content_refs=gap.content_refs,
+                chain_id=entry.chain_id,
             )
-            stdout = result.stdout[:500] if result.stdout else ""
-            stderr = result.stderr[:500] if result.stderr else ""
-            print(f"  → stdout: {stdout[:100]}")
-            if stderr:
-                print(f"  → stderr: {stderr[:100]}")
+            # Blob step — no gaps, no branching
+            compiler.resolve_current_gap(gap.hash)
 
-            # Check for errors
-            if result.returncode != 0:
-                print(f"  → Command failed (exit {result.returncode})")
-                action_step = Step.new(
-                    content=f"FAILED: {command}\nError: {stderr[:200]}",
-                    pre=PreDiff(chain=[ChainLink(hash=step.hash, parent=None)]),
-                    post=PostDiff(),
-                )
-                save_step(action_step)
-                register_step(action_step)
-                extra = f"Command failed:\n{stderr}"
-                continue
+        elif vocab and vocab in DETERMINISTIC_VOCAB:
+            # ── Deterministic: kernel resolves directly ──
+            print(f"  → deterministic ({vocab})")
 
-            # Auto-commit if files changed
-            diff_result = subprocess.run(["git", "diff", "--stat"], cwd=SANDBOX, capture_output=True, text=True)
-            untracked = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"], cwd=SANDBOX, capture_output=True, text=True)
-            has_changes = bool(diff_result.stdout.strip() or untracked.stdout.strip())
+            tool_path = TOOL_MAP.get(vocab)
+            if tool_path:
+                params = {"refs": gap.content_refs, "desc": gap.desc}
+                output, _ = execute_tool(tool_path, params)
+                session.inject(f"## Tool output ({vocab})\n{output}")
+            elif resolved_data:
+                session.inject(f"## Resolved data\n{resolved_data}")
 
-            if has_changes:
-                new_commit = auto_commit(f"action: {target.desc[:50]}")
-                print(f"  → Committed: {new_commit}")
+            # LLM reasons over resolved data → may produce child gaps
+            raw = session.call(f"You resolved gap:{gap.hash} \"{gap.desc}\". What do you observe? Articulate any new gaps.")
+            print(f"  LLM: {raw[:150]}...")
 
-                # Verify mutation — read back the changed file
-                git_diff = subprocess.run(
-                    ["git", "diff", "HEAD~1", "--", "."], cwd=SANDBOX,
-                    capture_output=True, text=True
-                )
-                diff_output = git_diff.stdout[:500] if git_diff.stdout else "(no diff)"
-                print(f"  → Verified diff: {diff_output[:100]}")
+            step_result, child_gaps = _parse_step_output(
+                raw, step_refs=[origin_step.hash], content_refs=gap.content_refs,
+                chain_id=entry.chain_id,
+            )
 
-                action_step = Step.new(
-                    content=f"Executed: {command}\nResult: {stdout[:200]}\nDiff: {diff_output[:200]}",
-                    pre=PreDiff(chain=[ChainLink(hash=step.hash, parent=None)]),
-                    post=PostDiff(commit=new_commit),
-                )
-                save_step(action_step)
-                register_step(action_step)
-                extra = f"Command output:\n{stdout}\nVerified diff:\n{diff_output}"
+            if child_gaps:
+                compiler.emit(step_result)
             else:
-                print("  → No file changes detected — command may have failed silently")
-                action_step = Step.new(
-                    content=f"Observed: {command}\nResult: {stdout[:200]}\nNote: no file changes detected",
-                    pre=PreDiff(chain=[ChainLink(hash=step.hash, parent=None)]),
-                    post=PostDiff(),
+                compiler.resolve_current_gap(gap.hash)
+
+        elif vocab and is_mutate(vocab):
+            # ── Mutation: 5.4 composes command, kernel executes ──
+            print(f"  → mutation ({vocab})")
+
+            # Check OMO
+            if not compiler.validate_omo(vocab):
+                print("  → OMO violation: need observation first")
+                # Inject an observation step
+                if resolved_data:
+                    session.inject(f"## Context for gap:{gap.hash}\n{resolved_data}")
+                compiler.record_execution("scan_needed", False)
+
+            # Inject resolved context
+            if resolved_data:
+                session.inject(f"## Resolved context for mutation\n{resolved_data}")
+
+            # 5.4 composes the command
+            compose_prompt = f"""Compose a command to resolve this gap:
+  gap:{gap.hash} "{gap.desc}"
+  vocab: {vocab}
+
+Respond with JSON: {{"command": "...", "reasoning": "..."}}"""
+
+            raw = session.call(compose_prompt)
+            print(f"  LLM compose: {raw[:150]}...")
+
+            command = _extract_command(raw)
+            if command:
+                print(f"  → executing: {command[:100]}")
+                result = subprocess.run(
+                    command, shell=True, cwd=str(CORS_ROOT),
+                    capture_output=True, text=True, timeout=30,
                 )
-                save_step(action_step)
-                register_step(action_step)
-                extra = f"Observation result:\n{stdout}\n(no file changes)"
+                output = result.stdout[:500] or result.stderr[:500] or "(no output)"
+                print(f"  → output: {output[:100]}")
 
-            # Re-assess gaps
-            trajectory = load_trajectory()
-            reassess_context = render_context(get_current_commit(), trajectory, user_message, extra)
-            post_raw = call_llm(POST_SYSTEM, f"Perception output:\n{json.dumps({'content': action_step.content, 'chain': action_step.pre.refs()}, indent=2)}\n\nContext:\n{reassess_context}")
-            try:
-                post_data = json.loads(post_raw)
-            except json.JSONDecodeError:
-                post_data = {"gaps": []}
+                # Auto-commit if mutation
+                commit_sha = auto_commit(f"step: {gap.desc[:50]}")
+                if commit_sha:
+                    print(f"  → committed: {commit_sha}")
 
-            gaps = [
-                Gap(desc=g["desc"], refs=g.get("refs", []), confidence=g.get("confidence", 0.5))
-                for g in post_data.get("gaps", [])
-            ]
+                    # Postcondition: observe the commit
+                    post_tree = git_tree(commit_sha)
+                    session.inject(f"## Postcondition: commit:{commit_sha}\n{post_tree}\n\nCommand output:\n{output}")
 
-            if not gaps:
-                print("All gaps closed")
-                break
+                    step_result = Step.create(
+                        desc=f"executed: {gap.desc}",
+                        step_refs=[origin_step.hash],
+                        content_refs=gap.content_refs,
+                        commit=commit_sha,
+                        chain_id=entry.chain_id,
+                    )
+                    compiler.record_execution(vocab, True)
 
-            open_gaps = [g for g in gaps if g.confidence < 0.8]
-            if not open_gaps:
-                print("All gaps above threshold")
-                break
+                    # LLM observes postcondition → may produce new gaps
+                    raw = session.call("Observe the commit result. Articulate any remaining gaps.")
+                    print(f"  LLM postcondition: {raw[:150]}...")
 
-    # ── Phase 5: Synthesis ───────────────────────────────────────────
+                    post_step, child_gaps = _parse_step_output(
+                        raw, step_refs=[step_result.hash], content_refs=[commit_sha],
+                        chain_id=entry.chain_id,
+                    )
+                    trajectory.append(post_step)
+                    compiler.record_execution("scan_needed", False)  # postcondition is observation
+
+                    if child_gaps:
+                        compiler.emit(post_step)
+                    else:
+                        compiler.resolve_current_gap(gap.hash)
+                else:
+                    # No changes — command was observation-like
+                    session.inject(f"## Command output (no mutation)\n{output}")
+                    step_result = Step.create(
+                        desc=f"observed: {gap.desc}",
+                        step_refs=[origin_step.hash],
+                        content_refs=gap.content_refs,
+                        chain_id=entry.chain_id,
+                    )
+                    compiler.record_execution(vocab, False)
+                    compiler.resolve_current_gap(gap.hash)
+            else:
+                print("  → no command extracted, resolving gap")
+                compiler.resolve_current_gap(gap.hash)
+                step_result = Step.create(
+                    desc=f"skipped: {gap.desc}",
+                    step_refs=[origin_step.hash],
+                    content_refs=gap.content_refs,
+                    chain_id=entry.chain_id,
+                )
+
+        elif vocab and is_observe(vocab):
+            # ── Observation: resolve + LLM reasons ──
+            print(f"  → observation ({vocab})")
+
+            tool_path = TOOL_MAP.get(vocab)
+            if tool_path:
+                params = {"refs": gap.content_refs, "desc": gap.desc}
+                output, code = execute_tool(tool_path, params)
+                session.inject(f"## Tool output ({vocab})\n{output}")
+            elif resolved_data:
+                session.inject(f"## Resolved data\n{resolved_data}")
+
+            raw = session.call(f"You resolved gap:{gap.hash} \"{gap.desc}\". What do you observe? Articulate any new gaps.")
+            print(f"  LLM: {raw[:150]}...")
+
+            step_result, child_gaps = _parse_step_output(
+                raw, step_refs=[origin_step.hash], content_refs=gap.content_refs,
+                chain_id=entry.chain_id,
+            )
+            compiler.record_execution(vocab, False)
+
+            if child_gaps:
+                compiler.emit(step_result)
+            else:
+                compiler.resolve_current_gap(gap.hash)
+
+        else:
+            # ── Bridge or unknown vocab ──
+            print(f"  → bridge/unknown ({vocab})")
+            if resolved_data:
+                session.inject(f"## Context\n{resolved_data}")
+
+            raw = session.call(f"Address gap:{gap.hash} \"{gap.desc}\". What's needed?")
+            step_result, child_gaps = _parse_step_output(
+                raw, step_refs=[origin_step.hash], content_refs=gap.content_refs,
+                chain_id=entry.chain_id,
+            )
+
+            if child_gaps:
+                compiler.emit(step_result)
+            else:
+                compiler.resolve_current_gap(gap.hash)
+
+        # ── Record step ──
+
+        if step_result:
+            trajectory.append(step_result)
+            compiler.add_step_to_chain(step_result.hash)
+            print(f"  step:{step_result.hash}" +
+                  (f" commit:{step_result.commit}" if step_result.commit else ""))
+
+        # Check if done
+        if compiler.is_done():
+            print(f"\n  ALL GAPS RESOLVED (iteration {iteration + 1})")
+            break
+
+    # ── 6. SYNTHESIS ─────────────────────────────────────────────────
 
     print("\n── SYNTHESIS ──")
-    trajectory = load_trajectory()
-    synth_context = f"""Turn trajectory:
-{json.dumps(trajectory[-5:], indent=2)}
+    response = _synthesize(session, user_message)
 
-User message: "{user_message}"
-"""
-    response = call_llm(SYNTH_SYSTEM, synth_context, model="gpt-4.1-mini")
-    print(f"Response: {response}")
+    # ── 7. SAVE ──────────────────────────────────────────────────────
+
+    _save_turn(trajectory)
 
     return response
 
 
-# ── Main ──────────────────────────────────────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────────────
+
+def _parse_step_output(raw: str, step_refs: list[str], content_refs: list[str],
+                       chain_id: str = None) -> tuple[Step, list[Gap]]:
+    """Parse LLM output into a Step with gaps.
+
+    The LLM produces natural text with an embedded JSON block.
+    Extract the gaps from the JSON, build a Step.
+    """
+    gaps = []
+    try:
+        # Find JSON block in output
+        json_start = raw.find("{")
+        json_end = raw.rfind("}") + 1
+        if json_start >= 0 and json_end > json_start:
+            data = json.loads(raw[json_start:json_end])
+            for g in data.get("gaps", []):
+                gap = Gap.create(
+                    desc=g.get("desc", ""),
+                    content_refs=g.get("content_refs", []),
+                    step_refs=g.get("step_refs", []),
+                )
+                gap.scores = Epistemic(
+                    relevance=g.get("relevance", 0.5),
+                    confidence=g.get("confidence", 0.5),
+                    grounded=g.get("grounded", 0.5),
+                )
+                gap.vocab = g.get("vocab")
+                if gap.vocab:
+                    gap.vocab_score = 0.8
+                gaps.append(gap)
+    except (json.JSONDecodeError, KeyError, TypeError):
+        pass
+
+    # Extract desc from the natural text portion (before JSON)
+    json_start = raw.find("{")
+    desc = raw[:json_start].strip() if json_start > 0 else raw[:200].strip()
+    # Trim to a reasonable length
+    if len(desc) > 200:
+        desc = desc[:200] + "..."
+
+    step = Step.create(
+        desc=desc,
+        step_refs=step_refs,
+        content_refs=content_refs,
+        gaps=gaps,
+        chain_id=chain_id,
+    )
+
+    return step, gaps
+
+
+def _extract_command(raw: str) -> str | None:
+    """Extract a command from LLM JSON output."""
+    try:
+        json_start = raw.find("{")
+        json_end = raw.rfind("}") + 1
+        if json_start >= 0 and json_end > json_start:
+            data = json.loads(raw[json_start:json_end])
+            return data.get("command")
+    except (json.JSONDecodeError, KeyError):
+        pass
+    return None
+
+
+def _find_identity_skill(contact_id: str, registry: SkillRegistry) -> Skill | None:
+    """Find the .st file that triggers for this contact."""
+    for skill in registry.all_skills():
+        # Read the .st file to check trigger
+        try:
+            with open(skill.source) as f:
+                data = json.load(f)
+            trigger = data.get("trigger", "")
+            if trigger == f"on_contact:{contact_id}":
+                return skill
+        except (json.JSONDecodeError, FileNotFoundError):
+            continue
+    return None
+
+
+def _render_identity(skill: Skill) -> str:
+    """Render a skill's identity and preferences for session injection."""
+    try:
+        with open(skill.source) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return ""
+
+    lines = [f"## Identity: {skill.display_name}:{skill.hash}"]
+
+    identity = data.get("identity", {})
+    if identity:
+        for k, v in identity.items():
+            lines.append(f"  {k}: {v}")
+
+    preferences = data.get("preferences", {})
+    if preferences:
+        lines.append("## Preferences")
+        for category, prefs in preferences.items():
+            lines.append(f"  {category}:")
+            if isinstance(prefs, dict):
+                for k, v in prefs.items():
+                    lines.append(f"    {k}: {v}")
+            else:
+                lines.append(f"    {prefs}")
+
+    return "\n".join(lines)
+
+
+def _synthesize(session: Session, user_message: str) -> str:
+    """Produce the final response from the session."""
+    session.inject(SYNTH_SYSTEM, role="system")
+    response = session.call(f"Synthesize your response to: \"{user_message}\"")
+    print(f"  Response: {response[:200]}")
+    return response
+
+
+def _save_turn(trajectory: Trajectory):
+    """Persist trajectory and chains."""
+    trajectory.save(str(TRAJ_FILE))
+    trajectory.save_chains(str(CHAINS_FILE))
+    print(f"  Saved: {len(trajectory.order)} steps, {len(trajectory.chains)} chains")
+
+
+# ── Main ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    # Create a test file in the sandbox
-    init_sandbox()
-    config_path = os.path.join(SANDBOX, "config.json")
-    if not os.path.exists(config_path):
-        with open(config_path, "w") as f:
-            json.dump({
-                "model_id": "gpt-4o-2024-08-06",
-                "temperature": 0.7,
-                "max_tokens": 4096,
-            }, f, indent=2)
-        auto_commit("add config.json")
+    print("v5 Step Kernel — cors")
+    print("Type /quit to exit, /wipe to reset trajectory\n")
 
-    print("v5 Step Kernel — REPL")
-    print("Type /quit to exit, /wipe to reset sandbox\n")
     while True:
         try:
             user_input = input("you> ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nbye")
             break
+
         if not user_input:
             continue
         if user_input == "/quit":
             break
         if user_input == "/wipe":
-            import shutil
-            if os.path.exists(SANDBOX):
-                shutil.rmtree(SANDBOX)
-            hash_store.clear()
-            init_sandbox()
-            print("sandbox wiped")
+            if TRAJ_FILE.exists():
+                TRAJ_FILE.unlink()
+            if CHAINS_FILE.exists():
+                CHAINS_FILE.unlink()
+            print("trajectory wiped")
             continue
+
         response = run_turn(user_input)
         print(f"\nv5> {response}\n")
