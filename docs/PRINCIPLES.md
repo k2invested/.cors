@@ -198,17 +198,22 @@ The LLM composes. The kernel executes. Auto-commit. Postcondition fires. These a
 
 All mutations follow the same rhythm: **compose → execute → auto-commit → postcondition** (hash_resolve_needed targeting post_observe path). No exceptions. The postcondition is the system verifying its own mutation — the same way a cell checks its DNA after replication.
 
-### Tier 3: Bridge codons (internal &mut, priority 99)
+### Tier 3: Bridge codons (internal &mut, priority 90-99)
 
-Three codons govern the reasoning lifecycle. The biological analogy is precise: a codon is a three-nucleotide sequence that signals a specific instruction to the cellular machinery. These three vocab terms signal specific instructions to the kernel machinery.
+Four codons govern the reasoning lifecycle. The biological analogy is precise: a codon is a nucleotide sequence that signals a specific instruction to the cellular machinery. These four vocab terms signal specific instructions to the kernel machinery. They live in `skills/codons/` — immutable, protected by tree_policy with `on_reject: reason_needed`. Any attempt to mutate a codon file auto-reverts and falls back to reason_needed for recalibration.
 
-| Vocab | Codon | Manifestation |
-|-------|-------|--------------|
-| `reason_needed` | **START** | Observation bridge + agency. Renders reasoning trees. Three outcomes: observe (clarity), refine (update chain), manifest (activate commitment agent with injected commit_needed as last step). |
-| `commit_needed` | **END** | Reintegration. Renders full commitment tree into main context. Closes or continues chain. NOT directly classifiable — injected by reason.st at lowest relevance behind commitment gaps. |
-| `reprogramme_needed` | **PERSIST** | World-building. st_builder composes .st from semantic intent. Injected with PRINCIPLES.md + entity registry. Also fires as pre-synthesis pass (safety net). |
+| Vocab | Codon | Priority | Manifestation |
+|-------|-------|----------|--------------|
+| `reason_needed` | **START** | 90 | Planning primitive + reorientation checkpoint + heartbeat trigger. Three roles: (1) PLAN — decompose complex tasks into commitment chains built bottom-up. (2) REORIENT — recalibrate after compiler rejection or immutability violation. (3) HEARTBEAT — inspect background sub-agent progress, close/revisit/refine. |
+| `await_needed` | **PAUSE** | 95 | Synchronization checkpoint. Suspends parent chain until referenced sub-agent completes. Renders sub-agent's full semantic tree → parent inspects → accept/correct/reactivate. If turn ends before sub-agent finishes, persists as dangling gap — heartbeat picks up next turn. |
+| `commit_needed` | **END** | 98 | Reintegration. Renders full commitment tree into main context. Closes or continues chain. NOT directly classifiable — injected by reason.st at lowest relevance behind commitment gaps. |
+| `reprogramme_needed` | **PERSIST** | 99 | World-building. No post_diff — fire and forget. st_builder composes .st from semantic intent. Injected with PRINCIPLES.md + entity registry. Also fires as pre-synthesis pass (safety net). Background triggers get automatic heartbeat if no manual await is set. |
+
+**Codon priority ordering:** reason (90) → await (95) → commit (98) → reprogramme (99). Within the bridge tier, planning fires first, checkpoints fire after inline work, reintegration fires after commitment gaps resolve, and persistence fires last.
 
 Mid-turn commitment activation follows the compiler laws exactly: reason_needed fires → commitment gaps disperse onto ledger → commit_needed sits at bottom → commitment resolves depth-first → commit reintegrates → main chain resumes. The compiler doesn't know it's processing a commitment. It just sees gaps at various depths. Same laws, same stack.
+
+**Law 9 guarantee:** Background triggers (reprogramme_needed) always close the loop. If the main agent sets a manual `await_needed`, the parent chain suspends and resumes when the sub-agent finishes. If no manual await is set, an automatic `reason_needed` heartbeat persists after synthesis — next turn, the agent inspects the sub-agent's semantic tree and either closes, revisits, or refines. The loop is always closed.
 
 ### Tier 4: .st Resolution (internal &, no vocab)
 
@@ -243,15 +248,18 @@ Every `auto_commit()` injects a `hash_resolve_needed` gap targeting the commit. 
 compile.py
 ├─ OBSERVE_VOCAB = {pattern_needed, hash_resolve_needed, email_needed, external_context, clarify_needed}
 ├─ MUTATE_VOCAB  = {hash_edit_needed, stitch_needed, content_needed, script_edit_needed, command_needed, message_needed, json_patch_needed, git_revert_needed}
-├─ BRIDGE_VOCAB  = {reason_needed, commit_needed, reprogramme_needed}
+├─ BRIDGE_VOCAB  = {reason_needed, commit_needed, reprogramme_needed, await_needed}
 ├─ is_observe(vocab) → vocab in OBSERVE_VOCAB
 ├─ is_mutate(vocab)  → vocab in MUTATE_VOCAB
 ├─ is_bridge(vocab)  → vocab in BRIDGE_VOCAB
 └─ vocab_priority(vocab)
     ├─ observe → 20 (fires first)
     ├─ mutate  → 40
-    ├─ bridge/reprogramme → 99 (fires last)
-    └─ unknown → 50
+    ├─ unknown → 50
+    ├─ reason_needed → 90 (planning/reorientation)
+    ├─ await_needed → 95 (sync checkpoint)
+    ├─ commit_needed → 98 (reintegration)
+    └─ reprogramme_needed → 99 (fires last)
 
 loop.py
 ├─ TOOL_MAP
@@ -674,6 +682,8 @@ But the recursive nature of .st composition allows workflows to achieve fluidity
 
 **8. Postcondition** — Every mutation auto-commits and injects hash_resolve_needed. No mutation without verification. This is Law 3 (OMO) enforced structurally — even if the .st author forgets to add an observation step, the postcondition ensures one fires.
 
+**9. Loop always closes** — Every background trigger must eventually reintegrate with the parent trajectory. Either the flow-builder agent sets a manual `await_needed` checkpoint (synchronous — parent chain suspends, resumes when sub-agent finishes) or the kernel inserts an automatic `reason_needed` heartbeat after synthesis (asynchronous — next turn, agent inspects sub-agent's semantic tree). The heartbeat is recursive: if inspection triggers further background work, another heartbeat persists. The loop closes when all background chains are resolved. This is not a constraint on the flow-builder — it is a guarantee by the kernel.
+
 ### How .st files compose within the laws
 
 A .st file's steps are gaps. When they disperse onto the ledger, they follow every law. But the .st AUTHOR controls:
@@ -846,17 +856,31 @@ compile.py
 
 The old commitment system tracked promises as registry entries. In cors, reasoning chains replace commitments entirely. No separate mechanism — the same trajectory, same compiler, same .st files. A commitment is an unresolved chain. A task is an active chain. A memory is a resolved chain compressed to a hash. One primitive, multiple scales.
 
-### The start codon: reason.st
+### The start codon: reason.st — three roles
 
-`reason.st` is the observation bridge AND the agency codon. When it fires, it renders reasoning chains as semantic trees — the same shape the main agent sees its trajectory in. Everything the system has reasoned about becomes a navigable, fully bloomed tree. The LLM studies these trees and chooses one of three outcomes.
+`reason.st` is the system's most versatile codon. It serves three distinct roles through the same mechanism:
 
-### Three outcomes
+**Role 1: Planning primitive** — For complex tasks, the main agent emits `reason_needed` to decompose and structure the work. The specialized reason agent has full semantic tree visibility and can build commitment chains **bottom-up**: leaf-level chains first (the atomic sub-tasks), then mid-level chains that embed them via content_refs, then top-level orchestration. Consecutive `reason_needed` steps build layers — the more layers, the more consecutive reason passes. Each step in the constructed chain encodes the full 7-axis gap configuration `{action, desc, vocab, relevance, post_diff, content_refs, step_refs}`. Existing .st files can be embedded by placing their hash in a step's content_refs — their gaps will disperse depth-first when resolved. New .st files can be written inline as steps with all axes specified. The resulting semantic tree is directly extractable to a .st file via `chain_to_st`.
 
-**1. Observe (clarity)** — the rendered trees are sufficient. The LLM gains understanding from studying the semantic structure. May surface `clarify_needed` if something is ambiguous. No mutation. Pure observation bridge. This is the system reflecting — studying its own reasoning history to build understanding.
+**Role 2: Reorientation checkpoint** — When the compiler rejects a chain (missing await, OMO violation, codon immutability), the fallback is `reason_needed`. The agent re-renders its semantic trees, sees what went wrong, and reconstructs its approach. This is the same role `reclassify` played in v4.5 but through an existing primitive rather than a separate mechanism. Any rejection resolves to reason.
 
-**2. Refine (update)** — a reasoning commitment needs correction or extension. The user asked for it, or the system concluded from the trees that something is wrong. Routes to `hash_edit_needed` to update the mutable reasoning chain. The chain evolves — new hash, old hash still resolvable on the trajectory.
+**Role 3: Heartbeat trigger** — When background work is in progress without a manual await, the kernel persists an automatic `reason_needed` after synthesis. Next turn, this heartbeat fires — the agent renders the sub-agent's full semantic tree, inspects results, and routes: close (report to user), revisit (adjust the chain), or refine+reactivate (trigger more work). The heartbeat recurs until all background chains resolve.
 
-**3. Manifest (agency)** — the LLM references a reasoning commitment hash AND composes a prompt. This is the agency trigger — the system manifests an agent from the commitment's context. The commitment's .st defines the agent's identity (constraints, scope, domain). The prompt defines the goal. The chain plays out depth-first in its own context. Results stay on the main trajectory — no isolated stores. `commit_needed` is injected as the LAST step at LOWEST relevance, behind all commitment gaps — it fires only after the entire commitment resolves.
+### Six outcomes
+
+The LLM's post-diff after viewing the rendered trees determines the path:
+
+**1. Observe (clarity)** — the rendered trees are sufficient. The LLM gains understanding from studying the semantic structure. May surface `clarify_needed` if something is ambiguous. No mutation. Pure observation bridge.
+
+**2. Refine (update)** — a reasoning commitment needs correction or extension. Routes to `hash_edit_needed` to update the mutable reasoning chain. The chain evolves — new hash, old hash still resolvable on the trajectory.
+
+**3. Manifest (agency)** — the LLM references a reasoning commitment hash AND composes a prompt. This is the agency trigger — the system manifests an agent from the commitment's context. `commit_needed` is injected as the LAST step at LOWEST relevance, behind all commitment gaps — it fires only after the entire commitment resolves.
+
+**4. Plan (decompose)** — for complex tasks, the agent writes the commitment chain as a semantic tree following the chain construction specification. Build layers back-to-front: leaf chains first, then parents that adopt them. The resulting tree is directly extractable to .st via `chain_to_st`.
+
+**5. Heartbeat (inspect)** — inspect background sub-agent's semantic tree. Three sub-paths: accept (close the loop, report), revisit (adjust the chain), refine+reactivate (trigger more work with its own heartbeat).
+
+**6. Reorient (recalibrate)** — after compiler rejection or immutability violation, reconstruct the rejected chain with corrections.
 
 ### The activation cycle
 
@@ -865,19 +889,35 @@ reason_needed surfaces
   → step 1: render reasoning trees (observe, rel=1.0, post_diff=false)
       all naturally formed chains rendered as semantic trees
       reasoning commitments shown as potential agency targets
+      existing .st files shown as embeddable components
   → step 2: assess and route (flex, rel=0.9, post_diff=true)
-      LLM studies trees, picks outcome:
+      LLM studies trees, picks one of six outcomes:
         - no gaps → observe only, done
         - correction gap → routes to refine
         - commitment + prompt → routes to manifest
+        - complex task → routes to plan (bottom-up chain construction)
+        - background work done → routes to heartbeat (inspect sub-agent)
+        - compiler rejection → routes to reorient (recalibrate)
         - confusion → clarify_needed
-  → step 3: refine or manifest (flex, rel=0.8, post_diff=true)
-      if refine: hash_edit updates the reasoning chain
-      if manifest: compose agent trigger + inject commitment gaps + trailing commit_needed
-      if neither: resolve
+  → step 3: construct or act (flex, rel=0.8, post_diff=true)
+      if planning: write commitment chain as semantic tree
+        - each step encodes full gap config {action, desc, vocab, relevance, post_diff, content_refs, step_refs}
+        - embed existing .st by hash in content_refs (gaps disperse depth-first)
+        - embed await_needed after any background trigger
+        - build back-to-front: leaf chains first, parents adopt them
+        - resulting tree extractable to .st via chain_to_st
+      if refining: hash_edit updates the reasoning chain
+      if manifesting: compose agent trigger + inject commitment gaps + trailing commit_needed
+      if heartbeat: render sub-agent tree → accept/revisit/refine
+      if reorienting: reconstruct rejected chain with corrections
   → step 4: post-reason check (observe, rel=0.7, post_diff=true)
-      re-render affected trees to verify coherence
-      may surface further refinement or manifestation needs
+      verify coherence of constructed/modified trees:
+        - await codons present after background triggers
+        - leaf chains exist before parents reference them
+        - relevance descending within each chain
+        - post_diff correct (false for deterministic, true for decisions)
+        - all 7 gap axes present on constructed steps
+        - existing .st embeddings referenced by valid hash
 ```
 
 ### The end codon: commit.st
@@ -899,24 +939,74 @@ commit_needed fires (after all commitment gaps resolve)
 
 Reasoning chains don't need to resolve in one turn. They build passively — steps that touch the same entity accumulate on the same chain without explicit activation. The `find_passive_chains()` function detects when a gap's content_refs overlap with an existing chain's origin gap references. Instead of creating a new chain, the step appends to the existing one.
 
+### The pause codon: await.st
+
+`await_needed` is the synchronization checkpoint. When the flow-builder agents construct chains that trigger background work (via reprogramme_needed), they embed `await_needed` at a strategic point — a barrier where the parent chain suspends and waits for the sub-agent to complete.
+
+```
+await_needed fires
+  → step 1: suspend and wait (observe, rel=1.0, post_diff=false)
+      if sub-agent done → proceed immediately
+      if still running → persist as dangling gap → heartbeat next turn
+  → step 2: render sub-agent tree (observe, rel=0.9, post_diff=false)
+      full semantic tree injection — every step, gap, decision visible
+  → step 3: inspect and route (flex, rel=0.8, post_diff=true)
+      accept → close await, resume parent chain
+      correct → emit refinement gaps
+      reactivate → trigger further background work (with its own await/heartbeat)
+```
+
+The await codon reuses commit.st's semantic tree injection primitive. The difference is the trigger: commit fires when inline child gaps resolve (depth-first, automatic). Await fires when an external background chain closes (asynchronous, requires completion signal).
+
+### The heartbeat mechanism
+
+The heartbeat is the automatic safety net that guarantees Law 9 (loop always closes):
+
+```
+Turn N:   main agent triggers background work → no manual await set
+          → kernel persists automatic reason_needed after synthesis
+Turn N+1: heartbeat fires → render sub-agent tree → still running → reason persists again
+Turn N+2: heartbeat fires → sub-agent done → assess tree → close / revisit / refine
+Turn N+3: (if refined) → heartbeat fires → check refinement → close
+```
+
+Each heartbeat is a full reason cycle: render tree → assess → act. The agent is autonomously managing long-running workflows across turns. The heartbeat IS the autonomy mechanism — the system monitors its own background work, course-corrects, and reports when done.
+
+### Deterministic .st extraction from semantic trees
+
+A fully resolved commitment chain already contains everything a .st file needs. If the chain-building agents write their commitment chains within the guided specification — each step as `{action, desc, vocab, relevance, post_diff, content_refs, step_refs}` — then extraction is pure serialization via `chain_to_st`:
+
+```
+Commitment chain (semantic tree on trajectory)     ← runtime representation
+  ↓ deterministic extraction (chain_to_st tool)
+.st file (JSON in skills/)                          ← crystallized representation
+  ↓ future invocation
+Gaps on ledger (same shape as original chain)       ← re-instantiated
+```
+
+This is the discovery → crystallization pipeline. The chain-building agents don't need to invoke reprogramme to persist their work — the kernel can extract it directly. reprogramme remains the tool for creating entities and novel .st files from scratch. Extraction handles the case where a successful chain should become a reusable workflow.
+
+Existing .st files can be drawn into chains as embeddings — place the .st hash in a step's content_refs and the compiler disperses its gaps depth-first when resolved. New .st files can be written as inline steps with all 7 gap axes specified, then extracted to standalone .st files after the chain validates. The semantic tree encodes the full gap configuration — nothing is lost in the round-trip.
+
 ### What this replaces
 
 | Old system | cors equivalent |
 |------------|----------------|
 | Commitments | Passive chains — accumulate evidence across turns |
 | Task delegation | reason.st activation — compose goal, chain plays out |
-| Background agents | Same trajectory, cross-turn chains — resume via dangling gap mechanism |
+| Background agents | Heartbeat mechanism — automatic reason_needed monitors sub-agents |
 | Judgment resolution | reason.st assess step — LLM reasons over existing chain |
+| Reclassify | reason.st reorientation — compiler rejection falls back to reason |
 | Reminders | Scheduled .st trigger (future — trigger: "scheduled:Xh") |
 
 ### The key principle
 
-No extra mechanism. The trajectory IS the agent's memory. Chains ARE the reasoning units. The compiler sequences them. The governor monitors convergence. Cross-turn thresholds handle resumption. reason.st is just the start codon — it activates what's already there.
+No extra mechanism. The trajectory IS the agent's memory. Chains ARE the reasoning units. The compiler sequences them. The governor monitors convergence. Cross-turn thresholds handle resumption. The heartbeat guarantees reintegration. reason.st is just the start codon — it activates what's already there.
 
 ### Code mechanisms
 
 ```
-skills/reason.st
+skills/codons/reason.st
 ├─ trigger: "on_vocab:reason_needed"
 ├─ step 1: render_reasoning_trees
 │   ├─ vocab: hash_resolve_needed (observe)
@@ -924,21 +1014,47 @@ skills/reason.st
 │   └─ post_diff: false (deterministic — no branching)
 ├─ step 2: assess_and_route
 │   ├─ relevance: 0.9
-│   └─ post_diff: true (LLM chooses: observe / refine / manifest)
-├─ step 3: refine_or_manifest
-│   ├─ vocab: hash_edit_needed (if refine)
+│   └─ post_diff: true (LLM chooses: observe / refine / manifest / plan / heartbeat / reorient)
+├─ step 3: construct_or_act
+│   ├─ vocab: hash_edit_needed (if refine/plan)
 │   ├─ relevance: 0.8
-│   └─ post_diff: true
+│   └─ post_diff: true (chain construction writes full gap config per step)
 └─ step 4: post_reason_check
-    ├─ vocab: hash_resolve_needed (re-render trees)
+    ├─ vocab: hash_resolve_needed (verify coherence)
     ├─ relevance: 0.7
-    └─ post_diff: true
+    └─ post_diff: true (validates await presence, layer ordering, gap axes)
 
-skills/commit.st
+skills/codons/await.st
+├─ trigger: "on_vocab:await_needed"
+├─ step 1: suspend_and_wait (observe, rel=1.0, post_diff=false)
+├─ step 2: render_subagent_tree (observe, rel=0.9, post_diff=false)
+└─ step 3: inspect_and_route (flex, rel=0.8, post_diff=true)
+
+skills/codons/commit.st
 ├─ trigger: "on_vocab:commit_needed"
 ├─ step 1: render_commitment_tree (observe, rel=1.0, post_diff=false)
 ├─ step 2: reintegrate (flex, rel=0.9, post_diff=true)
 └─ step 3: close_or_continue (flex, rel=0.8, post_diff=true)
+
+skills/codons/reprogramme.st
+├─ trigger: "on_vocab:reprogramme_needed"
+├─ step 1: load_principles_and_registry (observe, rel=1.0, post_diff=false)
+├─ step 2: compose_st (mutate, rel=0.9, post_diff=false — no branching)
+└─ step 3: commit_and_register (rel=0.8, post_diff=false — fire and forget)
+
+tools/chain_to_st.py
+├─ chain_to_st(chain_hash, name, desc, trigger, refs, output_path)
+│   ├─ load_chain_data(chain_hash) → chain + resolved steps
+│   ├─ extract_st_steps(chain_data) → .st-compatible step list
+│   │   ├─ maps step.desc → st_step.action + desc
+│   │   ├─ maps gap.vocab → st_step.vocab
+│   │   ├─ maps gap.scores.relevance → st_step.relevance (or position-derived)
+│   │   ├─ maps gap.content_refs → st_step.content_refs (embeddable .st hashes)
+│   │   └─ infers post_diff from branching structure
+│   └─ writes JSON .st file (deterministic — no LLM needed)
+│
+└─ Discovery → crystallization pipeline:
+    chain on trajectory → chain_to_st → .st file → future invocation → same gaps
 
 step.py
 ├─ Trajectory.find_passive_chains(content_ref)
@@ -949,6 +1065,9 @@ step.py
     └─ long chains (>= 8 steps) → chains/{hash}.json
 
 compile.py
+├─ Compiler.record_background_trigger(chain_id) → tracks background launches
+├─ Compiler.record_await(chain_id) → tracks manual checkpoints
+├─ Compiler.needs_heartbeat() → True if background trigger without manual await
 ├─ Compiler.resolve_current_gap(gap_hash)
 │   └─ marks chain.extracted when length >= CHAIN_EXTRACT_LENGTH (8)
 └─ Compiler.readmit_cross_turn(gaps, step_hash)
@@ -957,6 +1076,10 @@ compile.py
 loop.py
 ├─ _find_dangling_gaps(trajectory) → unresolved gaps from prior turns
 ├─ find_passive_chains() checked before creating new chain
+├─ Heartbeat: after synthesis, if compiler.needs_heartbeat()
+│   └─ persist reason_needed gap as dangling → next turn's resume picks it up
+├─ Codon rejection: _check_protected returns on_reject vocab
+│   └─ codon immutability → emit reason_needed (reorientation)
 └─ _save_turn() calls extract_chains()
 ```
 
@@ -1274,13 +1397,23 @@ skills/*.st
 
 ```
 cors/
-├─ step.py         ← Layer 0: step primitive, gap, chain, trajectory, render
-├─ compile.py      ← Layer 1: compiler, ledger, governor, vocab, admission
-├─ loop.py         ← Layer 2: turn loop, persistent LLM, hash resolution, git, tools
-├─ skills/         ← .st files: entities, workflows, codons (reason, commit, reprogramme)
-│   └─ loader.py   ← skill registry: load, resolve, display names
-├─ tools/          ← tool scripts: hash_manifest, st_builder, stitch, file_grep, etc.
-├─ tree_policy.json ← per-path mutation policy (immutable, on_mutate routing)
+├─ step.py          ← Layer 0: step primitive, gap, chain, trajectory, render
+├─ compile.py       ← Layer 1: compiler, ledger, governor, vocab, admission
+├─ loop.py          ← Layer 2: turn loop, persistent LLM, hash resolution, git, tools
+├─ skills/          ← .st files: entities, workflows
+│   ├─ codons/      ← immutable primitive codons (protected by tree_policy)
+│   │   ├─ reason.st      ← START codon: planning + reorientation + heartbeat
+│   │   ├─ await.st       ← PAUSE codon: synchronization checkpoint
+│   │   ├─ commit.st      ← END codon: semantic tree injection + reintegration
+│   │   └─ reprogramme.st ← PERSIST codon: .st world-building (no post_diff)
+│   ├─ loader.py    ← skill registry: load (walks subdirs), resolve, display names
+│   └─ *.st         ← entity and workflow .st files (reprogrammable)
+├─ tools/           ← tool scripts
+│   ├─ chain_to_st.py    ← deterministic chain → .st extraction
+│   ├─ hash_manifest.py  ← universal file I/O
+│   ├─ st_builder.py     ← .st constructor from semantic intent
+│   └─ ...               ← file_grep, stitch, code_exec, etc.
+├─ tree_policy.json ← per-path mutation policy (codons/ immutable + on_reject)
 ├─ trajectory.json  ← persisted trajectory (step dicts in chronological order)
 ├─ chains.json      ← persisted chain index
 └─ chains/          ← extracted long chains (>= 8 steps)

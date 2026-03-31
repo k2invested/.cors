@@ -62,7 +62,7 @@ MUTATE_VOCAB = {
     "message_needed", "json_patch_needed", "git_revert_needed",
 }
 
-BRIDGE_VOCAB: set[str] = {"reprogramme_needed", "reason_needed", "commit_needed"}  # the three bridge codons
+BRIDGE_VOCAB: set[str] = {"reprogramme_needed", "reason_needed", "commit_needed", "await_needed"}  # the four bridge codons
 
 # Entity resolution (internal &) has no vocab — it's just hash_resolve_needed
 # where the hash happens to be a .st file. The kernel checks the skill registry
@@ -98,6 +98,12 @@ def vocab_priority(vocab: str | None) -> int:
         return 50  # unknown, middle priority
     if vocab == "reprogramme_needed":
         return 99  # lowest priority — runs last, sits at bottom of stack
+    if vocab == "commit_needed":
+        return 98  # just above reprogramme — fires after all commitment gaps
+    if vocab == "await_needed":
+        return 95  # checkpoint — fires after inline work, before commit/reprogramme
+    if vocab == "reason_needed":
+        return 90  # planning/reorientation — fires after observations and mutations
     if vocab in OBSERVE_VOCAB:
         return 20  # external &
     if vocab in MUTATE_VOCAB:
@@ -570,7 +576,56 @@ class Compiler:
         self.ledger.stack = skipped + remaining  # skipped at bottom, remaining on top
         self.ledger.suspend_chain(chain_id)
 
-    # ── 5. Status ──
+    # ── 5. Background tracking ──
+
+    def has_unresolved_background(self) -> bool:
+        """Check if any background triggers (reprogramme_needed) fired without
+        a corresponding await_needed in the same chain. Used by the heartbeat
+        mechanism: if True and no manual await was set, an automatic
+        reason_needed persists after synthesis."""
+        for chain_id, state in self.ledger.chain_states.items():
+            if state == ChainState.CLOSED:
+                continue
+            # Check if chain had a reprogramme trigger but no await
+            has_reprogramme = False
+            has_await = False
+            for entry in self.ledger.history:
+                # Check resolved history for this chain
+                pass  # simplified — tracked via background_triggers
+            if chain_id in self._background_triggers and chain_id not in self._awaited_chains:
+                return True
+        return False
+
+    def record_background_trigger(self, chain_id: str):
+        """Record that a chain triggered a background workflow."""
+        if not hasattr(self, '_background_triggers'):
+            self._background_triggers = set()
+        self._background_triggers.add(chain_id)
+
+    def record_await(self, chain_id: str):
+        """Record that a chain set an await checkpoint."""
+        if not hasattr(self, '_awaited_chains'):
+            self._awaited_chains = set()
+        self._awaited_chains.add(chain_id)
+
+    def needs_heartbeat(self) -> bool:
+        """After synthesis, should an automatic reason_needed persist?
+
+        True if any background trigger fired without a manual await.
+        The heartbeat ensures the loop always closes — either the agent
+        set a checkpoint (manual await) or the system inserts an automatic
+        reason_needed (heartbeat).
+
+        Law 9: the loop always closes.
+        """
+        if not hasattr(self, '_background_triggers'):
+            return False
+        if not hasattr(self, '_awaited_chains'):
+            self._awaited_chains = set()
+        unresolved = self._background_triggers - self._awaited_chains
+        return len(unresolved) > 0
+
+    # ── 6. Status ──
 
     def is_done(self) -> bool:
         return self.ledger.is_empty()

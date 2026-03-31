@@ -156,20 +156,29 @@ def load_skill(path: str) -> Skill | None:
 
 
 def load_all(skills_dir: str = None) -> SkillRegistry:
-    """Load all .st files from the skills directory."""
+    """Load all .st files from the skills directory and subdirectories.
+
+    Scans skills/ and skills/codons/ — codons are loaded with the same
+    mechanism but have immutable tree_policy protection.
+    """
     if skills_dir is None:
         skills_dir = str(Path(__file__).parent)
 
     registry = SkillRegistry()
 
-    for fname in sorted(os.listdir(skills_dir)):
-        if not fname.endswith(".st"):
-            continue
-        path = os.path.join(skills_dir, fname)
-        skill = load_skill(path)
-        if skill:
-            registry.register(skill)
-            print(f"  [skills] loaded {skill.name} [{skill.hash}] ({skill.step_count()} steps)")
+    # Walk directory tree to find all .st files (includes codons/)
+    for root, _dirs, files in os.walk(skills_dir):
+        for fname in sorted(files):
+            if not fname.endswith(".st"):
+                continue
+            path = os.path.join(root, fname)
+            skill = load_skill(path)
+            if skill:
+                registry.register(skill)
+                # Tag codons for display
+                is_codon = "codons" in root
+                tag = " [codon]" if is_codon else ""
+                print(f"  [skills] loaded {skill.name} [{skill.hash}] ({skill.step_count()} steps){tag}")
 
     return registry
 

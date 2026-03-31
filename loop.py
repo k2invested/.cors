@@ -105,6 +105,7 @@ def git_diff(from_ref: str, to_ref: str = "HEAD") -> str:
 #
 TREE_POLICY_FILE = CORS_ROOT / "tree_policy.json"
 DEFAULT_TREE_POLICY = {
+    "skills/codons/":   {"immutable": True, "on_reject": "reason_needed"},
     "skills/":          {"on_mutate": "reprogramme_needed"},
     "ui_output/":       {"on_mutate": "stitch_needed"},
     "logs/":            {"immutable": True},
@@ -143,20 +144,29 @@ def _match_policy(path: str, policy: dict) -> dict | None:
     return best
 
 
-def _check_protected(commit_sha: str, pre_commit_sha: str) -> list[str]:
+def _check_protected(commit_sha: str, pre_commit_sha: str) -> tuple[list[str], str | None]:
     """Check if any immutable paths were modified between two commits.
-    Returns list of violated paths (only immutable policy, not on_mutate)."""
+
+    Returns (violations, on_reject_vocab):
+      - violations: list of violated immutable paths
+      - on_reject_vocab: if set in policy, the vocab to emit on rejection
+        (e.g. 'reason_needed' for codon immutability violations)
+    """
     policy = _load_tree_policy()
     diff_output = git(["diff", "--name-only", pre_commit_sha, commit_sha])
     if not diff_output:
-        return []
+        return [], None
     changed = diff_output.strip().split("\n")
     violations = []
+    on_reject = None
     for path in changed:
         rule = _match_policy(path, policy)
         if rule and rule.get("immutable"):
             violations.append(path)
-    return violations
+            # Check for on_reject vocab (codon immutability → reason_needed)
+            if rule.get("on_reject") and on_reject is None:
+                on_reject = rule["on_reject"]
+    return violations, on_reject
 
 
 def auto_commit(message: str) -> str | None:
@@ -176,15 +186,17 @@ def auto_commit(message: str) -> str | None:
     post_sha = git_head()
 
     # Check integrity — did the agent mutate protected paths?
-    violations = _check_protected(post_sha, pre_sha)
+    violations, on_reject = _check_protected(post_sha, pre_sha)
     if violations:
         print(f"  ⚠ PROTECTED PATH VIOLATION: {violations}")
+        if on_reject:
+            print(f"  → on_reject: {on_reject} (codon immutability)")
         print(f"  → auto-reverting to {pre_sha}")
         git(["revert", "--no-commit", "HEAD"])
         git(["commit", "-m", f"auto-revert: protected path violation ({', '.join(violations)})"])
-        return None  # mutation rejected
+        return None, on_reject  # mutation rejected, with optional rejection vocab
 
-    return post_sha
+    return post_sha, None
 
 
 # ── Hash resolution ──────────────────────────────────────────────────────
@@ -988,7 +1000,9 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
 
             # Auto-commit if mutation succeeded
             if executed:
-                commit_sha = auto_commit(f"step: {gap.desc[:50]}")
+                commit_result = auto_commit(f"step: {gap.desc[:50]}")
+                commit_sha = commit_result[0] if isinstance(commit_result, tuple) else commit_result
+                on_reject = commit_result[1] if isinstance(commit_result, tuple) else None
                 if commit_sha:
                     print(f"  → committed: {commit_sha}")
 
@@ -1040,24 +1054,54 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
                     # Check if it was a revert by looking at git log
                     last_msg = git(["log", "--oneline", "-1"])
                     if "auto-revert: protected path violation" in last_msg:
-                        # Protected path violation — warn the LLM, don't resolve gap
-                        session.inject(
-                            f"## PROTECTED PATH VIOLATION\n"
-                            f"Your command tried to modify a protected system file. "
-                            f"The change was auto-reverted. Recompose your command to "
-                            f"only modify files in the workspace, not system files.\n"
-                            f"Command output was:\n{output}"
-                        )
-                        step_result = Step.create(
-                            desc=f"REVERTED: {gap.desc} (protected path violation)",
-                            step_refs=[origin_step.hash],
-                            content_refs=gap.content_refs,
-                            chain_id=entry.chain_id,
-                        )
-                        # Don't resolve — let LLM recompose
-                        trajectory.append(step_result)
-                        compiler.add_step_to_chain(step_result.hash)
-                        continue
+                        # Protected path violation — warn the LLM
+                        if on_reject:
+                            # Codon immutability: fallback to reason_needed for recalibration
+                            print(f"  → codon immutability → {on_reject}")
+                            session.inject(
+                                f"## CODON IMMUTABILITY VIOLATION\n"
+                                f"You tried to modify an immutable codon file. "
+                                f"Codons are primitives — they cannot be changed. "
+                                f"The change was auto-reverted. Recalibrate your approach."
+                            )
+                            reject_gap = Gap.create(
+                                desc=f"reorientation needed: attempted to modify immutable codon — {gap.desc}",
+                                step_refs=[origin_step.hash],
+                                content_refs=gap.content_refs,
+                            )
+                            reject_gap.scores = Epistemic(relevance=1.0, confidence=0.8, grounded=0.0)
+                            reject_gap.vocab = on_reject  # reason_needed
+                            reject_gap.turn_id = current_turn
+                            reject_step = Step.create(
+                                desc=f"REVERTED: {gap.desc} (codon immutability → {on_reject})",
+                                step_refs=[origin_step.hash],
+                                content_refs=gap.content_refs,
+                                gaps=[reject_gap],
+                                chain_id=entry.chain_id,
+                            )
+                            trajectory.append(reject_step)
+                            compiler.emit(reject_step)
+                            compiler.resolve_current_gap(gap.hash)
+                            step_result = reject_step
+                        else:
+                            # Standard protected path violation — warn, don't resolve
+                            session.inject(
+                                f"## PROTECTED PATH VIOLATION\n"
+                                f"Your command tried to modify a protected system file. "
+                                f"The change was auto-reverted. Recompose your command to "
+                                f"only modify files in the workspace, not system files.\n"
+                                f"Command output was:\n{output}"
+                            )
+                            step_result = Step.create(
+                                desc=f"REVERTED: {gap.desc} (protected path violation)",
+                                step_refs=[origin_step.hash],
+                                content_refs=gap.content_refs,
+                                chain_id=entry.chain_id,
+                            )
+                            # Don't resolve — let LLM recompose
+                            trajectory.append(step_result)
+                            compiler.add_step_to_chain(step_result.hash)
+                            continue
                     else:
                         # Genuinely no changes
                         session.inject(f"## Command output (no mutation)\n{output}")
@@ -1207,6 +1251,61 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
                 else:
                     compiler.resolve_current_gap(gap.hash)
 
+        elif vocab == "await_needed":
+            # ── Bridge codon: synchronization checkpoint (pause codon) ──
+            # Suspends parent chain until referenced sub-agent completes.
+            # If sub-agent already done → render tree → inspect → resume.
+            # If still running → persist as dangling gap → heartbeat picks up next turn.
+            print(f"  → await (pause codon)")
+
+            # Record that this chain set a manual await
+            compiler.record_await(entry.chain_id)
+
+            # Resolve the sub-agent's chain (if available)
+            await_skill = registry.resolve_by_name("await")
+            if await_skill:
+                session.inject(f"## Await checkpoint: {gap.desc}")
+                if resolved_data:
+                    session.inject(f"## Sub-agent context\n{resolved_data}")
+
+                # Create step carrying await.st's gaps
+                await_step = Step.create(
+                    desc=f"await checkpoint: {gap.desc}",
+                    step_refs=[origin_step.hash],
+                    content_refs=[await_skill.hash] + gap.content_refs,
+                    chain_id=entry.chain_id,
+                )
+                for st_step in await_skill.steps:
+                    child_gap = Gap.create(
+                        desc=st_step.desc,
+                        content_refs=gap.content_refs,
+                    )
+                    child_gap.scores = Epistemic(
+                        relevance=st_step.__dict__.get("relevance", 0.8),
+                        confidence=0.8, grounded=0.0,
+                    )
+                    child_gap.vocab = st_step.vocab
+                    child_gap.turn_id = current_turn
+                    await_step.gaps.append(child_gap)
+
+                trajectory.append(await_step)
+                compiler.emit(await_step)
+                compiler.resolve_current_gap(gap.hash)
+                step_result = await_step
+            else:
+                # No await.st — resolve as observation
+                if resolved_data:
+                    session.inject(f"## Context\n{resolved_data}")
+                raw = session.call(f"Await checkpoint: gap:{gap.hash} \"{gap.desc}\". Inspect sub-agent results.")
+                step_result, child_gaps = _parse_step_output(
+                    raw, step_refs=[origin_step.hash], content_refs=gap.content_refs,
+                    chain_id=entry.chain_id,
+                )
+                if child_gaps:
+                    compiler.emit(step_result)
+                else:
+                    compiler.resolve_current_gap(gap.hash)
+
         elif vocab == "reprogramme_needed":
             # ── Bridge primitive: create/update entity .st via st_builder ──
             # The LLM needs to reprogramme its knowledge about an entity.
@@ -1337,8 +1436,11 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
                 output, code = execute_tool("tools/st_builder.py", intent)
                 print(f"  st_builder: {output[:150]}")
 
-                commit_sha = auto_commit(f"reprogramme: {gap.desc[:50]}")
+                reprg_result = auto_commit(f"reprogramme: {gap.desc[:50]}")
+                commit_sha = reprg_result[0] if isinstance(reprg_result, tuple) else reprg_result
                 if commit_sha:
+                    # Record background trigger for heartbeat mechanism
+                    compiler.record_background_trigger(entry.chain_id)
                     print(f"  → committed: {commit_sha}")
 
                     step_result = Step.create(
@@ -1428,7 +1530,39 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
     print("\n── SYNTHESIS ──")
     response = _synthesize(session, user_message)
 
-    # ── 8. SAVE ──────────────────────────────────────────────────────
+    # ── 8. HEARTBEAT ─────────────────────────────────────────────────
+    #
+    # Law 9: the loop always closes.
+    #
+    # If any background trigger fired without a manual await, persist
+    # an automatic reason_needed as a dangling gap. Next turn, this
+    # heartbeat fires — the agent renders the sub-agent's tree,
+    # inspects results, and either closes, revisits, or refines.
+    #
+    # The heartbeat is recursive: if the inspection triggers further
+    # background work, another heartbeat persists. The loop closes
+    # when all background chains are resolved.
+
+    if compiler.needs_heartbeat():
+        print("\n── HEARTBEAT: persisting reason_needed for background sub-agent ──")
+        heartbeat_gap = Gap.create(
+            desc="heartbeat: background sub-agent in progress — inspect results, close or revisit",
+            step_refs=[origin_step.hash],
+            content_refs=[],
+        )
+        heartbeat_gap.scores = Epistemic(relevance=0.9, confidence=0.8, grounded=0.0)
+        heartbeat_gap.vocab = "reason_needed"
+        heartbeat_gap.turn_id = current_turn
+        # Don't resolve — persist as dangling for next turn's resume
+        heartbeat_step = Step.create(
+            desc="heartbeat: automatic post-synth reason_needed for background workflow",
+            step_refs=[origin_step.hash],
+            gaps=[heartbeat_gap],
+        )
+        trajectory.append(heartbeat_step)
+        print(f"  → heartbeat gap:{heartbeat_gap.hash[:8]} persisted for next turn")
+
+    # ── 9. SAVE ──────────────────────────────────────────────────────
 
     _save_turn(trajectory)
 

@@ -1,4 +1,5 @@
 {
+  "skills/codons/": {"immutable": true, "on_reject": "reason_needed"},
   "skills/": {"on_mutate": "reprogramme_needed"},
   "ui_output/": {"on_mutate": "stitch_needed"},
   "logs/": {"immutable": true},
