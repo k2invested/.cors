@@ -40,6 +40,7 @@ def make_step(desc, gaps=None, step_refs=None, content_refs=None, commit=None):
 
 passed = 0
 failed = 0
+sections = 0
 
 
 def test(name, condition):
@@ -50,6 +51,12 @@ def test(name, condition):
     else:
         failed += 1
         print(f"  ✗ {name}")
+
+
+def section(name):
+    global sections
+    sections += 1
+    print(f"\n{name}")
 
 
 # ── §1: Step Primitive (two-phase, two hash layers) ──────────────────────
@@ -169,8 +176,8 @@ test("research has mixed post_diff", any(s.post_diff for s in research.steps) an
 print("\n§9: Ledger as Stack")
 
 ledger = Ledger()
-g1 = make_gap("gap A", rel=0.9, conf=0.3, gr=0.9, vocab="scan_needed")
-g2 = make_gap("gap B", rel=0.5, conf=0.2, gr=0.8, vocab="scan_needed")
+g1 = make_gap("gap A", rel=0.9, conf=0.3, gr=0.9, vocab="pattern_needed")
+g2 = make_gap("gap B", rel=0.5, conf=0.2, gr=0.8, vocab="pattern_needed")
 
 ledger.push_origin(g1, "chain_1")
 ledger.push_origin(g2, "chain_2")
@@ -197,8 +204,8 @@ test("OMO: mutation valid after observation", compiler.validate_omo("script_edit
 compiler.record_execution("script_edit_needed", True)
 test("OMO: mutation invalid after mutation", not compiler.validate_omo("script_edit_needed"))
 test("postcondition needed after mutation", compiler.needs_postcondition())
-compiler.record_execution("scan_needed", False)
-test("OMO: observation valid after mutation", compiler.validate_omo("scan_needed"))
+compiler.record_execution("pattern_needed", False)
+test("OMO: observation valid after mutation", compiler.validate_omo("pattern_needed"))
 test("no postcondition after observation", not compiler.needs_postcondition())
 
 # ── §11: Dormant Gaps ────────────────────────────────────────────────────
@@ -359,6 +366,262 @@ test("round-trip preserves commit", loaded.resolve(s2.hash).commit == "abc123")
 test("round-trip preserves gaps", len(loaded.resolve(s1.hash).gaps) == 1)
 test("round-trip preserves content_refs", loaded.resolve(s1.hash).content_refs == ["blob_a"])
 os.unlink(tmp)
+
+# ── §9b: Priority Ordering ────────────────────────────────────────────────
+
+section("§9b: Priority Ordering")
+
+# Register bridge vocab so priority tests work
+register_bridge_vocab([s.name for s in registry.all_skills()])
+
+test("vocab_priority: bridge = 10", vocab_priority("admin_needed") == 10)
+test("vocab_priority: observe = 20", vocab_priority("pattern_needed") == 20)
+test("vocab_priority: mutate = 40", vocab_priority("hash_edit_needed") == 40)
+test("vocab_priority: reprogramme = 99", vocab_priority("reprogramme_needed") == 99)
+test("vocab_priority: unknown = 50", vocab_priority("something_random") == 50)
+test("vocab_priority: None = 50", vocab_priority(None) == 50)
+
+# Priority sorting on ledger
+ledger_p = Ledger()
+g_bridge = make_gap("entity gap", vocab="admin_needed")
+g_observe = make_gap("observe gap", vocab="pattern_needed")
+g_mutate = make_gap("mutate gap", vocab="hash_edit_needed")
+g_reprog = make_gap("reprogramme", vocab="reprogramme_needed")
+
+ledger_p.push_origin(g_bridge, "c1")
+ledger_p.push_origin(g_observe, "c2")
+ledger_p.push_origin(g_mutate, "c3")
+ledger_p.push_origin(g_reprog, "c4")
+ledger_p.sort_by_priority()
+
+# After sort: reprogramme(99) at bottom, bridge(10) at top → pops first
+popped_first = ledger_p.pop()
+test("priority: bridge pops first", popped_first.gap.vocab == "admin_needed")
+popped_second = ledger_p.pop()
+test("priority: observe pops second", popped_second.gap.vocab == "pattern_needed")
+popped_third = ledger_p.pop()
+test("priority: mutate pops third", popped_third.gap.vocab == "hash_edit_needed")
+popped_last = ledger_p.pop()
+test("priority: reprogramme pops last", popped_last.gap.vocab == "reprogramme_needed")
+
+test("LedgerEntry has priority field", hasattr(LedgerEntry(gap=g_bridge, chain_id="x"), 'priority'))
+
+# ── §9c: Admission Score (deterministic grounded) ────────────────────────
+
+section("§9c: Admission Score (deterministic grounded)")
+
+traj_adm = Trajectory()
+s_ref = make_step("referenced step", content_refs=["blob_x"])
+traj_adm.append(s_ref)
+traj_adm.append(make_step("also refs blob_x", content_refs=["blob_x"]))
+traj_adm.append(make_step("refs step", step_refs=[s_ref.hash]))
+
+compiler_adm = Compiler(traj_adm)
+
+# Gap referencing frequently seen hashes → high grounded
+g_grounded = make_gap("well-grounded gap", content_refs=["blob_x"], rel=0.5)
+score_grounded = compiler_adm._admission_score(g_grounded)
+test("grounded computed from co-occurrence", g_grounded.scores.grounded > 0)
+test("admission formula: 0.8*rel + 0.2*gr", score_grounded > 0.4 * 0.8)  # rel=0.5 → at least 0.4
+
+# Gap referencing unknown hashes → zero grounded
+g_ungrounded = make_gap("ungrounded gap", content_refs=["never_seen_hash"], rel=0.5)
+score_ungrounded = compiler_adm._admission_score(g_ungrounded)
+test("unknown hash → grounded ≈ 0", g_ungrounded.scores.grounded == 0.0)
+test("admission with zero grounded = 0.8 * rel", abs(score_ungrounded - 0.4) < 0.01)
+
+# High relevance alone can enter (0.8 * 0.9 = 0.72 > 0.4 threshold)
+g_high_rel = make_gap("high relevance, no grounding", content_refs=["new_hash"], rel=0.9)
+score_high = compiler_adm._admission_score(g_high_rel)
+test("high relevance enters despite zero grounding", score_high >= ADMISSION_THRESHOLD)
+
+# Low relevance cannot enter even with grounding
+g_low_rel = make_gap("low relevance", content_refs=["blob_x"], rel=0.1)
+score_low = compiler_adm._admission_score(g_low_rel)
+test("low relevance rejected despite grounding", score_low < ADMISSION_THRESHOLD)
+
+# ── §14b: Dynamic Bridge Vocab ───────────────────────────────────────────
+
+section("§14b: Dynamic Bridge Vocab")
+
+test("BRIDGE_VOCAB is a set", isinstance(BRIDGE_VOCAB, set))
+test("reprogramme_needed in bridge (hardcoded seed)", "reprogramme_needed" in BRIDGE_VOCAB)
+
+# Register dynamic bridge vocab
+register_bridge_vocab(["admin", "research", "clinton"])
+test("admin_needed registered", "admin_needed" in BRIDGE_VOCAB)
+test("research_needed registered", "research_needed" in BRIDGE_VOCAB)
+test("clinton_needed registered", "clinton_needed" in BRIDGE_VOCAB)
+test("is_bridge detects dynamic vocab", is_bridge("admin_needed"))
+test("is_bridge detects reprogramme", is_bridge("reprogramme_needed"))
+
+# No overlap between observe/mutate/bridge
+test("observe ∩ mutate = ∅", len(OBSERVE_VOCAB & MUTATE_VOCAB) == 0)
+test("observe ∩ bridge = ∅", len(OBSERVE_VOCAB & BRIDGE_VOCAB) == 0)
+
+# ── §14c: Current Vocab Integrity ────────────────────────────────────────
+
+section("§14c: Current Vocab Integrity")
+
+# Observe: exactly 4 terms
+test("OBSERVE has 4 terms", len(OBSERVE_VOCAB) == 4)
+test("pattern_needed in observe", "pattern_needed" in OBSERVE_VOCAB)
+test("hash_resolve_needed in observe", "hash_resolve_needed" in OBSERVE_VOCAB)
+test("email_needed in observe", "email_needed" in OBSERVE_VOCAB)
+test("external_context in observe", "external_context" in OBSERVE_VOCAB)
+test("scan_needed NOT in observe (removed)", "scan_needed" not in OBSERVE_VOCAB)
+test("url_needed NOT in observe (removed)", "url_needed" not in OBSERVE_VOCAB)
+test("registry_needed NOT in observe (removed)", "registry_needed" not in OBSERVE_VOCAB)
+test("research_needed NOT in observe (bridge now)", "research_needed" not in OBSERVE_VOCAB)
+
+# Mutate: exactly 7 terms
+test("MUTATE has 7 terms", len(MUTATE_VOCAB) == 7)
+test("hash_edit_needed in mutate", "hash_edit_needed" in MUTATE_VOCAB)
+test("command_needed in mutate", "command_needed" in MUTATE_VOCAB)
+test("content_needed in mutate", "content_needed" in MUTATE_VOCAB)
+test("message_needed in mutate", "message_needed" in MUTATE_VOCAB)
+
+# ── §8b: hash_edit.st ────────────────────────────────────────────────────
+
+section("§8b: hash_edit.st")
+
+hash_edit_path = str(Path(__file__).parent.parent / "skills" / "hash_edit.st")
+test("hash_edit.st exists", os.path.exists(hash_edit_path))
+
+with open(hash_edit_path) as f:
+    he_data = json.load(f)
+test("hash_edit has 3 steps", len(he_data.get("steps", [])) == 3)
+test("hash_edit triggers on vocab", he_data.get("trigger", "").startswith("on_vocab"))
+test("first step is observe", he_data["steps"][0].get("vocab") == "hash_resolve_needed")
+test("first step is deterministic", he_data["steps"][0].get("post_diff") == False)
+test("second step is flexible", he_data["steps"][1].get("post_diff") == True)
+
+# ── §8c: Skill Loader (trigger, is_command, display_name) ────────────────
+
+section("§8c: Skill Loader Features")
+
+admin_skill = registry.resolve_by_name("admin")
+test("admin has trigger field", admin_skill.trigger == "on_contact:admin")
+test("admin is not command", not admin_skill.is_command)
+test("admin has display_name", admin_skill.display_name == "kenny")
+
+# resolve_name returns display name
+test("resolve_name returns display", registry.resolve_name(admin_skill.hash) == "kenny")
+test("resolve_name returns None for unknown", registry.resolve_name("bad_hash") is None)
+
+# Command skills: registry has commands dict
+test("registry has commands dict", hasattr(registry, 'commands'))
+test("resolve_command returns None for non-command", registry.resolve_command("nonexistent") is None)
+
+# ── §17b: Stepless .st (pure entities) ───────────────────────────────────
+
+section("§17b: Stepless .st (pure entities)")
+
+# st_builder should accept stepless entities
+import subprocess as sp
+result = sp.run(
+    ["python3", str(Path(__file__).parent.parent / "tools" / "st_builder.py")],
+    input=json.dumps({"name": "test_entity", "desc": "test", "trigger": "manual",
+                       "identity": {"role": "tester"}}),
+    capture_output=True, text=True,
+    cwd=str(Path(__file__).parent.parent),
+)
+test("st_builder accepts stepless entity", result.returncode == 0)
+test("st_builder writes file", "Written:" in result.stdout)
+
+# Clean up
+test_st_path = Path(__file__).parent.parent / "skills" / "test_entity.st"
+if test_st_path.exists():
+    with open(test_st_path) as f:
+        test_data = json.load(f)
+    test("stepless .st has identity field", "identity" in test_data)
+    test("stepless .st has empty or minimal steps", len(test_data.get("steps", [])) == 0)
+    os.unlink(test_st_path)
+
+# ── §17c: Manifestation fields forwarded ─────────────────────────────────
+
+section("§17c: Manifestation Fields")
+
+result2 = sp.run(
+    ["python3", str(Path(__file__).parent.parent / "tools" / "st_builder.py")],
+    input=json.dumps({"name": "compliance_test", "desc": "test domain", "trigger": "manual",
+                       "constraints": {"must_ref": "act_1990"}, "sources": ["gov.uk"],
+                       "scope": "planning", "actions": [{"do": "check", "observe": True}]}),
+    capture_output=True, text=True,
+    cwd=str(Path(__file__).parent.parent),
+)
+test("st_builder forwards domain fields", result2.returncode == 0)
+
+comp_path = Path(__file__).parent.parent / "skills" / "compliance_test.st"
+if comp_path.exists():
+    with open(comp_path) as f:
+        comp_data = json.load(f)
+    test("constraints field forwarded", "constraints" in comp_data)
+    test("sources field forwarded", "sources" in comp_data)
+    test("scope field forwarded", "scope" in comp_data)
+    os.unlink(comp_path)
+
+# ── §10b: Universal Postcondition ─────────────────────────────────────────
+
+section("§10b: Universal Postcondition")
+
+# Every mutation should produce a postcondition gap (hash_resolve_needed)
+postcond_gap = Gap.create(desc="observe commit:abc", content_refs=["abc"], step_refs=["step_x"])
+postcond_gap.scores = Epistemic(relevance=1.0, confidence=1.0, grounded=0.0)
+postcond_gap.vocab = "hash_resolve_needed"
+test("postcondition gap has hash_resolve vocab", postcond_gap.vocab == "hash_resolve_needed")
+test("postcondition gap targets commit ref", "abc" in postcond_gap.content_refs)
+test("postcondition gap is observe", is_observe(postcond_gap.vocab))
+test("postcondition gap is not mutate", not is_mutate(postcond_gap.vocab))
+
+# ── §2b: Trajectory renders as hash tree ──────────────────────────────────
+
+section("§2b: Hash Tree Render")
+
+traj_render = Trajectory()
+s_r1 = make_step("observed workspace", content_refs=["commit_abc"])
+s_r2 = make_step("resolved config", step_refs=[s_r1.hash], content_refs=["blob_xyz"],
+                  gaps=[make_gap("needs edit", content_refs=["blob_xyz"], vocab="hash_edit_needed")])
+traj_render.append(s_r1)
+traj_render.append(s_r2)
+chain_r = Chain.create(origin_gap=s_r2.gaps[0].hash, first_step=s_r1.hash)
+chain_r.add_step(s_r2.hash)
+traj_render.add_chain(chain_r)
+
+rendered = traj_render.render_recent(5, registry=registry)
+test("render produces tree structure", "├─" in rendered or "└─" in rendered)
+test("render shows step hashes", "step:" in rendered)
+test("render shows gap hashes", "gap:" in rendered)
+test("render shows chain hash", "chain:" in rendered)
+test("render shows vocab tag", "hash_edit_needed" in rendered)
+
+# Named hash resolution in render
+s_named = make_step("loaded identity", content_refs=[admin_skill.hash])
+traj_named = Trajectory()
+traj_named.append(s_named)
+rendered_named = traj_named.render_recent(5, registry=registry)
+test("render shows named skill ref (kenny:hash)", "kenny:" in rendered_named)
+
+# ── §18b: Identity fires after first step ─────────────────────────────────
+
+section("§18b: Identity .st structure")
+
+test("admin.st has identity.name", admin_data.get("identity", {}).get("name") == "Kenny")
+test("admin.st has identity.role", "role" in admin_data.get("identity", {}))
+test("admin.st has communication prefs", "communication" in admin_data.get("preferences", {}))
+test("admin.st has architecture prefs", "architecture" in admin_data.get("preferences", {}))
+test("admin.st has workflow prefs", "workflow" in admin_data.get("preferences", {}))
+
+# ── §20b: No stale modules ───────────────────────────────────────────────
+
+section("§20b: No Stale Modules")
+
+cors_dir = Path(__file__).parent.parent
+test("no config_edit.st (deleted)", not (cors_dir / "skills" / "config_edit.st").exists())
+test("no DESIGN_NOTES.md (deleted)", not (cors_dir / "docs" / "DESIGN_NOTES.md").exists())
+test("hash_edit.st exists", (cors_dir / "skills" / "hash_edit.st").exists())
+test("hash_manifest.py exists", (cors_dir / "tools" / "hash_manifest.py").exists())
+test("st_builder.py exists", (cors_dir / "tools" / "st_builder.py").exists())
 
 # ── Summary ──────────────────────────────────────────────────────────────
 
