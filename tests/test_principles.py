@@ -438,8 +438,10 @@ test("low relevance rejected despite grounding", score_low < ADMISSION_THRESHOLD
 section("§14b: Bridge Vocab")
 
 test("BRIDGE_VOCAB is a set", isinstance(BRIDGE_VOCAB, set))
-test("reprogramme_needed is the single bridge primitive", BRIDGE_VOCAB == {"reprogramme_needed"})
+test("three bridge codons", BRIDGE_VOCAB == {"reprogramme_needed", "reason_needed", "commit_needed"})
 test("is_bridge detects reprogramme", is_bridge("reprogramme_needed"))
+test("is_bridge detects reason", is_bridge("reason_needed"))
+test("is_bridge detects commit", is_bridge("commit_needed"))
 test("entity resolution has no vocab (just hash_resolve)", not is_bridge("admin_needed"))
 
 # No overlap between observe/mutate/bridge
@@ -463,7 +465,8 @@ test("registry_needed NOT in observe (removed)", "registry_needed" not in OBSERV
 test("research_needed NOT in observe (bridge now)", "research_needed" not in OBSERVE_VOCAB)
 
 # Mutate: exactly 7 terms
-test("MUTATE has 7 terms", len(MUTATE_VOCAB) == 7)
+test("MUTATE has 8 terms", len(MUTATE_VOCAB) == 8)
+test("stitch_needed in mutate", "stitch_needed" in MUTATE_VOCAB)
 test("hash_edit_needed in mutate", "hash_edit_needed" in MUTATE_VOCAB)
 test("command_needed in mutate", "command_needed" in MUTATE_VOCAB)
 test("content_needed in mutate", "content_needed" in MUTATE_VOCAB)

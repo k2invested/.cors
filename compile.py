@@ -37,7 +37,9 @@ from step import Gap, Step, Chain, Epistemic, Trajectory
 
 # ── Configuration ─────────────────────────────────────────────────────────
 
-ADMISSION_THRESHOLD = 0.4       # minimum combined score for gap to enter ledger
+ADMISSION_THRESHOLD = 0.4       # fresh gaps: minimum score to enter ledger
+CROSS_TURN_THRESHOLD = 0.6     # dangling gaps from prior turns: higher bar to re-enter
+DORMANT_PROMOTE_THRESHOLD = 0.7 # dormant gaps: highest bar to promote back to active
 CONFIDENCE_THRESHOLD = 0.8      # gap is resolved when confidence exceeds this
 DORMANT_THRESHOLD = 0.2         # below this, gap is stored as dormant (peripheral vision)
 MAX_CHAIN_DEPTH = 15            # maximum steps in a single chain before force-close
@@ -55,12 +57,12 @@ OBSERVE_VOCAB = {
 }
 
 MUTATE_VOCAB = {
-    "hash_edit_needed",
+    "hash_edit_needed", "stitch_needed",
     "content_needed", "script_edit_needed", "command_needed",
     "message_needed", "json_patch_needed", "git_revert_needed",
 }
 
-BRIDGE_VOCAB: set[str] = {"reprogramme_needed"}  # the single bridge primitive
+BRIDGE_VOCAB: set[str] = {"reprogramme_needed", "reason_needed", "commit_needed"}  # the three bridge codons
 
 # Entity resolution (internal &) has no vocab — it's just hash_resolve_needed
 # where the hash happens to be a .st file. The kernel checks the skill registry
@@ -320,12 +322,13 @@ class Compiler:
       6. Track chain boundaries (chain lifecycle)
     """
 
-    def __init__(self, trajectory: Trajectory):
+    def __init__(self, trajectory: Trajectory, current_turn: int = 0):
         self.ledger = Ledger()
         self.trajectory = trajectory
         self.governor_state = GovernorState()
         self.active_chain: Chain | None = None
         self.last_was_mutation: bool = False  # OMO tracking
+        self.current_turn: int = current_turn  # for cross-turn threshold
 
     # ── 1. Emission → Admission → Placement ──
 
@@ -356,11 +359,24 @@ class Compiler:
         gap.scores.grounded = grounded  # overwrite LLM's self-assessment
         return (0.8 * gap.scores.relevance + 0.2 * grounded)
 
+    def _admission_threshold(self, gap: Gap) -> float:
+        """Deterministic threshold based on gap origin.
+
+        Fresh gaps (current turn): 0.4 — standard
+        Cross-turn gaps (dangling): 0.6 — must justify carrying forward
+        Dormant promotion: 0.7 — was rejected, needs strong evidence
+        """
+        if gap.dormant:
+            return DORMANT_PROMOTE_THRESHOLD
+        if gap.turn_id is not None and gap.turn_id < self.current_turn:
+            return CROSS_TURN_THRESHOLD
+        return ADMISSION_THRESHOLD
+
     def emit(self, step: Step):
         """Process a step's gaps through the three-part lifecycle.
 
         Emission:   step.gaps are candidate gaps
-        Admission:  gaps above threshold enter ledger; below dormant threshold → stored as dormant
+        Admission:  tiered thresholds (fresh=0.4, cross-turn=0.6, dormant=0.7)
         Placement:  admitted gaps push onto stack (depth-first)
 
         Grounded is computed deterministically from hash co-occurrence,
@@ -368,12 +384,13 @@ class Compiler:
         """
         for gap in step.gaps:
             combined = self._admission_score(gap)
+            threshold = self._admission_threshold(gap)
 
             if combined < DORMANT_THRESHOLD:
                 gap.dormant = True
                 continue
 
-            if combined < ADMISSION_THRESHOLD:
+            if combined < threshold:
                 gap.dormant = True
                 continue
 
@@ -405,7 +422,8 @@ class Compiler:
                 gap.dormant = True
                 continue
 
-            if combined < ADMISSION_THRESHOLD:
+            threshold = self._admission_threshold(gap)
+            if combined < threshold:
                 gap.dormant = True
                 continue
 
@@ -415,6 +433,32 @@ class Compiler:
 
         # Sort: observe (20) pops first, reprogramme (99) pops last
         self.ledger.sort_by_priority()
+
+    def readmit_cross_turn(self, gaps: list[Gap], step_hash: str):
+        """Re-admit dangling gaps from prior turns.
+
+        Gaps are re-scored against the cross-turn threshold (0.6).
+        Grounded is recomputed from current trajectory co-occurrence.
+        Original metadata (chain_id, depth, priority) preserved.
+        Gaps that don't meet threshold are silently dropped.
+        """
+        admitted = 0
+        for gap in gaps:
+            score = self._admission_score(gap)  # re-computes grounded
+            threshold = self._admission_threshold(gap)
+
+            if score < threshold:
+                continue  # doesn't justify carrying forward — dropped
+
+            chain = Chain.create(origin_gap=gap.hash, first_step=step_hash)
+            self.trajectory.add_chain(chain)
+            self.ledger.push_origin(gap=gap, chain_id=chain.hash)
+            admitted += 1
+
+        if admitted > 0:
+            self.ledger.sort_by_priority()
+
+        return admitted
 
     # ── 2. Sequencing (pop + route) ──
 
@@ -488,7 +532,8 @@ class Compiler:
     # ── 4. Chain Management ──
 
     def resolve_current_gap(self, gap_hash: str):
-        """Mark the current gap as resolved. Check chain completion."""
+        """Mark the current gap as resolved. Check chain completion.
+        If chain is complete and exceeds extract length, mark for extraction."""
         self.ledger.resolve_gap(gap_hash)
 
         if self.active_chain:
@@ -496,6 +541,9 @@ class Compiler:
             if self.ledger.chain_is_complete(chain_id):
                 self.ledger.close_chain(chain_id)
                 self.active_chain.resolved = True
+                # Mark for extraction if long enough
+                if self.active_chain.length() >= CHAIN_EXTRACT_LENGTH:
+                    self.active_chain.extracted = True
                 self.active_chain = None
 
     def add_step_to_chain(self, step_hash: str):

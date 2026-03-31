@@ -33,6 +33,38 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
+# ── Time formatting ──────────────────────────────────────────────────────
+
+def relative_time(t: float) -> str:
+    """Format a timestamp as relative time from now. For deep renders (per-gap injection)."""
+    if t <= 0:
+        return ""
+    delta = time.time() - t
+    if delta < 2:
+        return "just now"
+    if delta < 60:
+        return f"{int(delta)}s ago"
+    if delta < 3600:
+        return f"{int(delta / 60)}m ago"
+    if delta < 86400:
+        return f"{int(delta / 3600)}h ago"
+    days = int(delta / 86400)
+    if days == 1:
+        return "yesterday"
+    if days < 30:
+        return f"{days}d ago"
+    return f"{int(days / 30)}mo ago"
+
+
+def absolute_time(t: float) -> str:
+    """Format a timestamp as absolute datetime. Universal across all renders."""
+    if t <= 0:
+        return ""
+    from datetime import datetime
+    dt = datetime.fromtimestamp(t)
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
 # ── Hash computation ──────────────────────────────────────────────────────
 
 def blob_hash(content: str) -> str:
@@ -87,6 +119,7 @@ class Gap:
     vocab_score: float = 0.0            # confidence in the vocab mapping
     resolved:    bool = False           # True when chain closed this gap
     dormant:     bool = False           # True if below threshold, stored but not acted on
+    turn_id:     Optional[int] = None  # which turn created this gap (for cross-turn threshold)
 
     @staticmethod
     def create(desc: str,
@@ -408,6 +441,66 @@ class Trajectory:
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
 
+    def extract_chains(self, chains_dir: str):
+        """Extract long/resolved chains to individual files.
+
+        Chains marked as extracted get their full step data saved to
+        chains/{chain_hash}.json. The trajectory keeps the chain hash
+        but the step data moves to the file — keeps trajectory compact.
+        """
+        import os
+        os.makedirs(chains_dir, exist_ok=True)
+        for chain in self.chains.values():
+            if chain.extracted and chain.resolved:
+                chain_path = os.path.join(chains_dir, f"{chain.hash}.json")
+                if os.path.exists(chain_path):
+                    continue  # already extracted
+                chain_data = {
+                    "hash": chain.hash,
+                    "origin_gap": chain.origin_gap,
+                    "desc": chain.desc,
+                    "steps": [],
+                }
+                for step_hash in chain.steps:
+                    step = self.steps.get(step_hash)
+                    if step:
+                        chain_data["steps"].append(step.to_dict())
+                with open(chain_path, "w") as f:
+                    json.dump(chain_data, f, indent=2)
+
+    def append_to_passive_chain(self, chain_hash: str, step: "Step") -> bool:
+        """Append a step to a passive (cross-turn) chain.
+
+        Passive chains accumulate steps across turns — like commitments
+        building evidence toward a goal. Returns True if the chain exists
+        and the step was appended.
+        """
+        chain = self.chains.get(chain_hash)
+        if chain and not chain.resolved:
+            chain.add_step(step.hash)
+            self.append(step)
+            return True
+        return False
+
+    def find_passive_chains(self, content_ref: str) -> list[Chain]:
+        """Find active (unresolved) chains whose origin gap references this hash.
+
+        Used to detect when a gap's content_refs overlap with an existing
+        passive chain — the step should append to that chain rather than
+        starting a new one.
+        """
+        matches = []
+        for chain in self.chains.values():
+            if chain.resolved:
+                continue
+            # Check if the chain's origin gap references the same entity
+            origin_gap = self.gap_index.get(chain.origin_gap)
+            if origin_gap:
+                all_refs = origin_gap.content_refs + origin_gap.step_refs
+                if content_ref in all_refs:
+                    matches.append(chain)
+        return matches
+
     @staticmethod
     def load(path: str) -> "Trajectory":
         """Load trajectory from JSON file."""
@@ -501,10 +594,15 @@ class Trajectory:
 
         lines = []
         for chain in chains:
-            # Chain header
+            # Chain header with time range
             status = "resolved" if chain.resolved else f"active, {chain.length()} steps"
             desc = chain.desc or "in progress"
-            lines.append(f"chain:{chain.hash}  \"{desc}\" ({status})")
+            # Time: last step absolute timestamp
+            last_step = self.steps.get(chain.steps[-1]) if chain.steps else None
+            time_str = ""
+            if last_step and last_step.t > 0:
+                time_str = f" [{absolute_time(last_step.t)}]"
+            lines.append(f"chain:{chain.hash}  \"{desc}\" ({status}){time_str}")
             lines.append(f"  origin: {chain.origin_gap}")
 
             # Render each step as a branch
@@ -518,10 +616,11 @@ class Trajectory:
                 branch = "└" if is_last_step else "├"
                 cont = " " if is_last_step else "│"
 
-                # Step line — desc + refs
+                # Step line — desc + refs + time
                 ref_str = self._render_refs(step.step_refs, step.content_refs, registry)
                 commit_str = f" → commit:{step.commit}" if step.commit else ""
-                lines.append(f"  {branch}─ step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}")
+                time_tag = f" ({absolute_time(step.t)})" if step.t > 0 else ""
+                lines.append(f"  {branch}─ step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}{time_tag}")
 
                 # Step's gaps as sub-branches
                 active = [g for g in step.gaps if not g.dormant and not g.resolved]
@@ -556,7 +655,8 @@ class Trajectory:
 
             ref_str = self._render_refs(step.step_refs, step.content_refs, registry)
             commit_str = f" → commit:{step.commit}" if step.commit else ""
-            lines.append(f"{branch}─ step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}")
+            time_tag = f" ({absolute_time(step.t)})" if step.t > 0 else ""
+            lines.append(f"{branch}─ step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}{time_tag}")
 
             for j, gap in enumerate(step.gaps):
                 is_last_gap = (j == len(step.gaps) - 1)

@@ -52,6 +52,7 @@ TRAJ_FILE    = CORS_ROOT / "trajectory.json"
 CHAINS_FILE  = CORS_ROOT / "chains.json"
 MAX_ITERATIONS = 30
 TRAJECTORY_WINDOW = 10   # how many recent chains to render for LLM
+_turn_counter = 0        # increments each turn — used for cross-turn gap threshold
 
 
 # ── Git operations ───────────────────────────────────────────────────────
@@ -93,15 +94,97 @@ def git_diff(from_ref: str, to_ref: str = "HEAD") -> str:
     return git(["diff", from_ref, to_ref])
 
 
+# ── Tree Policy ──────────────────────────────────────────────────────────
+# Per-path mutation policy. Configurable via tree_policy.json.
+# Loaded at startup — the UI can edit this file to change protection rules.
+#
+# Policy types:
+#   {"immutable": true}              — auto-revert if mutated
+#   {"on_mutate": "vocab_needed"}    — reroute mutation to specified vocab
+#   (no entry)                       — normal mutation allowed
+#
+TREE_POLICY_FILE = CORS_ROOT / "tree_policy.json"
+DEFAULT_TREE_POLICY = {
+    "skills/":          {"on_mutate": "reprogramme_needed"},
+    "ui_output/":       {"on_mutate": "stitch_needed"},
+    "logs/":            {"immutable": True},
+    "store/":           {"immutable": True},
+    "step.py":          {"immutable": True},
+    "compile.py":       {"immutable": True},
+    "loop.py":          {"immutable": True},
+    "skills/loader.py": {"immutable": True},
+    "trajectory.json":  {"immutable": True},
+    "chains.json":      {"immutable": True},
+}
+
+
+def _load_tree_policy() -> dict:
+    """Load tree policy from JSON file, falling back to defaults."""
+    try:
+        with open(TREE_POLICY_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return DEFAULT_TREE_POLICY
+
+
+def _match_policy(path: str, policy: dict) -> dict | None:
+    """Find the policy that applies to a given path.
+    Checks exact match first, then prefix match (longest wins)."""
+    # Exact match
+    if path in policy:
+        return policy[path]
+    # Prefix match — longest prefix wins
+    best = None
+    best_len = 0
+    for prefix, rule in policy.items():
+        if prefix.endswith("/") and path.startswith(prefix) and len(prefix) > best_len:
+            best = rule
+            best_len = len(prefix)
+    return best
+
+
+def _check_protected(commit_sha: str, pre_commit_sha: str) -> list[str]:
+    """Check if any immutable paths were modified between two commits.
+    Returns list of violated paths (only immutable policy, not on_mutate)."""
+    policy = _load_tree_policy()
+    diff_output = git(["diff", "--name-only", pre_commit_sha, commit_sha])
+    if not diff_output:
+        return []
+    changed = diff_output.strip().split("\n")
+    violations = []
+    for path in changed:
+        rule = _match_policy(path, policy)
+        if rule and rule.get("immutable"):
+            violations.append(path)
+    return violations
+
+
 def auto_commit(message: str) -> str | None:
-    """Stage all changes and commit. Returns SHA or None if nothing to commit."""
-    # Check for changes
+    """Stage all changes and commit. Returns SHA or None if nothing to commit.
+
+    After committing, checks for protected path violations. If the LLM
+    mutated a protected file, auto-reverts to the previous commit and
+    returns None (the mutation is rejected).
+    """
     status = git(["status", "--porcelain"])
     if not status:
         return None
+
+    pre_sha = git_head()
     git(["add", "-A"])
     git(["commit", "-m", message])
-    return git_head()
+    post_sha = git_head()
+
+    # Check integrity — did the agent mutate protected paths?
+    violations = _check_protected(post_sha, pre_sha)
+    if violations:
+        print(f"  ⚠ PROTECTED PATH VIOLATION: {violations}")
+        print(f"  → auto-reverting to {pre_sha}")
+        git(["revert", "--no-commit", "HEAD"])
+        git(["commit", "-m", f"auto-revert: protected path violation ({', '.join(violations)})"])
+        return None  # mutation rejected
+
+    return post_sha
 
 
 # ── Hash resolution ──────────────────────────────────────────────────────
@@ -110,13 +193,16 @@ _skill_registry: SkillRegistry | None = None  # set by run_turn for resolve_hash
 
 
 def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
-    """Resolve any hash to its content.
+    """Resolve any hash to its content as a semantic tree.
 
     Resolution order:
       1. Skill hash → .st entity data (internal &, context injection)
-      2. Step hash → step data from trajectory
-      3. Gap hash → gap data from trajectory
+      2. Step hash → semantic tree branch (follows step_refs recursively)
+      3. Gap hash → gap data with scores
       4. Git object → git show (blob/tree/commit)
+
+    Step hashes render as the same tree shape the LLM sees in render_recent.
+    The causal ancestry is visible — step_refs trace backward, gaps branch forward.
     """
     # Try skill registry first — entity .st files
     if _skill_registry:
@@ -124,30 +210,91 @@ def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
         if skill:
             return _render_entity(skill)
 
-    # Try trajectory step
+    # Try trajectory step — render as semantic tree branch
     step = trajectory.resolve(ref)
     if step:
-        refs = step.step_refs + step.content_refs
-        gaps = [f"  gap:{g.hash} \"{g.desc}\"" for g in step.gaps]
-        lines = [f"step:{ref} \"{step.desc}\""]
-        if refs:
-            lines.append(f"  refs: {refs}")
-        if gaps:
-            lines.extend(gaps)
-        if step.commit:
-            lines.append(f"  commit: {step.commit}")
-        return "\n".join(lines)
+        return _render_step_tree(step, trajectory, depth=0, max_depth=5)
 
     # Try trajectory gap
     gap = trajectory.resolve_gap(ref)
     if gap:
-        lines = [f"gap:{ref} \"{gap.desc}\""]
-        if gap.content_refs:
-            lines.append(f"  content_refs: {gap.content_refs}")
-        if gap.step_refs:
-            lines.append(f"  step_refs: {gap.step_refs}")
-        lines.append(f"  scores: rel={gap.scores.relevance:.2f} conf={gap.scores.confidence:.2f} gr={gap.scores.grounded:.2f}")
-        return "\n".join(lines)
+        return _render_gap_tree(gap, trajectory)
+
+    # Try git object
+    content = git_show(ref)
+    if not content.startswith("(unresolvable"):
+        return content
+
+    return None
+
+
+def _render_step_tree(step, trajectory: Trajectory, depth: int = 0,
+                      max_depth: int = 5) -> str:
+    """Render a step as a semantic tree branch.
+
+    Follows step_refs backward (causal ancestry) up to max_depth.
+    Shows gaps as child branches. Same shape as render_recent.
+    """
+    indent = "  " * depth
+    registry = _skill_registry
+
+    # Step line with refs
+    refs = []
+    for r in step.step_refs:
+        refs.append(trajectory._tag_ref(r, "step", registry) if hasattr(trajectory, '_tag_ref') else f"step:{r}")
+    for r in step.content_refs:
+        refs.append(trajectory._tag_ref(r, "content", registry) if hasattr(trajectory, '_tag_ref') else r)
+
+    from step import absolute_time
+    ref_str = f" → refs:[{', '.join(refs)}]" if refs else ""
+    commit_str = f" → commit:{step.commit}" if step.commit else ""
+    time_tag = f" ({absolute_time(step.t)})" if step.t > 0 else ""
+    lines = [f"{indent}step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}{time_tag}"]
+
+    # Gaps as child branches
+    for gap in step.gaps:
+        if gap.dormant:
+            lines.append(f"{indent}  └─ gap:{gap.hash} (dormant, score:{gap.scores.magnitude():.2f})")
+        elif gap.resolved:
+            lines.append(f"{indent}  └─ gap:{gap.hash} (resolved)")
+        else:
+            grefs = []
+            for r in gap.step_refs:
+                grefs.append(f"step:{r}")
+            for r in gap.content_refs:
+                grefs.append(r)
+            gref_str = f" → refs:[{', '.join(grefs)}]" if grefs else ""
+            vocab_str = f" [{gap.vocab}]" if gap.vocab else ""
+            lines.append(f"{indent}  └─ gap:{gap.hash} \"{gap.desc}\"{vocab_str}{gref_str}")
+
+    # Follow step_refs backward (causal ancestry)
+    if depth < max_depth:
+        for parent_hash in step.step_refs:
+            parent = trajectory.resolve(parent_hash)
+            if parent:
+                lines.append(f"{indent}  ── ancestor:")
+                lines.append(_render_step_tree(parent, trajectory, depth + 1, max_depth))
+
+    return "\n".join(lines)
+
+
+def _render_gap_tree(gap, _trajectory: Trajectory = None) -> str:
+    """Render a gap with its full context."""
+    lines = [f"gap:{gap.hash} \"{gap.desc}\""]
+    if gap.content_refs:
+        lines.append(f"  content_refs: {gap.content_refs}")
+    if gap.step_refs:
+        lines.append(f"  step_refs: {gap.step_refs}")
+    lines.append(f"  scores: rel={gap.scores.relevance:.2f} conf={gap.scores.confidence:.2f} gr={gap.scores.grounded:.2f}")
+    if gap.vocab:
+        lines.append(f"  vocab: {gap.vocab}")
+    if gap.dormant:
+        lines.append(f"  status: dormant")
+    elif gap.resolved:
+        lines.append(f"  status: resolved")
+    else:
+        lines.append(f"  status: active")
+    return "\n".join(lines)
 
     # Try git object
     content = git_show(ref)
@@ -176,19 +323,22 @@ def resolve_all_refs(step_refs: list[str], content_refs: list[str],
 
 TOOL_MAP = {
     # Observation tools (deterministic — kernel resolves, no LLM needed)
-    "hash_resolve_needed":  None,  # handled inline by resolve_hash
-    "pattern_needed":       "tools/file_grep.py",
-    "email_needed":         "tools/email_check.py",
-    "external_context":     None,  # LLM surfaces from context
+    # Format: {"tool": path, "post_observe": target_path_or_None}
+    "hash_resolve_needed":  {"tool": None},
+    "pattern_needed":       {"tool": "tools/file_grep.py"},
+    "email_needed":         {"tool": "tools/email_check.py"},
+    "external_context":     {"tool": None},
 
     # Mutation tools (composed — 5.4 writes the command)
-    "hash_edit_needed":     "tools/hash_manifest.py",
-    "content_needed":       "tools/file_write.py",
-    "script_edit_needed":   "tools/file_edit.py",
-    "command_needed":       "tools/code_exec.py",
-    "message_needed":       "tools/email_send.py",
-    "json_patch_needed":    "tools/json_patch.py",
-    "git_revert_needed":    "tools/git_ops.py",
+    # post_observe: None = resolve commit tree, path = resolve specific dir/file from commit
+    "hash_edit_needed":     {"tool": "tools/hash_manifest.py"},
+    "stitch_needed":        {"tool": "tools/stitch_generate.py", "post_observe": "ui_output/"},
+    "content_needed":       {"tool": "tools/file_write.py"},
+    "script_edit_needed":   {"tool": "tools/file_edit.py"},
+    "command_needed":       {"tool": "tools/code_exec.py"},
+    "message_needed":       {"tool": "tools/email_send.py"},
+    "json_patch_needed":    {"tool": "tools/json_patch.py"},
+    "git_revert_needed":    {"tool": "tools/git_ops.py"},
 }
 
 # Deterministic vocabs — kernel resolves without LLM
@@ -351,6 +501,7 @@ OBSERVE (kernel resolves, you receive data):
 
 MUTATE (you compose a command, kernel executes):
   hash_edit_needed — edit any file (universal: read by hash → compose edit → execute via hash_manifest)
+  stitch_needed — generate UI via Google Stitch (prompt → HTML + Tailwind CSS)
   content_needed — write a new file
   script_edit_needed — edit an existing file
   command_needed — execute a shell command
@@ -481,9 +632,12 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
 
     # ── 1. INIT ──────────────────────────────────────────────────────
 
+    global _turn_counter, _skill_registry
+    _turn_counter += 1
+    current_turn = _turn_counter
+
     trajectory = Trajectory.load(str(TRAJ_FILE))
     Trajectory.load_chains(str(CHAINS_FILE), trajectory)
-    global _skill_registry
     registry = load_all(str(SKILLS_DIR))
     _skill_registry = registry
     head = git_head()
@@ -497,12 +651,23 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
         for s in registry.all_skills()
     )
     dynamic_bridge = (
-        "BRIDGE:\n"
-        "  reprogramme_needed — create or update an entity .st file. USE THIS when:\n"
+        "BRIDGE (three codons):\n"
+        "  reason_needed — START CODON. Activate a reasoning chain. USE THIS when:\n"
+        "    - A decision requires deeper analysis than one step\n"
+        "    - Long-term planning or judgment is needed\n"
+        "    - You need to traverse the trajectory tree to build understanding\n"
+        "    - A commitment needs activation (reference commitment hash + compose prompt)\n"
+        "    Renders reasoning trees, then routes: observe / refine / manifest agency.\n\n"
+        "  commit_needed — END CODON. Do NOT emit this directly. It is injected automatically\n"
+        "    by reason.st when a commitment is manifested. It sits at lowest relevance behind\n"
+        "    all commitment gaps — fires last, reintegrates the full commitment tree into\n"
+        "    main context, then closes or continues the chain. Compiler laws maintained.\n\n"
+        "  reprogramme_needed — PERSIST CODON. Create or update an entity .st file. USE THIS when:\n"
         "    - User corrects or clarifies a preference\n"
         "    - User mentions a new person, concept, or domain to track\n"
         "    - User says 'remember', 'update', 'track', or corrects your understanding\n"
-        "    - Any knowledge needs to be persisted beyond this conversation\n\n"
+        "    - Any knowledge needs to be persisted beyond this conversation\n"
+        "    Persists reasoning into the .st ecosystem.\n\n"
         "  Entity resolution has NO vocab — it's just hash_resolve_needed.\n"
         "  When you reference an entity hash in content_refs, the kernel automatically\n"
         "  resolves it to the .st file's data. Same mechanism as any other hash.\n\n"
@@ -587,9 +752,19 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
     # Admit origin gaps onto the ledger. The compiler sequences them
     # via the stack (LIFO, depth-first).
 
-    compiler = Compiler(trajectory)
+    compiler = Compiler(trajectory, current_turn=current_turn)
 
-    if not origin_gaps:
+    # Tag origin gaps with current turn
+    for g in origin_gaps:
+        g.turn_id = current_turn
+
+    # Re-admit dangling cross-turn gaps (higher threshold: 0.6)
+    if dangling:
+        readmitted = compiler.readmit_cross_turn(dangling, origin_step.hash)
+        if readmitted:
+            print(f"  → {readmitted} cross-turn gap(s) re-admitted")
+
+    if not origin_gaps and not dangling:
         # No gaps → auto-synthesize
         print("\n── AUTO-SYNTH (no gaps) ──")
         response = _synthesize(session, user_message)
@@ -671,7 +846,8 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
             # ── Deterministic: kernel resolves directly ──
             print(f"  → deterministic ({vocab})")
 
-            tool_path = TOOL_MAP.get(vocab)
+            tool_conf = TOOL_MAP.get(vocab, {})
+            tool_path = tool_conf.get("tool") if isinstance(tool_conf, dict) else tool_conf
             if tool_path:
                 params = {"refs": gap.content_refs, "desc": gap.desc}
                 output, _ = execute_tool(tool_path, params)
@@ -694,18 +870,33 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
                 compiler.resolve_current_gap(gap.hash)
 
         elif vocab and is_mutate(vocab):
-            # ── Auto-route .st file edits to reprogramme ──
-            # If the gap targets a .st file, route through st_builder
-            # instead of generic file_edit. .st files have schema.
-            targets_st = any(
-                ref.endswith(".st") or registry.resolve(ref) is not None
-                for ref in gap.content_refs
-            ) or ".st" in gap.desc.lower()
+            # ── Policy-driven auto-route ──
+            # Check tree_policy for on_mutate rules. If a content_ref or desc
+            # matches a path with an on_mutate policy, reroute to that vocab.
+            policy = _load_tree_policy()
+            reroute_vocab = None
+            for ref in gap.content_refs:
+                rule = _match_policy(ref, policy)
+                if rule and rule.get("on_mutate") and rule["on_mutate"] != vocab:
+                    reroute_vocab = rule["on_mutate"]
+                    break
+            # Also check desc for path hints
+            if not reroute_vocab:
+                for path_prefix, rule in policy.items():
+                    if rule.get("on_mutate") and path_prefix.rstrip("/") in gap.desc.lower():
+                        if rule["on_mutate"] != vocab:
+                            reroute_vocab = rule["on_mutate"]
+                            break
+            # Also catch .st files by extension (registry check)
+            if not reroute_vocab and vocab != "reprogramme_needed":
+                if any(ref.endswith(".st") or registry.resolve(ref) is not None for ref in gap.content_refs):
+                    reroute_vocab = "reprogramme_needed"
+                elif ".st" in gap.desc.lower():
+                    reroute_vocab = "reprogramme_needed"
 
-            if targets_st and vocab in ("script_edit_needed", "content_needed", "json_patch_needed", "hash_edit_needed"):
-                print(f"  → mutation targeting .st file, rerouting to reprogramme")
-                # Swap vocab to reprogramme and re-push
-                gap.vocab = "reprogramme_needed"
+            if reroute_vocab:
+                print(f"  → policy auto-route: {vocab} → {reroute_vocab}")
+                gap.vocab = reroute_vocab
                 compiler.ledger.stack.append(entry)
                 continue
 
@@ -811,9 +1002,24 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
                     compiler.record_execution(vocab, True)
 
                     # Universal postcondition: auto-commit → hash_resolve_needed
+                    # post_observe config determines what to resolve from the commit
+                    tool_conf = TOOL_MAP.get(vocab, {})
+                    post_observe = tool_conf.get("post_observe") if isinstance(tool_conf, dict) else None
+
+                    if post_observe:
+                        # Targeted: resolve specific path from commit tree
+                        tree_files = git(["ls-tree", "-r", "--name-only", commit_sha, post_observe])
+                        targeted_refs = [f"{commit_sha}:{f}" for f in tree_files.split("\n") if f.strip()]
+                        postcond_refs = targeted_refs or [commit_sha]
+                        postcond_desc = f"observe {post_observe}: {', '.join(postcond_refs)}"
+                    else:
+                        # Default: resolve commit tree
+                        postcond_refs = [commit_sha]
+                        postcond_desc = f"observe commit:{commit_sha}"
+
                     postcond = Gap.create(
-                        desc=f"observe commit:{commit_sha}",
-                        content_refs=[commit_sha],
+                        desc=postcond_desc,
+                        content_refs=postcond_refs,
                         step_refs=[step_result.hash],
                     )
                     postcond.scores = Epistemic(relevance=1.0, confidence=1.0, grounded=0.0)
@@ -821,25 +1027,48 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
                     postcond_step = Step.create(
                         desc=f"postcondition: {gap.desc}",
                         step_refs=[step_result.hash],
-                        content_refs=[commit_sha],
+                        content_refs=postcond_refs,
                         gaps=[postcond],
                         chain_id=entry.chain_id,
                     )
                     trajectory.append(postcond_step)
                     compiler.emit(postcond_step)
                     compiler.resolve_current_gap(gap.hash)
-                    print(f"  → postcondition gap injected: hash_resolve_needed → commit:{commit_sha}")
+                    print(f"  → postcondition gap injected: hash_resolve_needed → {postcond_refs}")
                 else:
-                    # No changes — command was observation-like
-                    session.inject(f"## Command output (no mutation)\n{output}")
-                    step_result = Step.create(
-                        desc=f"observed: {gap.desc}",
-                        step_refs=[origin_step.hash],
-                        content_refs=gap.content_refs,
-                        chain_id=entry.chain_id,
-                    )
-                    compiler.record_execution(vocab, False)
-                    compiler.resolve_current_gap(gap.hash)
+                    # No commit — either nothing changed or protected path violation
+                    # Check if it was a revert by looking at git log
+                    last_msg = git(["log", "--oneline", "-1"])
+                    if "auto-revert: protected path violation" in last_msg:
+                        # Protected path violation — warn the LLM, don't resolve gap
+                        session.inject(
+                            f"## PROTECTED PATH VIOLATION\n"
+                            f"Your command tried to modify a protected system file. "
+                            f"The change was auto-reverted. Recompose your command to "
+                            f"only modify files in the workspace, not system files.\n"
+                            f"Command output was:\n{output}"
+                        )
+                        step_result = Step.create(
+                            desc=f"REVERTED: {gap.desc} (protected path violation)",
+                            step_refs=[origin_step.hash],
+                            content_refs=gap.content_refs,
+                            chain_id=entry.chain_id,
+                        )
+                        # Don't resolve — let LLM recompose
+                        trajectory.append(step_result)
+                        compiler.add_step_to_chain(step_result.hash)
+                        continue
+                    else:
+                        # Genuinely no changes
+                        session.inject(f"## Command output (no mutation)\n{output}")
+                        step_result = Step.create(
+                            desc=f"observed: {gap.desc}",
+                            step_refs=[origin_step.hash],
+                            content_refs=gap.content_refs,
+                            chain_id=entry.chain_id,
+                        )
+                        compiler.record_execution(vocab, False)
+                        compiler.resolve_current_gap(gap.hash)
             else:
                 # Nothing executed — resolve and move on
                 compiler.resolve_current_gap(gap.hash)
@@ -854,10 +1083,11 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
             # ── Observation: resolve + LLM reasons ──
             print(f"  → observation ({vocab})")
 
-            tool_path = TOOL_MAP.get(vocab)
+            tool_conf = TOOL_MAP.get(vocab, {})
+            tool_path = tool_conf.get("tool") if isinstance(tool_conf, dict) else tool_conf
             if tool_path:
                 params = {"refs": gap.content_refs, "desc": gap.desc}
-                output, code = execute_tool(tool_path, params)
+                output, _ = execute_tool(tool_path, params)
                 session.inject(f"## Tool output ({vocab})\n{output}")
             elif resolved_data:
                 session.inject(f"## Resolved data\n{resolved_data}")
@@ -876,6 +1106,107 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
             else:
                 compiler.resolve_current_gap(gap.hash)
 
+        elif vocab == "commit_needed":
+            # ── Bridge codon: commitment reintegration (end codon) ──
+            # Renders the commitment chain as a semantic tree and reintegrates
+            # into the main agent's context. Closes or continues the chain.
+            print(f"  → commit (end codon)")
+
+            commit_skill = registry.resolve_by_name("commit")
+            if commit_skill:
+                session.inject(f"## Commitment reintegration: {gap.desc}")
+                if resolved_data:
+                    session.inject(f"## Commitment chain data\n{resolved_data}")
+
+                commit_step = Step.create(
+                    desc=f"commitment reintegrated: {gap.desc}",
+                    step_refs=[origin_step.hash],
+                    content_refs=[commit_skill.hash] + gap.content_refs,
+                    chain_id=entry.chain_id,
+                )
+                for st_step in commit_skill.steps:
+                    child_gap = Gap.create(
+                        desc=st_step.desc,
+                        content_refs=gap.content_refs,
+                    )
+                    child_gap.scores = Epistemic(
+                        relevance=st_step.__dict__.get("relevance", 0.8),
+                        confidence=0.8, grounded=0.0,
+                    )
+                    child_gap.vocab = st_step.vocab
+                    child_gap.turn_id = _turn_counter
+                    commit_step.gaps.append(child_gap)
+
+                trajectory.append(commit_step)
+                compiler.emit(commit_step)
+                compiler.resolve_current_gap(gap.hash)
+                step_result = commit_step
+            else:
+                # No commit.st — resolve normally
+                if resolved_data:
+                    session.inject(f"## Context\n{resolved_data}")
+                raw = session.call(f"Reintegrate commitment: gap:{gap.hash} \"{gap.desc}\".")
+                step_result, child_gaps = _parse_step_output(
+                    raw, step_refs=[origin_step.hash], content_refs=gap.content_refs,
+                    chain_id=entry.chain_id,
+                )
+                if child_gaps:
+                    compiler.emit(step_result)
+                else:
+                    compiler.resolve_current_gap(gap.hash)
+
+        elif vocab == "reason_needed":
+            # ── Bridge codon: reasoning chain activation (start codon) ──
+            # Resolve existing reasoning → assess → construct trigger → commit
+            # reason.st disperses its gaps onto the ledger — plays out depth-first
+            print(f"  → reason (start codon)")
+
+            reason_skill = registry.resolve_by_name("reason")
+            if reason_skill:
+                # Inject the reason.st entity data + any existing chain context
+                session.inject(f"## Reasoning activation: {gap.desc}")
+                if resolved_data:
+                    session.inject(f"## Existing context\n{resolved_data}")
+
+                # Create a step that carries reason.st's gaps
+                reason_step = Step.create(
+                    desc=f"reason activated: {gap.desc}",
+                    step_refs=[origin_step.hash],
+                    content_refs=[reason_skill.hash] + gap.content_refs,
+                    chain_id=entry.chain_id,
+                )
+                # Disperse reason.st steps as gaps
+                for st_step in reason_skill.steps:
+                    child_gap = Gap.create(
+                        desc=st_step.desc,
+                        content_refs=gap.content_refs,
+                    )
+                    child_gap.scores = Epistemic(
+                        relevance=st_step.__dict__.get("relevance", 0.8),
+                        confidence=0.8, grounded=0.0,
+                    )
+                    child_gap.vocab = st_step.vocab
+                    child_gap.turn_id = _turn_counter
+                    reason_step.gaps.append(child_gap)
+
+                trajectory.append(reason_step)
+                compiler.emit(reason_step)
+                compiler.resolve_current_gap(gap.hash)
+                step_result = reason_step
+            else:
+                # No reason.st — fall through to normal reasoning
+                if resolved_data:
+                    session.inject(f"## Context\n{resolved_data}")
+                raw = session.call(f"Reason about: gap:{gap.hash} \"{gap.desc}\". Articulate your reasoning chain.")
+                step_result, child_gaps = _parse_step_output(
+                    raw, step_refs=[origin_step.hash], content_refs=gap.content_refs,
+                    chain_id=entry.chain_id,
+                )
+                if child_gaps:
+                    compiler.emit(step_result)
+                else:
+                    compiler.resolve_current_gap(gap.hash)
+
         elif vocab == "reprogramme_needed":
             # ── Bridge primitive: create/update entity .st via st_builder ──
             # The LLM needs to reprogramme its knowledge about an entity.
@@ -889,30 +1220,110 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
             elif resolved_data:
                 session.inject(f"## Context\n{resolved_data}")
 
-            # Inject available entity hashes so the LLM can reference them
-            entity_list = "\n".join(
-                f"  {s.display_name}:{s.hash} ({s.name}.st)"
-                for s in registry.all_skills()
-            )
+            # Inject PRINCIPLES.md + GAP_CONFIG.md — the constitution + gap specification
+            # The reprogramme agent needs both to build architecturally consistent .st files
+            principles_path = CORS_ROOT / "docs" / "PRINCIPLES.md"
+            if principles_path.exists():
+                with open(principles_path) as f:
+                    principles_content = f.read()
+                session.inject(
+                    f"## System Principles (PRINCIPLES.md)\n"
+                    f"Every .st file you create must be consistent with these principles.\n"
+                    f"This is the architectural constitution.\n\n"
+                    f"{principles_content}"
+                )
+
+            # GAP_CONFIG.md is a working draft — will be merged into PRINCIPLES.md
+            # when the formal gap definitions are finalized
+
+            # Inject available entities with descriptions + steps as building blocks
+            entity_lines = []
+            for s in registry.all_skills():
+                steps_summary = " → ".join(st.action for st in s.steps) if s.steps else "(pure entity)"
+                entity_lines.append(
+                    f"  {s.display_name}:{s.hash} ({s.name}.st) — {s.desc[:80]}\n"
+                    f"    steps: {steps_summary}"
+                )
+            entity_list = "\n".join(entity_lines)
+
+            # Also inject command skills
+            cmd_lines = []
+            for name, s in registry.commands.items():
+                steps_summary = " → ".join(st.action for st in s.steps) if s.steps else "(pure entity)"
+                cmd_lines.append(
+                    f"  /{name} ({s.name}.st) — {s.desc[:80]}\n"
+                    f"    steps: {steps_summary}"
+                )
+            cmd_list = "\n".join(cmd_lines) if cmd_lines else "  (none)"
 
             raw = session.call(
                 f"You need to reprogramme your knowledge: gap:{gap.hash} \"{gap.desc}\"\n\n"
-                "## Known entities (reference by hash in refs field)\n"
+                "## Known entities (reference by hash, use as building blocks)\n"
                 f"{entity_list}\n\n"
-                "## Compose a JSON .st file intent\n"
-                "The .st file is a manifestation blueprint. Fields present determine what the entity IS:\n"
+                "## Available /command workflows\n"
+                f"{cmd_list}\n\n"
+                "## Compose a JSON .st file\n\n"
+                "A .st file is a manifestation blueprint. It encodes what an entity IS and what it DOES.\n\n"
+                "### Two modes of .st resolution\n"
+                "When the kernel resolves a .st hash, the mode depends on what's in the file:\n\n"
+                "1. CONTEXT INJECTION (internal &) — pure entity, no steps or only identity/preferences.\n"
+                "   The .st data is injected into the LLM's context. No gaps enter the ledger.\n"
+                "   The LLM reads it and reasons from it. One blob step, no branching.\n"
+                "   Use for: people, concepts, domain knowledge, preferences, compliance rules.\n"
+                "   Example: admin.st — identity + preferences, loaded every turn.\n\n"
+                "2. GAP LEDGER MUTATION (internal &mut) — has workflow steps.\n"
+                "   Each step becomes a gap on the ledger. The compiler sequences them.\n"
+                "   The chain plays out depth-first with OMO rhythm.\n"
+                "   Use for: research pipelines, edit workflows, debug loops, task automation.\n"
+                "   Example: research.st — 5 steps that disperse as gaps.\n\n"
+                "The distinction is structural: if steps[] is empty or absent, it's context injection.\n"
+                "If steps[] has entries, it's gap mutation. The kernel handles both automatically.\n\n"
+                "### Manifestation fields (what the entity IS)\n"
+                "Include only fields relevant to this entity type:\n"
                 "- People: identity + preferences\n"
                 "- Domain/compliance: constraints + sources + scope\n"
                 "- Workflows: steps with actions\n"
                 "- Concepts: refs linking to related entity hashes\n\n"
-                "IMPORTANT: Reference other entities by hash, not by name.\n"
-                "Use refs to map names to hashes: {\"admin\": \"72b1d5ffc964\", \"research\": \"a72c3c4dec0c\"}\n"
-                "Actions that reference entities should include their hashes in the refs list.\n\n"
+                "### Steps (what the entity DOES when resolved)\n"
+                "Each step is a gap that enters the compiler's ledger. Steps are the primitive.\n\n"
+                "COMPOSE FROM EXISTING WORKFLOWS FIRST. Before writing new steps:\n"
+                "1. Check the known entities and /commands above\n"
+                "2. If an existing .st already does what a step needs, reference it by vocab\n"
+                "3. The existing workflow's gaps will disperse onto the ledger — you get its full chain for free\n"
+                "4. Only write new steps for logic that no existing workflow covers\n"
+                "Example: a video review workflow might reference research.st for sourcing, "
+                "hash_edit.st for edits, and admin.st for preferences — all composed, not rebuilt.\n\n"
+                "- vocab: triggers a tool or another .st file. Use existing vocab:\n"
+                "  OBSERVE: hash_resolve_needed, pattern_needed, email_needed, external_context, clarify_needed\n"
+                "  MUTATE: hash_edit_needed, stitch_needed, content_needed, command_needed, message_needed\n"
+                "  BRIDGE: reprogramme_needed\n"
+                "  Or reference another .st entity — its gaps will disperse onto the ledger.\n\n"
+                "- relevance (0.0-1.0): controls execution order within same priority bracket.\n"
+                "  Highest relevance fires first. Use descending relevance to sequence steps:\n"
+                "  first step = 1.0, second = 0.9, third = 0.8, etc.\n\n"
+                "- post_diff (true/false): controls fluidity.\n"
+                "  false = deterministic. Execute and move on. No reasoning, no branching.\n"
+                "    Use for: pure data injection, hash resolution, deterministic execution.\n"
+                "  true = flexible. LLM reasons after execution. May surface child gaps. Chain may branch.\n"
+                "    Use for: composition, diagnosis, review, verification — anything that might need iteration.\n"
+                "  Rule: if the step might fail or reveal something unexpected, use true.\n\n"
+                "### Entity references\n"
+                "Reference other entities by hash, not name.\n"
+                "Use refs to map names to hashes: {\"admin\": \"72b1d5ffc964\"}\n\n"
+                "### Triggers\n"
+                "- manual: only when explicitly invoked\n"
+                "- on_contact:X: fires when user X messages\n"
+                "- command:X: hidden from LLM, triggered via /X command only\n\n"
                 "```json\n"
                 '{"name": "entity_name", "desc": "what this entity is",\n'
-                ' "trigger": "on_contact:X | on_vocab:X | manual | command:X",\n'
+                ' "trigger": "manual | on_contact:X | command:X",\n'
                 ' "refs": {"entity_name": "entity_hash"},\n'
-                ' "actions": [{"do": "step description", "observe": true, "refs": ["hash"]}],\n'
+                ' "steps": [\n'
+                '   {"action": "step_name", "desc": "what this step does",\n'
+                '    "vocab": "hash_resolve_needed", "relevance": 1.0, "post_diff": false},\n'
+                '   {"action": "step_name", "desc": "reason and compose",\n'
+                '    "vocab": null, "relevance": 0.9, "post_diff": true}\n'
+                ' ],\n'
                 ' "identity": {}, "preferences": {}, "constraints": {}, "sources": [], "scope": ""}\n'
                 "```\n"
                 "Only include fields relevant to this entity type. Omit empty fields.\n"
@@ -977,7 +1388,22 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
         # ── Record step ──
 
         if step_result:
-            trajectory.append(step_result)
+            # Check for passive chain match — append to existing chain
+            # if this step's content_refs overlap with an active chain's entity
+            passive_appended = False
+            for ref in step_result.content_refs:
+                passive_chains = trajectory.find_passive_chains(ref)
+                for pc in passive_chains:
+                    if pc.hash != (entry.chain_id if entry else None):
+                        trajectory.append_to_passive_chain(pc.hash, step_result)
+                        passive_appended = True
+                        print(f"  → appended to passive chain:{pc.hash[:8]}")
+                        break
+                if passive_appended:
+                    break
+
+            if not passive_appended:
+                trajectory.append(step_result)
             compiler.add_step_to_chain(step_result.hash)
             print(f"  step:{step_result.hash}" +
                   (f" commit:{step_result.commit}" if step_result.commit else ""))
@@ -1039,6 +1465,7 @@ def _parse_step_output(raw: str, step_refs: list[str], content_refs: list[str],
                 gap.vocab = g.get("vocab")
                 if gap.vocab:
                     gap.vocab_score = 0.8
+                gap.turn_id = _turn_counter
                 gaps.append(gap)
     except (json.JSONDecodeError, KeyError, TypeError):
         pass
@@ -1282,10 +1709,15 @@ def _synthesize(session: Session, user_message: str) -> str:
 
 
 def _save_turn(trajectory: Trajectory):
-    """Persist trajectory and chains."""
+    """Persist trajectory, chains, and extract long chains to files."""
     trajectory.save(str(TRAJ_FILE))
     trajectory.save_chains(str(CHAINS_FILE))
-    print(f"  Saved: {len(trajectory.order)} steps, {len(trajectory.chains)} chains")
+    # Extract long resolved chains to individual files
+    chains_dir = str(CORS_ROOT / "chains")
+    trajectory.extract_chains(chains_dir)
+    extracted = sum(1 for c in trajectory.chains.values() if c.extracted)
+    print(f"  Saved: {len(trajectory.order)} steps, {len(trajectory.chains)} chains"
+          + (f" ({extracted} extracted)" if extracted else ""))
 
 
 # ── Main ─────────────────────────────────────────────────────────────────
@@ -1389,6 +1821,42 @@ if __name__ == "__main__":
             if CHAINS_FILE.exists():
                 CHAINS_FILE.unlink()
             print("trajectory wiped")
+            continue
+
+        # /policy — view or edit tree policy
+        if user_input.startswith("/policy"):
+            parts = user_input.split(" ", 2)
+            if len(parts) == 1:
+                # /policy — show current policy
+                policy = _load_tree_policy()
+                print("\n── Tree Policy ──")
+                for path, rule in sorted(policy.items()):
+                    if rule.get("immutable"):
+                        print(f"  {path:30s} immutable")
+                    elif rule.get("on_mutate"):
+                        print(f"  {path:30s} on_mutate → {rule['on_mutate']}")
+                print()
+            elif len(parts) == 3:
+                # /policy path rule  (e.g. /policy media/ stitch_needed)
+                path = parts[1]
+                rule_str = parts[2]
+                policy = _load_tree_policy()
+                if rule_str == "immutable":
+                    policy[path] = {"immutable": True}
+                elif rule_str == "remove":
+                    policy.pop(path, None)
+                else:
+                    policy[path] = {"on_mutate": rule_str}
+                with open(TREE_POLICY_FILE, "w") as f:
+                    json.dump(policy, f, indent=2)
+                print(f"  policy updated: {path} → {rule_str}")
+            else:
+                print("  usage: /policy [path rule]")
+                print("  examples:")
+                print("    /policy                        — show all")
+                print("    /policy media/ stitch_needed   — add on_mutate rule")
+                print("    /policy data/ immutable        — add immutable rule")
+                print("    /policy media/ remove          — remove rule")
             continue
 
         # /command routing

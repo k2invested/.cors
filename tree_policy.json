@@ -1,0 +1,12 @@
+{
+  "skills/": {"on_mutate": "reprogramme_needed"},
+  "ui_output/": {"on_mutate": "stitch_needed"},
+  "logs/": {"immutable": true},
+  "store/": {"immutable": true},
+  "step.py": {"immutable": true},
+  "compile.py": {"immutable": true},
+  "loop.py": {"immutable": true},
+  "skills/loader.py": {"immutable": true},
+  "trajectory.json": {"immutable": true},
+  "chains.json": {"immutable": true}
+}
