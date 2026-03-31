@@ -464,7 +464,8 @@ test("observe ∩ bridge = ∅", len(OBSERVE_VOCAB & BRIDGE_VOCAB) == 0)
 section("§14c: Current Vocab Integrity")
 
 # Observe: exactly 4 terms
-test("OBSERVE has 4 terms", len(OBSERVE_VOCAB) == 4)
+test("OBSERVE has 5 terms", len(OBSERVE_VOCAB) == 5)
+test("clarify_needed in observe", "clarify_needed" in OBSERVE_VOCAB)
 test("pattern_needed in observe", "pattern_needed" in OBSERVE_VOCAB)
 test("hash_resolve_needed in observe", "hash_resolve_needed" in OBSERVE_VOCAB)
 test("email_needed in observe", "email_needed" in OBSERVE_VOCAB)

@@ -51,6 +51,7 @@ CHAIN_EXTRACT_LENGTH = 8        # chains longer than this get extracted to file
 OBSERVE_VOCAB = {
     "pattern_needed", "hash_resolve_needed",
     "email_needed", "external_context",
+    "clarify_needed",
 }
 
 MUTATE_VOCAB = {

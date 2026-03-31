@@ -331,6 +331,13 @@ OBSERVE (kernel resolves, you receive data):
   hash_resolve_needed — resolve step/gap/blob hashes from trajectory
   email_needed — check email
   external_context — surface from current context
+  clarify_needed — you cannot proceed without user input. USE THIS when:
+    - The user's intent is ambiguous and you'd be guessing
+    - Multiple interpretations exist and the wrong one wastes effort
+    - You need a specific piece of information only the user has
+    The desc field becomes your question. This halts the iteration loop.
+    The gap persists on the trajectory — next turn, the LLM sees it and
+    can resume the chain with the user's clarification as new context.
   (workspace files visible via HEAD commit tree. URLs and web research are steps inside workflow .st files, not standalone vocab.)
 
 MUTATE (you compose a command, kernel executes):
@@ -497,6 +504,18 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
     print(f"HEAD: {head} | Trajectory: {len(trajectory.order)} steps")
     print(f"{'='*60}")
 
+    # ── 1b. RESUME CHECK ──────────────────────────────────────────────
+    #
+    # Check for unresolved gaps from prior turns (clarify_needed, interrupted).
+    # Surface them in the trajectory so the LLM can see what was left dangling.
+    # The LLM selects which are still relevant — non-selection = dropped.
+
+    dangling = _find_dangling_gaps(trajectory)
+    if dangling:
+        print(f"\n── RESUME: {len(dangling)} unresolved gap(s) from prior turn ──")
+        for dg in dangling:
+            print(f"  gap:{dg.hash[:8]} \"{dg.desc}\"")
+
     # ── 2. FIRST STEP (origin) ───────────────────────────────────────
     #
     # The LLM sees: trajectory tree + HEAD + user message
@@ -593,6 +612,22 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
             print("  → REVERT: divergence detected, skipping")
             compiler.resolve_current_gap(gap.hash)
             continue
+
+        # ── Clarify: halt iteration, synthesize as question ──
+
+        if gap.vocab == "clarify_needed":
+            print(f"  → clarify needed: halting iteration")
+            # Record the clarification gap on trajectory — persists across turns
+            clarify_step = Step.create(
+                desc=f"clarification needed: {gap.desc}",
+                step_refs=[origin_step.hash],
+                content_refs=gap.content_refs,
+                gaps=[gap],  # preserve the gap for resume
+                chain_id=entry.chain_id,
+            )
+            trajectory.append(clarify_step)
+            # Don't resolve — leave gap open for next turn's resume
+            break
 
         # ── Resolve hash references ──
 
@@ -1141,6 +1176,24 @@ def _reprogramme_pass(session: Session, registry: SkillRegistry,
         return step
 
     return None
+
+
+def _find_dangling_gaps(trajectory: Trajectory) -> list[Gap]:
+    """Find unresolved gaps from prior turns.
+
+    Scans the trajectory for gaps that were never resolved — either from
+    clarify_needed halts or interrupted turns. These are candidates for
+    resume. The LLM sees them in the trajectory tree and selects which
+    to carry forward by referencing them in its pre-diff.
+    """
+    dangling = []
+    for step_hash in trajectory.order:
+        step = trajectory.resolve(step_hash)
+        if step:
+            for gap in step.gaps:
+                if not gap.resolved and not gap.dormant:
+                    dangling.append(gap)
+    return dangling
 
 
 def _find_identity_skill(contact_id: str, registry: SkillRegistry) -> Skill | None:
