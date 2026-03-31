@@ -16,7 +16,7 @@ It is a **stack** (LIFO). Origin gaps enter first. Child gaps push on top. The c
 ### Three-part gap lifecycle
 
 1. **Emission**: a step produces candidate gaps (LLM pre-diff output)
-2. **Admission**: only gaps with combined score ≥ ADMISSION_THRESHOLD enter the ledger. Below DORMANT_THRESHOLD → stored as dormant on trajectory.
+2. **Admission**: only gaps with admission score (0.8 * relevance + 0.2 * grounded) ≥ ADMISSION_THRESHOLD enter the ledger. Grounded is computed deterministically by the kernel from hash co-occurrence, not LLM-assessed. Below DORMANT_THRESHOLD → stored as dormant on trajectory.
 3. **Placement**: admitted gaps push onto the stack at lawful position (top for children, bottom for origin gaps)
 
 ## Types
@@ -98,6 +98,8 @@ The main sequencer. Owns the ledger, governor state, and chain tracking.
 | `skip_chain(chain_id)` | Move chain to bottom of stack (stagnation) |
 | `is_done() → bool` | Ledger empty |
 | `render_ledger() → str` | Debug view of current stack |
+| `_compute_grounded(gap) → float` | Deterministic grounded score from hash co-occurrence on trajectory. Normalizes: 1 occurrence = 0.3, 3+ = 0.8+, capped at 1.0 |
+| `_admission_score(gap) → float` | Compute admission: 0.8 * relevance + 0.2 * grounded. Overwrites LLM's grounded with deterministic value. Relevance-dominant — extreme relevance can enter with zero co-occurrence |
 
 ## Vocab Sets
 
@@ -118,7 +120,7 @@ Helper functions: `is_observe(vocab)`, `is_mutate(vocab)`
 
 | Name | Value | Purpose |
 |------|-------|---------|
-| ADMISSION_THRESHOLD | 0.4 | Min combined score (0.6*rel + 0.4*gr) to enter ledger |
+| ADMISSION_THRESHOLD | 0.4 | Min admission score (0.8*rel + 0.2*grounded) to enter ledger |
 | CONFIDENCE_THRESHOLD | 0.8 | Gap resolved when confidence exceeds this |
 | DORMANT_THRESHOLD | 0.2 | Below this → dormant (stored, not acted on) |
 | MAX_CHAIN_DEPTH | 15 | Force-close beyond this |
@@ -140,7 +142,7 @@ The sequence isn't planned — it emerges from vocab mapping + postcondition rul
 - Ledger is LIFO — deepest child popped first
 - One chain at a time — depth-first per origin gap
 - No consecutive mutations without observation between
-- Admission requires combined score ≥ 0.4
+- Admission requires score ≥ 0.4 (0.8*rel + 0.2*grounded; grounded is deterministic)
 - Dormant gaps stored but never enter ledger
 - Force-close at MAX_CHAIN_DEPTH
 - OBSERVE_VOCAB ∩ MUTATE_VOCAB = ∅

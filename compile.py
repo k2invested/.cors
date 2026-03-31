@@ -49,9 +49,8 @@ CHAIN_EXTRACT_LENGTH = 8        # chains longer than this get extracted to file
 # ── Vocab ─────────────────────────────────────────────────────────────────
 
 OBSERVE_VOCAB = {
-    "scan_needed", "pattern_needed", "hash_resolve_needed",
-    "research_needed", "email_needed", "url_needed",
-    "registry_needed", "external_context",
+    "pattern_needed", "hash_resolve_needed",
+    "email_needed", "external_context",
 }
 
 MUTATE_VOCAB = {
@@ -59,10 +58,25 @@ MUTATE_VOCAB = {
     "message_needed", "json_patch_needed", "git_revert_needed",
 }
 
-BRIDGE_VOCAB = {
-    "judgment_needed", "task_needed", "commitment_needed",
-    "profile_needed", "task_status_needed",
-}
+BRIDGE_VOCAB: set[str] = {"reprogramme_needed"}  # the single bridge primitive
+
+
+def register_bridge_vocab(skill_names: list[str]):
+    """Register .st skill names as bridge vocab terms.
+
+    Called by the loop after loading skills. Each .st file's name becomes
+    a valid vocab term: admin.st → admin_needed, research.st → research_needed.
+
+    Display names (kenny, clinton) are for tree rendering only — not vocab.
+    Vocab is role-based (admin_needed), not person-based (kenny_needed).
+
+    Two types of bridge resolution:
+      - reprogramme_needed: create/update an entity .st (internal &mut, triggers st_builder)
+      - {entity}_needed: resolve an existing entity .st (internal &, context injection)
+    """
+    global BRIDGE_VOCAB
+    for name in skill_names:
+        BRIDGE_VOCAB.add(f"{name}_needed")
 
 
 def is_observe(vocab: str) -> bool:
@@ -71,6 +85,38 @@ def is_observe(vocab: str) -> bool:
 
 def is_mutate(vocab: str) -> bool:
     return vocab in MUTATE_VOCAB
+
+
+def is_bridge(vocab: str) -> bool:
+    return vocab in BRIDGE_VOCAB
+
+
+def vocab_priority(vocab: str | None) -> int:
+    """Priority ordering for the ledger. Lower number = pops first (top of stack).
+
+    1. Internal &  (context bridges) — load mental models first
+    2. External &  (observe)         — scan, read, resolve
+    3. Internal &mut (gap bridges)   — disperse action chains
+    4. External &mut (mutate)        — write, execute, commit
+    5. reprogramme_needed            — update knowledge last
+
+    Stack is LIFO, so higher priority = placed LATER (popped first).
+    We return sort key where lower = higher priority = placed later in sorted stack.
+    """
+    if vocab is None:
+        return 50  # unknown, middle priority
+    if vocab == "reprogramme_needed":
+        return 99  # lowest priority — runs last, sits at bottom of stack
+    if vocab in BRIDGE_VOCAB and vocab not in MUTATE_VOCAB:
+        # Bridge vocab — check if it's context-only (&) or gap-injecting (&mut)
+        # We can't know from vocab alone, so all entity bridges get internal & priority
+        # The loop differentiates at execution time
+        return 10  # internal & — highest priority
+    if vocab in OBSERVE_VOCAB:
+        return 20  # external &
+    if vocab in MUTATE_VOCAB:
+        return 40  # external &mut
+    return 50  # unknown
 
 
 # ── Chain State ───────────────────────────────────────────────────────────
@@ -91,6 +137,7 @@ class LedgerEntry:
     chain_id: str               # which chain this gap belongs to
     depth: int = 0              # depth in the chain (0 = origin)
     parent_gap: str | None = None  # gap hash that spawned this entry
+    priority: int = 50          # vocab_priority() — lower = pops first
 
 
 class Ledger:
@@ -111,7 +158,8 @@ class Ledger:
 
     def push_origin(self, gap: Gap, chain_id: str):
         """Push an origin gap (from pre-diff). Creates a new chain."""
-        entry = LedgerEntry(gap=gap, chain_id=chain_id, depth=0)
+        pri = vocab_priority(gap.vocab)
+        entry = LedgerEntry(gap=gap, chain_id=chain_id, depth=0, priority=pri)
         self.stack.append(entry)
         self.chain_states[chain_id] = ChainState.OPEN
 
@@ -121,9 +169,11 @@ class Ledger:
         Inserted at the TOP of the stack — depth-first. The parent's
         chain is suspended until all children resolve.
         """
+        pri = vocab_priority(gap.vocab)
         entry = LedgerEntry(
             gap=gap, chain_id=chain_id,
             depth=depth, parent_gap=parent_gap,
+            priority=pri,
         )
         self.stack.append(entry)
 
@@ -144,6 +194,23 @@ class Ledger:
     def resolve_gap(self, gap_hash: str):
         """Mark a gap as resolved. Check if its chain can close."""
         self.resolved.append(gap_hash)
+
+    def sort_by_priority(self):
+        """Sort stack so highest priority gaps pop first.
+
+        Stack is LIFO — last element pops first. So we sort by
+        priority DESCENDING: lowest priority (reprogramme=99) at
+        bottom, highest priority (internal&=10) at top.
+
+        Only sorts origin gaps (depth=0). Child gaps stay on top
+        for depth-first resolution.
+        """
+        origins = [e for e in self.stack if e.depth == 0]
+        children = [e for e in self.stack if e.depth > 0]
+        # Sort origins: highest priority number at bottom (popped last)
+        origins.sort(key=lambda e: e.priority, reverse=True)
+        # Children stay on top (popped first — depth-first)
+        self.stack = origins + children
 
     def is_empty(self) -> bool:
         return len(self.stack) == 0
@@ -278,23 +345,51 @@ class Compiler:
 
     # ── 1. Emission → Admission → Placement ──
 
+    def _compute_grounded(self, gap: Gap) -> float:
+        """Compute grounded score deterministically from hash co-occurrence.
+
+        Grounded = how often the gap's referenced hashes appear on the trajectory.
+        A gap referencing hashes that have been seen many times is well-grounded.
+        A gap referencing hashes never seen before scores near zero.
+        """
+        all_refs = gap.step_refs + gap.content_refs
+        if not all_refs:
+            return 0.0
+        total = sum(self.trajectory.co_occurrence(ref) for ref in all_refs)
+        # Normalize: 1 occurrence = 0.3, 3+ = 0.8+, cap at 1.0
+        score = min(1.0, total / (len(all_refs) * 3))
+        return score
+
+    def _admission_score(self, gap: Gap) -> float:
+        """Compute admission score. Relevance-dominant, grounded as modifier.
+
+        Formula: 0.8 * relevance + 0.2 * grounded
+        - Extreme relevance can enter even with zero co-occurrence
+        - Low relevance needs strong grounding to survive
+        - Grounded is deterministic (hash co-occurrence), not LLM-assessed
+        """
+        grounded = self._compute_grounded(gap)
+        gap.scores.grounded = grounded  # overwrite LLM's self-assessment
+        return (0.8 * gap.scores.relevance + 0.2 * grounded)
+
     def emit(self, step: Step):
         """Process a step's gaps through the three-part lifecycle.
 
         Emission:   step.gaps are candidate gaps
         Admission:  gaps above threshold enter ledger; below dormant threshold → stored as dormant
         Placement:  admitted gaps push onto stack (depth-first)
+
+        Grounded is computed deterministically from hash co-occurrence,
+        not from the LLM's self-assessment. Relevance is the primary driver.
         """
         for gap in step.gaps:
-            combined = (0.6 * gap.scores.relevance + 0.4 * gap.scores.grounded)
+            combined = self._admission_score(gap)
 
             if combined < DORMANT_THRESHOLD:
-                # Below dormant threshold — store but don't act
                 gap.dormant = True
                 continue
 
             if combined < ADMISSION_THRESHOLD:
-                # Below admission but above dormant — store as dormant
                 gap.dormant = True
                 continue
 
@@ -317,9 +412,10 @@ class Compiler:
 
     def emit_origin_gaps(self, step: Step):
         """Emit gaps from the initial pre-diff as origin gaps.
-        Each origin gap creates its own chain."""
+        Each origin gap creates its own chain. After all are emitted,
+        sort by priority: internal& first, reprogramme last."""
         for gap in step.gaps:
-            combined = (0.6 * gap.scores.relevance + 0.4 * gap.scores.grounded)
+            combined = self._admission_score(gap)
 
             if combined < DORMANT_THRESHOLD:
                 gap.dormant = True
@@ -332,6 +428,9 @@ class Compiler:
             chain = Chain.create(origin_gap=gap.hash, first_step=step.hash)
             self.trajectory.add_chain(chain)
             self.ledger.push_origin(gap=gap, chain_id=chain.hash)
+
+        # Sort: internal& (10) pops first, reprogramme (99) pops last
+        self.ledger.sort_by_priority()
 
     # ── 2. Sequencing (pop + route) ──
 

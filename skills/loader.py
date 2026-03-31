@@ -34,6 +34,8 @@ class Skill:
     steps: list[SkillStep]
     source: str                 # file path for debugging
     display_name: str = ""      # from identity.name or skill name — used in tree render
+    trigger: str = "manual"     # when this skill fires
+    is_command: bool = False     # True = /command only, not surfaceable by LLM
 
     def step_count(self) -> int:
         return len(self.steps)
@@ -46,15 +48,26 @@ class Skill:
 
 
 class SkillRegistry:
-    """Registry of all loaded skills, resolvable by hash or name."""
+    """Registry of all loaded skills, resolvable by hash or name.
+
+    Two visibility tiers:
+      - Bridge skills: in the LLM's awareness, surfaceable through gaps
+      - Command skills: hidden from LLM, triggered only via /commands
+    """
 
     def __init__(self):
         self.by_hash: dict[str, Skill] = {}
         self.by_name: dict[str, Skill] = {}
+        self.commands: dict[str, Skill] = {}  # command name → Skill
 
     def register(self, skill: Skill):
-        self.by_hash[skill.hash] = skill
-        self.by_name[skill.name] = skill
+        if skill.is_command:
+            # Command skills: not in main registry, only in commands
+            cmd_name = skill.trigger.replace("command:", "")
+            self.commands[cmd_name] = skill
+        else:
+            self.by_hash[skill.hash] = skill
+            self.by_name[skill.name] = skill
 
     def resolve(self, hash: str) -> Skill | None:
         return self.by_hash.get(hash)
@@ -71,8 +84,15 @@ class SkillRegistry:
     def resolve_by_name(self, name: str) -> Skill | None:
         return self.by_name.get(name)
 
+    def resolve_command(self, name: str) -> Skill | None:
+        """Resolve a /command by name."""
+        return self.commands.get(name)
+
     def all_skills(self) -> list[Skill]:
         return list(self.by_hash.values())
+
+    def all_commands(self) -> list[Skill]:
+        return list(self.commands.values())
 
     def render_for_prompt(self) -> str:
         """Render all skills as context for LLM prompt injection."""
@@ -117,6 +137,9 @@ def load_skill(path: str) -> Skill | None:
         identity = data.get("identity", {})
         display = identity.get("name", data["name"]).lower() if identity else data["name"]
 
+        trigger = data.get("trigger", "manual")
+        is_command = trigger.startswith("command:")
+
         return Skill(
             hash=skill_hash,
             name=data["name"],
@@ -124,6 +147,8 @@ def load_skill(path: str) -> Skill | None:
             steps=steps,
             source=path,
             display_name=display,
+            trigger=trigger,
+            is_command=is_command,
         )
     except Exception as e:
         print(f"  [skills] failed to load {path}: {e}")

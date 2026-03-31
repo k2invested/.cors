@@ -34,7 +34,7 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 
 | Type | Purpose |
 |------|---------|
-| `Epistemic` | Epistemic signal vector (relevance, confidence, grounded). Supports vector math: `as_vector()`, `distance_to()`, `magnitude()`. |
+| `Epistemic` | Epistemic signal vector (relevance, confidence, grounded). relevance and confidence are LLM-assessed. grounded is computed deterministically by the kernel from hash co-occurrence frequency. Supports vector math: `as_vector()`, `distance_to()`, `magnitude()`. |
 | `Gap` | Gap articulation — desc + content_refs (Layer 2) + step_refs (Layer 1) + vocab mapping + scores + dormant flag. Every gap is hashed. |
 | `Step` | The atom — pre-diff (step_refs + content_refs + desc) + post-diff (gaps + commit). Hash-addressed, immutable once created. |
 | `Chain` | Reasoning chain — sequence of step hashes originating from one gap. Has its own hash. Tracked as a unit. |
@@ -49,7 +49,10 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 | `Step.create(...)` | `→ Step` | Factory with auto-hash and timestamp |
 | `Gap.create(...)` | `→ Gap` | Factory with auto-hash from desc+refs |
 | `Chain.create(origin_gap, first_step)` | `→ Chain` | Start a new chain |
-| `Trajectory.render_recent(n)` | `→ str` | Render last N chains for LLM context |
+| `Trajectory.render_recent(n, registry=None)` | `→ str` | Render trajectory as traversable hash tree with named skill references |
+| `Trajectory._tag_ref()` | helper | Tag a hash reference with its type (step/gap/blob) |
+| `Trajectory._render_refs()` | helper | Render a list of refs with their tags |
+| `Trajectory._render_steps_as_tree()` | helper | Render steps as an indented hash tree structure |
 | `Trajectory.save(path)` / `.load(path)` | | JSON persistence |
 
 ### Invariants
@@ -88,13 +91,15 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 | `Compiler.next()` | Pop top of stack, get governor signal. Returns (entry, signal). |
 | `Compiler.validate_omo(vocab)` | Check if proposed action respects O-M-O transition grammar |
 | `Compiler.resolve_current_gap(hash)` | Mark gap resolved, check chain completion |
+| `_compute_grounded(gap)` | Compute grounded score deterministically from hash co-occurrence frequency |
+| `_admission_score(gap)` | Compute admission score: 0.8*rel + 0.2*grounded (relevance-dominant, grounded deterministic) |
 | `govern(entry, chain_length, state)` | Pure deterministic governor — measures vectors, returns signal |
 
 ### Constants
 
 | Name | Value | Purpose |
 |------|-------|---------|
-| `ADMISSION_THRESHOLD` | 0.4 | Minimum combined score for gap to enter ledger |
+| `ADMISSION_THRESHOLD` | 0.4 | Min admission score (0.8*rel + 0.2*grounded) to enter ledger |
 | `CONFIDENCE_THRESHOLD` | 0.8 | Gap resolved when confidence exceeds this |
 | `DORMANT_THRESHOLD` | 0.2 | Below this, gap stored as dormant |
 | `MAX_CHAIN_DEPTH` | 15 | Force-close chain beyond this |
@@ -114,7 +119,7 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 - Ledger is LIFO — deepest child popped first
 - One chain at a time — depth-first per origin gap
 - OMO enforced — no consecutive mutations without observation
-- Admission requires combined score ≥ ADMISSION_THRESHOLD
+- Admission requires 0.8*rel + 0.2*grounded ≥ ADMISSION_THRESHOLD (relevance-dominant, grounded deterministic)
 - Dormant gaps stored on trajectory but never enter ledger
 - Force-close at MAX_CHAIN_DEPTH
 
@@ -131,7 +136,7 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 | Type | Purpose |
 |------|---------|
 | `SkillStep` | One atomic step within a skill: action, desc, vocab, post_diff |
-| `Skill` | A complete skill: hash, name, desc, steps[], source path |
+| `Skill` | A complete skill: hash, name, display_name, desc, steps[], source path. display_name: extracted from identity.name or defaults to skill name — used in tree render |
 | `SkillRegistry` | Map of hash→Skill and name→Skill. Resolve by hash or name. |
 
 ### Key functions
@@ -141,31 +146,67 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 | `load_skill(path)` | Load one .st file → Skill |
 | `load_all(skills_dir)` | Load all .st files → SkillRegistry |
 | `SkillRegistry.resolve(hash)` | Hash → Skill |
+| `SkillRegistry.resolve_name(hash)` | Hash → display name for tree rendering (kenny, research, etc.) |
 | `SkillRegistry.render_for_prompt()` | Render all skills as LLM context |
 
 ---
 
-## Module: loop.py (to be written)
+## Module: loop.py
+
+**Status**: IMPLEMENTED
 
 **Purpose**: The turn loop — orchestrates one turn from user input to synthesis. Manages the persistent 5.4 session, feeds pre/post iterations, invokes the compiler, resolves hashes, executes tools, and produces the final response.
 
 **Mechanisms served**: §2 (LLM as attention), §3 (Commits), §5 (Navigation), §6 (One LLM one governor), §19 (HEAD injection)
 
+### Public types
+
+| Type | Purpose |
+|------|---------|
+| `Session` | Persistent LLM session — accumulates messages, manages context window |
+
+### System prompts
+
+| Prompt | Purpose |
+|--------|---------|
+| `PRE_DIFF_SYSTEM` | Teaches gaps, epistemic triad, hash tree navigation, identity |
+| `COMPOSE_SYSTEM` | Composition prompt for tool parameterization |
+| `SYNTH_SYSTEM` | Synthesis prompt for final response generation |
+
+### Execution modes
+
+| Mode | Description |
+|------|-------------|
+| Deterministic | Kernel resolves — no LLM needed (e.g. scan, registry) |
+| Composed | 5.4 writes command — LLM parameterizes tool execution |
+| Observation-only | Blob step, no post-diff — data ingestion without gap emission |
+
+### Key functions
+
+| Function | Purpose |
+|----------|---------|
+| `resolve_hash()` | Tries trajectory step → trajectory gap → git object |
+| `TOOL_MAP` | Vocab → tool script mapping |
+| `DETERMINISTIC_VOCAB` | Vocab items resolved by kernel without LLM |
+| `OBSERVATION_ONLY_VOCAB` | Vocab items that produce blob steps with no post-diff |
+
+### Environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `OPENAI_API_KEY` | Required — LLM access |
+| `KERNEL_COMPOSE_MODEL` | Compose/synthesis model |
+
 ### Turn flow
 
 ```
-1. admin.st fires (identity injection)
-2. HEAD commit injected (workspace state)
-3. LLM reads trajectory + input → pre-diff (gap articulations with hash refs)
-4. LLM scores gaps against vocab → post-diff skeleton
-5. Compiler admits gaps → ledger populated
-6. Compiler pops top gap → governor signal
-7. Kernel resolves gap's hash refs → injects into LLM session
-8. LLM reasons over resolved data → new gaps or command composition
-9. Kernel executes if mutation → auto-commit
-10. Postcondition fires (observe new commit)
-11. Repeat from 6 until HALT
-12. Synthesize response from session
+1. Message arrives
+2. Load trajectory + skills + HEAD
+3. First LLM pass → first atomic step (origin)
+4. Identity .st fires AFTER first step
+5. Compiler admits gaps
+6. Iteration loop: pop → execute by vocab → inject → next step
+7. HALT → synthesize
 ```
 
 ---

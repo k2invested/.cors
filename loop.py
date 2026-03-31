@@ -39,7 +39,8 @@ from pathlib import Path
 from step import Step, Gap, Epistemic, Trajectory
 from compile import (
     Compiler, GovernorSignal,
-    is_observe, is_mutate,
+    is_observe, is_mutate, is_bridge,
+    register_bridge_vocab,
 )
 from skills.loader import load_all, SkillRegistry, Skill
 
@@ -166,13 +167,9 @@ def resolve_all_refs(step_refs: list[str], content_refs: list[str],
 
 TOOL_MAP = {
     # Observation tools (deterministic — kernel resolves, no LLM needed)
-    "scan_needed":          "tools/scan_tree.py",
     "hash_resolve_needed":  None,  # handled inline by resolve_hash
     "pattern_needed":       "tools/file_grep.py",
-    "url_needed":           "tools/url_fetch.py",
     "email_needed":         "tools/email_check.py",
-    "research_needed":      "tools/research_web.py",
-    "registry_needed":      "tools/registry_query.py",
     "external_context":     None,  # LLM surfaces from context
 
     # Mutation tools (composed — 5.4 writes the command)
@@ -186,7 +183,7 @@ TOOL_MAP = {
 
 # Deterministic vocabs — kernel resolves without LLM
 DETERMINISTIC_VOCAB = {
-    "scan_needed", "hash_resolve_needed", "registry_needed",
+    "hash_resolve_needed",
 }
 
 # Observation-only vocabs — resolve into context, no post-diff (blob step)
@@ -291,21 +288,29 @@ If there are no gaps — nothing is missing, nothing is misaligned — emit empt
 
 ## How to score gaps (the epistemic triad)
 
-Every gap carries three scores:
+Every gap carries three scores. You provide two; the kernel computes the third:
 
-- relevance (0-1): how much does resolving this advance the trajectory toward the shared goal?
-  1.0 = critical path. 0.0 = does not advance.
-  Evaluative form: "If this gap were resolved, would it move the system closer to the goal?"
+- relevance (0-1) [YOU SCORE]: how much does resolving this advance the trajectory toward the shared goal?
+  1.0 = critical path — resolving this directly addresses what was asked.
+  0.0 = does not advance the goal at all.
+  Evaluative form: "If this gap were resolved, would it move the system closer to what the user needs?"
+  This is the PRIMARY driver of admission. Be honest — not everything you notice is relevant to the goal.
 
-- confidence (0-1): how safe and trustworthy is this to act on?
+- confidence (0-1) [YOU SCORE]: how safe and trustworthy is this to act on?
   1.0 = safe to trust and proceed. 0.0 = unsafe, uncertain, or unverifiable.
   Evaluative form: "Do I have enough evidence to act on this, or am I assuming?"
 
-- grounded (0-1): is this consistent with verified constraints and observed evidence?
-  1.0 = directly observed, references specific hashes. 0.0 = assumed or fabricated.
-  Evaluative form: "Can I point to the exact hash that grounds this gap?"
+- grounded (0-1) [KERNEL COMPUTES — do not score this]: measured deterministically by hash co-occurrence frequency on the trajectory. How often the gap's referenced hashes have appeared before. You cannot influence this — it is a structural measurement. To be well-grounded, reference hashes that actually exist on the trajectory.
 
-Low-scoring gaps (all three below 0.2) become dormant — stored on the trajectory as peripheral vision, not acted on unless they recur.
+Admission formula: 0.8 * relevance + 0.2 * grounded. Relevance dominates — extremely relevant gaps can enter even with no prior hash references. But low-relevance gaps need strong grounding (frequently referenced hashes) to survive.
+
+Low-scoring gaps become dormant — stored on the trajectory as peripheral vision, not acted on unless they recur.
+
+## Gap discipline
+
+One gap per entity. If you need context about a person, concept, or workflow — emit ONE gap with {entity}_needed. Do not decompose an entity into sub-gaps ("need their role", "need their history", "need their preferences"). The .st file surfaces everything in one resolution. No hash references needed on entity gaps — the name IS the resolution.
+
+Entity bridges have no post-diff. They are context injections — one step, one blob. The data lands in your context and you reason from there.
 
 ## Hash references (two layers, never mixed)
 
@@ -321,14 +326,11 @@ The kernel resolves content_refs for you. If you reference a hash, the kernel wi
 Each gap maps to a vocab term that tells the kernel HOW to resolve it:
 
 OBSERVE (kernel resolves, you receive data):
-  scan_needed — read workspace files
   pattern_needed — search file contents by pattern
   hash_resolve_needed — resolve step/gap/blob hashes from trajectory
-  research_needed — web research
   email_needed — check email
-  url_needed — fetch URL content
-  registry_needed — query agent registry
   external_context — surface from current context
+  (workspace files visible via HEAD commit tree. URLs and web research are steps inside workflow .st files, not standalone vocab.)
 
 MUTATE (you compose a command, kernel executes):
   content_needed — write a new file
@@ -338,12 +340,7 @@ MUTATE (you compose a command, kernel executes):
   json_patch_needed — surgical JSON edit
   git_revert_needed — git revert/checkout
 
-BRIDGE (internal routing):
-  judgment_needed — requires judgment call
-  task_needed — delegate to background task
-  commitment_needed — track a commitment
-  profile_needed — update contact profile
-  task_status_needed — check task progress
+BRIDGE_VOCAB_PLACEHOLDER
 
 If no action is needed, emit no gaps.
 
@@ -354,6 +351,58 @@ You receive:
 - The current HEAD commit hash (workspace state)
 - A user message
 - Identity (who you're talking to — loaded as a skill hash)
+
+## Reading the trajectory tree
+
+The trajectory is rendered as a tree you can explore — the same shape as a git commit tree. Every node is a hash. Every branch is traversable.
+
+```
+chain:0d71abb30b86  "resolved missing config" (active, 3 steps)
+  origin: fdd2834ace0b
+  ├─ step:7146246b7b7b "observed workspace" → refs:[commit:aa8b921]
+  │   ├─ gap:fdd2834ace0b "config missing" [scan_needed] → refs:[aa8b921:config.json]
+  │   └─ gap:00342afc4b05 (dormant, score:0.17)
+  ├─ step:f13bf0dc5db0 "resolved config" → refs:[step:7146246b7b7b, blob:e4f1...]
+  │   └─ gap:61ad761e524e "needs database section" [content_needed] → refs:[blob:e4f1...]
+  └─ step:53a20c80cf58 "wrote config" → refs:[step:f13bf0dc5db0] → commit:bb9c032
+```
+
+How to navigate it:
+- Chains are the top-level units. Each chain traces one line of reasoning from an origin gap to resolution.
+- Steps branch from chains. Each step shows what was observed or done, and what hashes were referenced.
+- Gaps branch from steps. Active gaps show what still needs resolving. Dormant gaps are peripheral vision. Resolved gaps are closed.
+- refs:[] on each node are the hashes that ground it. You can request any hash resolved.
+- Named hashes like kenny:72b1d5ffc964 or research:a72c3c4dec0c are skill/identity files — they evolve over time but the name stays constant.
+- commit:<sha> means the system mutated the workspace at that point. You can diff between commits to see exactly what changed.
+
+How to trace causality:
+- Follow step_refs backward to see WHY something happened (the reasoning chain that led here)
+- Follow content_refs to see WHAT was observed or acted on (the evidence)
+- Follow commit hashes to see WHAT CHANGED (the mutation diff)
+- A chain of steps compresses into a single chain hash — you can reference the whole chain by one hash
+- Dormant gaps that recur across turns may indicate something the system keeps noticing but hasn't addressed
+
+You can reverse-engineer any state by tracing its chain backward: the current step references prior steps, which reference their prior steps, all the way back to the origin gap. Every link in the chain is a hash you can resolve.
+
+If the trajectory is empty, you are starting fresh — the only hash available is the HEAD commit.
+
+## Identity and the user hash
+
+When an identity .st file loads (e.g. kenny:72b1d5ffc964), that hash is an entity — just like any other step. A person, a workflow, an idea — they are all entities you reason about. The only difference with the identity entity is that you are currently in conversation with them.
+
+Their .st file is your mental model of who they are. Their context, their role, how they think, what they care about, what they've done with you before. Use it to reason about them the way you reason about any entity — by following their hash through the trajectory, tracing chains they were part of, understanding what they've built, asked, committed to, and left unfinished.
+
+Every chain they have been part of traces back through their identity hash. How far you follow depends on relevance to the current input — a question about workspace files doesn't need their full history, but a question about a commitment they made last week does.
+
+The identity hash evolves. When their preferences or context change, the hash changes. Steps referencing the old hash trace to who they were. Steps referencing the new hash trace to who they are now.
+
+Their preferences are not instructions on how to speak. They are part of your model of this person — how they communicate, how they think, what frustrates them, what they value. You use that model the way you use any referred context: to reason better, respond appropriately, and anticipate what matters to them.
+
+## How to respond
+
+Do not explain internal systems, hashes, or trajectory mechanics to the user unless they ask. They see a conversation, not a hash graph.
+
+When the user asks a question answerable from your current context — answer it directly, no gaps needed. When they ask for something that requires action — articulate the gap, grounded in the specific hashes you would need resolved.
 
 ## Output format
 
@@ -368,8 +417,7 @@ Reason naturally with embedded hash references. Then emit a JSON block:
       "content_refs": ["content hashes you need resolved"],
       "vocab": "closest_vocab_term",
       "relevance": 0.0,
-      "confidence": 0.0,
-      "grounded": 0.0
+      "confidence": 0.0
     }
   ]
 }
@@ -418,11 +466,29 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
     trajectory = Trajectory.load(str(TRAJ_FILE))
     Trajectory.load_chains(str(CHAINS_FILE), trajectory)
     registry = load_all(str(SKILLS_DIR))
+    register_bridge_vocab([s.name for s in registry.all_skills()])
     head = git_head()
     head_tree = git_tree()
 
     session = Session(model=os.environ.get("KERNEL_COMPOSE_MODEL", "gpt-4.1"))
-    session.set_system(PRE_DIFF_SYSTEM)
+
+    # Build dynamic system prompt with actual available entities
+    entity_vocab_lines = "\n".join(
+        f"    {s.name}_needed — resolve {s.display_name}:{s.hash} ({s.desc[:60]})"
+        for s in registry.all_skills()
+    )
+    dynamic_bridge = (
+        "BRIDGE (entity resolution + reprogramming):\n"
+        "  reprogramme_needed — create or update an entity .st file. USE THIS when:\n"
+        "    - User corrects or clarifies a preference\n"
+        "    - User mentions a new person, concept, or domain to track\n"
+        "    - User says 'remember', 'update', 'track', or corrects your understanding\n"
+        "    - Any knowledge needs to be persisted beyond this conversation\n"
+        "  Available entities to resolve:\n"
+        f"{entity_vocab_lines}"
+    )
+    system_prompt = PRE_DIFF_SYSTEM.replace("BRIDGE_VOCAB_PLACEHOLDER", dynamic_bridge)
+    session.set_system(system_prompt)
 
     print(f"\n{'='*60}")
     print(f"TURN: \"{user_message}\" (contact: {contact_id})")
@@ -578,6 +644,21 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
                 compiler.resolve_current_gap(gap.hash)
 
         elif vocab and is_mutate(vocab):
+            # ── Auto-route .st file edits to reprogramme ──
+            # If the gap targets a .st file, route through st_builder
+            # instead of generic file_edit. .st files have schema.
+            targets_st = any(
+                ref.endswith(".st") or registry.resolve(ref) is not None
+                for ref in gap.content_refs
+            ) or ".st" in gap.desc.lower()
+
+            if targets_st and vocab in ("script_edit_needed", "content_needed", "json_patch_needed"):
+                print(f"  → mutation targeting .st file, rerouting to reprogramme")
+                # Swap vocab to reprogramme and re-push
+                gap.vocab = "reprogramme_needed"
+                compiler.ledger.stack.append(entry)
+                continue
+
             # ── Mutation: 5.4 composes command, kernel executes ──
             print(f"  → mutation ({vocab})")
 
@@ -693,9 +774,120 @@ Respond with JSON: {{"command": "...", "reasoning": "..."}}"""
             else:
                 compiler.resolve_current_gap(gap.hash)
 
+        elif vocab == "reprogramme_needed":
+            # ── Bridge primitive: create/update entity .st via st_builder ──
+            # The LLM needs to reprogramme its knowledge about an entity.
+            # Route to st_builder to create or update the .st file.
+            print(f"  → reprogramme ({vocab})")
+
+            # Resolve any existing entity data for context
+            entity_data = _resolve_entity(gap.content_refs, registry, trajectory)
+            if entity_data:
+                session.inject(f"## Existing entity data\n{entity_data}")
+            elif resolved_data:
+                session.inject(f"## Context\n{resolved_data}")
+
+            # Inject available entity hashes so the LLM can reference them
+            entity_list = "\n".join(
+                f"  {s.display_name}:{s.hash} ({s.name}.st)"
+                for s in registry.all_skills()
+            )
+
+            raw = session.call(
+                f"You need to reprogramme your knowledge: gap:{gap.hash} \"{gap.desc}\"\n\n"
+                "## Known entities (reference by hash in refs field)\n"
+                f"{entity_list}\n\n"
+                "## Compose a JSON .st file intent\n"
+                "The .st file is a manifestation blueprint. Fields present determine what the entity IS:\n"
+                "- People: identity + preferences\n"
+                "- Domain/compliance: constraints + sources + scope\n"
+                "- Workflows: steps with actions\n"
+                "- Concepts: refs linking to related entity hashes\n\n"
+                "IMPORTANT: Reference other entities by hash, not by name.\n"
+                "Use refs to map names to hashes: {\"admin\": \"72b1d5ffc964\", \"research\": \"a72c3c4dec0c\"}\n"
+                "Actions that reference entities should include their hashes in the refs list.\n\n"
+                "```json\n"
+                '{"name": "entity_name", "desc": "what this entity is",\n'
+                ' "trigger": "on_contact:X | on_vocab:X | manual | command:X",\n'
+                ' "refs": {"entity_name": "entity_hash"},\n'
+                ' "actions": [{"do": "step description", "observe": true, "refs": ["hash"]}],\n'
+                ' "identity": {}, "preferences": {}, "constraints": {}, "sources": [], "scope": ""}\n'
+                "```\n"
+                "Only include fields relevant to this entity type. Omit empty fields.\n"
+                "If updating an existing entity, include only the fields that changed."
+            )
+            print(f"  LLM compose: {raw[:150]}...")
+
+            # Execute st_builder
+            intent = _extract_json(raw)
+            if intent:
+                output, code = execute_tool("tools/st_builder.py", intent)
+                print(f"  st_builder: {output[:150]}")
+
+                commit_sha = auto_commit(f"reprogramme: {gap.desc[:50]}")
+                if commit_sha:
+                    print(f"  → committed: {commit_sha}")
+
+                    step_result = Step.create(
+                        desc=f"reprogrammed: {gap.desc}",
+                        step_refs=[origin_step.hash],
+                        content_refs=gap.content_refs,
+                        commit=commit_sha,
+                        chain_id=entry.chain_id,
+                    )
+                    # No post-diff. The commit hash IS the record.
+                    compiler.resolve_current_gap(gap.hash)
+                else:
+                    step_result = Step.create(
+                        desc=f"reprogramme failed: {gap.desc}",
+                        step_refs=[origin_step.hash],
+                        content_refs=gap.content_refs,
+                        chain_id=entry.chain_id,
+                    )
+                    compiler.resolve_current_gap(gap.hash)
+            else:
+                print("  → no intent extracted")
+                step_result = Step.create(
+                    desc=f"reprogramme skipped: {gap.desc}",
+                    step_refs=[origin_step.hash],
+                    content_refs=gap.content_refs,
+                    chain_id=entry.chain_id,
+                )
+                compiler.resolve_current_gap(gap.hash)
+
+        elif vocab and is_bridge(vocab):
+            # ── Entity resolution: resolve existing .st ──
+            # vocab is entity-specific: clinton_needed → clinton.st
+            # Internal & — context injection, no mutation.
+            print(f"  → entity resolve ({vocab})")
+
+            entity_name = vocab.replace("_needed", "")
+            skill = registry.resolve_by_name(entity_name)
+            if skill:
+                session.inject(f"## Entity: {skill.display_name}:{skill.hash}\n{_render_entity(skill)}")
+            else:
+                entity_data = _resolve_entity(gap.content_refs, registry, trajectory)
+                if entity_data:
+                    session.inject(f"## Entity data\n{entity_data}")
+                elif resolved_data:
+                    session.inject(f"## Context\n{resolved_data}")
+
+            raw = session.call(f"Entity data for gap:{gap.hash} \"{gap.desc}\" is now in context. Reason over it. Articulate any new gaps.")
+            print(f"  LLM: {raw[:150]}...")
+
+            step_result, child_gaps = _parse_step_output(
+                raw, step_refs=[origin_step.hash], content_refs=gap.content_refs,
+                chain_id=entry.chain_id,
+            )
+
+            if child_gaps:
+                compiler.emit(step_result)
+            else:
+                compiler.resolve_current_gap(gap.hash)
+
         else:
-            # ── Bridge or unknown vocab ──
-            print(f"  → bridge/unknown ({vocab})")
+            # ── Unknown vocab ──
+            print(f"  → unknown ({vocab})")
             if resolved_data:
                 session.inject(f"## Context\n{resolved_data}")
 
@@ -760,7 +952,7 @@ def _parse_step_output(raw: str, step_refs: list[str], content_refs: list[str],
                 gap.scores = Epistemic(
                     relevance=g.get("relevance", 0.5),
                     confidence=g.get("confidence", 0.5),
-                    grounded=g.get("grounded", 0.5),
+                    grounded=0.0,  # kernel computes from co-occurrence at admission
                 )
                 gap.vocab = g.get("vocab")
                 if gap.vocab:
@@ -787,6 +979,18 @@ def _parse_step_output(raw: str, step_refs: list[str], content_refs: list[str],
     return step, gaps
 
 
+def _extract_json(raw: str) -> dict | None:
+    """Extract a JSON object from LLM output."""
+    try:
+        json_start = raw.find("{")
+        json_end = raw.rfind("}") + 1
+        if json_start >= 0 and json_end > json_start:
+            return json.loads(raw[json_start:json_end])
+    except (json.JSONDecodeError, KeyError):
+        pass
+    return None
+
+
 def _extract_command(raw: str) -> str | None:
     """Extract a command from LLM JSON output."""
     try:
@@ -798,6 +1002,73 @@ def _extract_command(raw: str) -> str | None:
     except (json.JSONDecodeError, KeyError):
         pass
     return None
+
+
+def _resolve_entity(content_refs: list[str], registry: SkillRegistry,
+                    trajectory: Trajectory) -> str | None:
+    """Resolve entity .st files referenced in content_refs.
+
+    Checks each ref against the skill registry. If it matches a known
+    .st file (person, task, commitment, skill), render its full data.
+    Falls back to trajectory resolution for non-.st hashes.
+    """
+    blocks = []
+    for ref in content_refs:
+        # Check if this hash is a known skill/entity
+        skill = registry.resolve(ref)
+        if skill:
+            blocks.append(_render_entity(skill))
+            continue
+        # Try trajectory
+        data = resolve_hash(ref, trajectory)
+        if data:
+            blocks.append(f"── {ref} ──\n{data}")
+    return "\n\n".join(blocks) if blocks else None
+
+
+def _render_entity(skill: Skill) -> str:
+    """Render a .st entity's full data for session injection."""
+    try:
+        with open(skill.source) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return f"## {skill.display_name}:{skill.hash}\n(unreadable)"
+
+    lines = [f"## Entity: {skill.display_name}:{skill.hash}"]
+    lines.append(f"  name: {skill.name}")
+    lines.append(f"  desc: {skill.desc}")
+    lines.append(f"  trigger: {skill.trigger}")
+
+    # Identity fields (for people)
+    identity = data.get("identity", {})
+    if identity:
+        lines.append("  identity:")
+        for k, v in identity.items():
+            lines.append(f"    {k}: {v}")
+
+    # Preferences
+    preferences = data.get("preferences", {})
+    if preferences:
+        lines.append("  preferences:")
+        for category, prefs in preferences.items():
+            lines.append(f"    {category}:")
+            if isinstance(prefs, dict):
+                for k, v in prefs.items():
+                    lines.append(f"      {k}: {v}")
+            else:
+                lines.append(f"      {prefs}")
+
+    # Refs
+    refs = data.get("refs", {})
+    if refs:
+        lines.append("  refs:")
+        for k, v in refs.items():
+            lines.append(f"    {k}: {v}")
+
+    # Steps summary
+    lines.append(f"  steps: {' → '.join(s.action for s in skill.steps)}")
+
+    return "\n".join(lines)
 
 
 def _find_identity_skill(contact_id: str, registry: SkillRegistry) -> Skill | None:
@@ -861,9 +1132,87 @@ def _save_turn(trajectory: Trajectory):
 
 # ── Main ─────────────────────────────────────────────────────────────────
 
+def run_command(cmd_name: str, args: str = "") -> str:
+    """Run a /command .st file directly. Bypasses LLM gap routing."""
+    registry = load_all(str(SKILLS_DIR))
+    skill = registry.resolve_command(cmd_name)
+    if not skill:
+        return f"Unknown command: /{cmd_name}"
+
+    trajectory = Trajectory.load(str(TRAJ_FILE))
+    Trajectory.load_chains(str(CHAINS_FILE), trajectory)
+
+    print(f"\n── COMMAND: /{cmd_name} ({skill.display_name}:{skill.hash}) ──")
+
+    session = Session(model=os.environ.get("KERNEL_COMPOSE_MODEL", "gpt-4.1"))
+    session.set_system(PRE_DIFF_SYSTEM)
+
+    # Inject entity data
+    entity_data = _render_entity(skill)
+    session.inject(entity_data)
+    if args:
+        session.inject(f"## Command args\n{args}")
+
+    # Create origin step for the command
+    origin = Step.create(
+        desc=f"command: /{cmd_name}",
+        content_refs=[skill.hash],
+    )
+    trajectory.append(origin)
+
+    # Inject skill steps as gaps onto compiler
+    compiler = Compiler(trajectory)
+    for st_step in skill.steps:
+        gap = Gap.create(
+            desc=st_step.desc,
+            content_refs=[skill.hash],
+        )
+        gap.scores = Epistemic(relevance=0.9, confidence=0.8, grounded=0.0)
+        gap.vocab = st_step.vocab
+        origin.gaps.append(gap)
+
+    compiler.emit_origin_gaps(origin)
+    print(compiler.render_ledger())
+
+    # Run iteration loop (same as run_turn)
+    for iteration in range(MAX_ITERATIONS):
+        entry, signal = compiler.next()
+        if entry is None or signal == GovernorSignal.HALT:
+            break
+
+        gap = entry.gap
+        print(f"  [{iteration+1}] gap:{gap.hash[:8]} \"{gap.desc}\" [{gap.vocab}]")
+
+        # Resolve and execute (simplified — uses same tool routing)
+        resolved = resolve_all_refs(gap.step_refs, gap.content_refs, trajectory)
+        if resolved:
+            session.inject(f"## Resolved\n{resolved}")
+
+        raw = session.call(f"Execute step: \"{gap.desc}\". Articulate any new gaps.")
+        step_result, child_gaps = _parse_step_output(
+            raw, step_refs=[origin.hash], content_refs=gap.content_refs,
+            chain_id=entry.chain_id,
+        )
+        trajectory.append(step_result)
+        compiler.add_step_to_chain(step_result.hash)
+
+        if child_gaps:
+            compiler.emit(step_result)
+        else:
+            compiler.resolve_current_gap(gap.hash)
+
+        if compiler.is_done():
+            break
+
+    # Synthesize
+    response = _synthesize(session, f"/{cmd_name}")
+    _save_turn(trajectory)
+    return response
+
+
 if __name__ == "__main__":
     print("v5 Step Kernel — cors")
-    print("Type /quit to exit, /wipe to reset trajectory\n")
+    print("Type /quit to exit, /wipe to reset, /cmd to run a command\n")
 
     while True:
         try:
@@ -882,6 +1231,15 @@ if __name__ == "__main__":
             if CHAINS_FILE.exists():
                 CHAINS_FILE.unlink()
             print("trajectory wiped")
+            continue
+
+        # /command routing
+        if user_input.startswith("/"):
+            parts = user_input[1:].split(" ", 1)
+            cmd_name = parts[0]
+            cmd_args = parts[1] if len(parts) > 1 else ""
+            response = run_command(cmd_name, cmd_args)
+            print(f"\nv5> {response}\n")
             continue
 
         response = run_turn(user_input)

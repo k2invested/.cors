@@ -15,9 +15,9 @@ Epistemic signal vector. Three dimensions derived from chain structure by the go
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| relevance | float | Hash co-occurrence frequency — how connected is this to current context |
-| confidence | float | Chain depth + convergence — how sure is the system |
-| grounded | float | Commit-anchored chain termination — is this anchored in real state changes |
+| relevance | float | LLM-assessed: how much does resolving this advance the trajectory toward the shared goal? Primary admission driver. |
+| confidence | float | LLM-assessed: how safe and trustworthy is this to act on? |
+| grounded | float | Kernel-computed: deterministic hash co-occurrence frequency on the trajectory. NOT LLM-assessed — overwritten by compiler at admission. |
 
 Methods:
 - `as_vector() → [float, float, float]` — for governor linear algebra
@@ -105,7 +105,10 @@ Key methods:
 - `is_commit(hash) → bool` — is this a mutation step
 - `dormant_gaps() → list[Gap]` — all dormant gaps
 - `recurring_dormant(min_count) → list[str]` — dormant descriptions appearing N+ times
-- `render_recent(n) → str` — render for LLM context injection
+- `render_recent(n, registry=None) → str` — Render trajectory as traversable hash tree with named skill references (e.g. kenny:72b1d5ffc964)
+- `_tag_ref(ref, layer, registry) → str` — Tag hash with type prefix, resolves named entities from skill registry
+- `_render_refs(step_refs, content_refs, registry) → str` — Render refs list with named tags
+- `_render_steps_as_tree(steps, registry) → str` — Render loose steps as flat hash tree
 - `save(path)` / `load(path)` — JSON persistence
 
 ## Hash Functions

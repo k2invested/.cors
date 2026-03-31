@@ -44,6 +44,8 @@ The kernel reads meaning → produces structure.
 
 One persistent 5.4 session per turn. The LLM iterates pre→post→pre→post within one context window. No separate mini. The same LLM does perception, gap scoring, and command composition — all in one continuous stream.
 
+The trajectory is rendered as a traversable hash tree (same shape as git commit trees) via render_recent(). Known skill hashes render with named prefixes (e.g. kenny:72b1d5ffc964, research:a72c3c4dec0c).
+
 Coherence comes from the persistent session. The trajectory provides structural grounding. The context window holds only new content — everything previously observed exists as hash references on the trajectory.
 
 ### Pre-diff is emergent
@@ -149,7 +151,7 @@ The ledger is the ordered unresolved frontier — a recursively rewritten ordere
 
 **Three-part gap lifecycle:**
 - **Emission**: a step produces candidate gaps
-- **Admission**: only gaps above threshold enter the ledger
+- **Admission**: gaps scored by 0.8 * relevance + 0.2 * grounded, where relevance is LLM-assessed and grounded is computed deterministically by the kernel from hash co-occurrence frequency on the trajectory. Only gaps above ADMISSION_THRESHOLD (0.4) enter the ledger.
 - **Placement**: admitted gaps insert at lawful position (depth-first, not append)
 
 The ledger is a stack. Origin gaps enter first. Child gaps push on top. The compiler pops from the top — deepest child first. LIFO. Depth-first per origin gap.
@@ -219,6 +221,8 @@ The step primitive doesn't just track what the system does. It manifests what th
 Users, contacts, and agents are `.st` files. `admin.st` fires on every message from the matching contact, injecting identity, preferences, principles, and recent context — all as deterministic hash-resolved steps.
 
 The user's hash appears on every step they trigger. Identity evolves — the agent updates the `.st` file, git commits, hash changes, future interactions use the latest version.
+
+The identity .st fires AFTER the first step, not before — so user preferences land mid-context where they're most useful. The identity hash is an entity the agent reasons about, not instructions it follows. The agent uses it as a mental model of who the user is — their context, role, thinking style, and history.
 
 ## 19. HEAD as Workspace State
 

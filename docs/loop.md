@@ -1,120 +1,171 @@
 # loop.py — The Turn Loop
 
 **Layer**: 2 (depends on step.py, compile.py, skills/loader.py)
-**Principles**: §2, §3, §5, §6, §19, §20
+**Principles**: §2, §3, §5, §6, §17, §18, §19, §20
 
 ## Purpose
 
-Orchestrates one turn from user input to synthesis. Manages the persistent 5.4 session, feeds pre/post iterations, invokes the compiler, resolves hashes via git, executes tools, and produces the final response.
+Orchestrates one turn from user input to synthesis. Manages a persistent LLM session, produces the first step (origin), fires identity .st, invokes the compiler, resolves hashes, executes tools, and synthesizes the response.
 
-## Status: TO BE WRITTEN
-
-The current loop.py is from the early minimal prototype. It needs a full rewrite based on the finalized architecture.
+## Status: IMPLEMENTED
 
 ## Turn Flow
 
-```
-1. INIT
-   - Load trajectory from trajectory.json
-   - Load skills from skills/
-   - Resolve git HEAD → inject workspace state as hash data
+1. INIT — Load trajectory from trajectory.json, load chains from chains.json, load skills from skills/, resolve git HEAD
+2. FIRST STEP (origin) — Inject trajectory (hash tree via render_recent) + HEAD tree + user message into persistent session. LLM produces first atomic step with gap articulations. This is the origin of the turn's causal chain.
+3. IDENTITY — Fire contact's .st file (e.g. admin.st) AFTER the first step, not before. Identity loads mid-context where it won't be pushed out. Identity step references the skill hash (kenny:72b1d5ffc964).
+4. COMPILER — Admit origin gaps onto ledger. If no gaps → auto-synthesize.
+5. ITERATION LOOP (max 30 rounds):
+   a. Pop top gap → governor signal
+   b. Resolve hash references (trajectory step → trajectory gap → git object)
+   c. Execute by vocab:
+      - Observation-only (hash_resolve_needed, external_context): resolve + inject, blob step, no post-diff
+      - Deterministic (scan_needed, registry_needed): kernel resolves via tool, LLM reasons over result
+      - Observation (pattern_needed, research_needed, etc.): tool executes, LLM reasons
+      - Mutation (content_needed, script_edit_needed, etc.): 5.4 composes command, kernel executes, auto-commit, postcondition fires
+      - Bridge/unknown: LLM addresses directly
+   d. Record step on trajectory + chain
+   e. If compiler.is_done() → break
+6. SYNTHESIS — Inject SYNTH_SYSTEM, LLM synthesizes response
+7. SAVE — Persist trajectory.json and chains.json
 
-2. IDENTITY
-   - Match contact_id → find .st file with trigger on_contact:X
-   - Resolve identity .st → inject deterministic gaps (load prefs, principles, recent)
-   - Execute identity gaps (all post_diff: false → instant)
+## Key Types
 
-3. PRE-DIFF (persistent 5.4)
-   - Inject: trajectory (recent chain hashes) + HEAD tree + user message
-   - LLM reads trajectory, follows step hashes, articulates causal chains
-   - Each articulation IS a gap — references content hashes + step hashes
-   - Output: multiple gap articulations with hash refs
+### Session
+Persistent LLM session for one turn. Accumulates messages — the LLM's own outputs stay in context. New data injected as user messages.
 
-4. POST-DIFF SKELETON (same 5.4)
-   - LLM scores each gap against system vocab
-   - Direct mapping + score per gap
-   - Output: vocab + score per gap
+| Method | Purpose |
+|--------|---------|
+| set_system(content) | Set system message once at turn start |
+| inject(content, role) | Inject content into session (default role: user) |
+| call(user_content) → str | Call LLM, optionally inject user content first |
+| message_count() → int | Number of messages in session |
 
-5. COMPILER
-   - Admit gaps above threshold onto ledger
-   - Dormant gaps stored on trajectory (not on ledger)
-   - Pop top of stack → governor signal
+## System Prompts
 
-6. ITERATION LOOP
-   a. Kernel resolves all hashes referenced in selected gap
-   b. Injects resolved data into 5.4 session
-   c. 5.4 produces new perception (pre-diff):
-      - If gap needs observation → LLM reasons over resolved data → may surface child gaps
-      - If gap needs mutation → LLM composes command
-   d. Kernel executes if mutation → auto-commit
-   e. Postcondition fires: resolve new commit blob (automatic observation)
-   f. Compiler emits child gaps from step → push onto stack
-   g. Pop next → governor signal → repeat
+### PRE_DIFF_SYSTEM
+Teaches the LLM:
+- What a step is (universal primitive — people, workflows, ideas, events, tasks are all steps)
+- What a gap is (verifiable discrepancy: observational or misalignment)
+- Epistemic triad scoring (relevance + confidence scored by LLM, grounded computed by kernel)
+- Hash tree navigation (how to read the trajectory tree, trace causality, reverse-engineer state)
+- Identity as entity (user hash is a mental model to reason about, not instructions to follow)
+- Vocab mapping (observe/mutate/bridge terms)
+- Output format: natural reasoning with embedded JSON block containing gaps
 
-7. SYNTHESIS
-   - Compiler.is_done() → all gaps resolved
-   - Synthesize response from session context
-   - Save step to trajectory
-   - Commit trajectory.json if changed
+### COMPOSE_SYSTEM
+Command composition for mutation gaps. LLM produces JSON with `command` and `reasoning` fields. Prefers python3 one-liners over sed for macOS compatibility.
 
-## Key Responsibilities
-
-| Component | Role |
-|-----------|------|
-| Persistent 5.4 | Reads structure, produces meaning (pre-diff, post-diff, commands, synthesis) |
-| Compiler | Sequences gaps via stack, enforces OMO, manages chains |
-| Kernel (loop.py) | Resolves hashes via git, executes tools, auto-commits, manages session |
-| Governor (in compile.py) | Monitors epistemic vectors, gates action |
-| Skills (loader.py) | Resolves .st files, injects child gaps into ledger |
-
-## Context Window Management
-
-The persistent session accumulates only:
-- New content (freshly resolved hash data)
-- LLM's own reasoning (pre-diff, post-diff outputs)
-- User message
-
-Everything previously observed exists as hash references on the trajectory. Never re-injected. The context window is a workspace, not a warehouse.
+### SYNTH_SYSTEM
+Final response synthesis — concise, conversational, no internal details. Do not mention hashes, trajectory, or internal systems.
 
 ## Hash Resolution
 
-When a gap references content hashes, the kernel resolves them before injection:
+resolve_hash(ref, trajectory) tries three sources in order:
+1. Trajectory step — step hash → full step data (desc, refs, gaps, commit)
+2. Trajectory gap — gap hash → gap data with scores (relevance, confidence, grounded)
+3. Git object — git show → blob/tree/commit content
 
-```python
-for ref in gap.content_refs:
-    data = git_resolve(ref)  # blob → file content, tree → listing, commit → diff
-    inject_into_session(ref, data)
-```
-
-Resolution methods:
-- `git show <hash>` — blob content
-- `git ls-tree <hash>` — tree listing
-- `git diff <hash1>..<hash2>` — commit diff
-- Trajectory lookup — step hash → Step object
+resolve_all_refs(step_refs, content_refs, trajectory) resolves all references and formats as labeled injection blocks (`── resolved step:<hash> ──` and `── resolved <hash> ──`).
 
 ## Tool Execution
 
-When vocab maps to a tool:
-```
-vocab → tool script path (from preconditions or .st)
-→ kernel spawns subprocess
-→ pipes params to stdin
-→ captures stdout/stderr
-→ if mutation: git add + commit → SHA recorded
-→ result fed back into session
-```
+TOOL_MAP maps vocab → tool script path:
 
-When vocab maps to a .st file:
-```
-vocab → .st file resolved
-→ child gaps injected into ledger
-→ compiler addresses them depth-first
-→ each child gap follows its own vocab routing
-```
+| Vocab | Tool Script |
+|-------|-------------|
+| scan_needed | tools/scan_tree.py |
+| hash_resolve_needed | (inline — resolve_hash) |
+| pattern_needed | tools/file_grep.py |
+| url_needed | tools/url_fetch.py |
+| email_needed | tools/email_check.py |
+| research_needed | tools/research_web.py |
+| registry_needed | tools/registry_query.py |
+| external_context | (inline — LLM surfaces from context) |
+| content_needed | tools/file_write.py |
+| script_edit_needed | tools/file_edit.py |
+| command_needed | tools/code_exec.py |
+| message_needed | tools/email_send.py |
+| json_patch_needed | tools/json_patch.py |
+| git_revert_needed | tools/git_ops.py |
+
+Execution modes:
+- DETERMINISTIC_VOCAB: scan_needed, hash_resolve_needed, registry_needed — kernel resolves directly, LLM reasons over injected result, may produce child gaps
+- OBSERVATION_ONLY_VOCAB: hash_resolve_needed, external_context — resolve into context, blob step (no post-diff, no child gaps)
+- Observation vocab (is_observe): tool executes as subprocess, LLM reasons over result, may produce child gaps
+- Mutation vocab (is_mutate): OMO validation first, then 5.4 composes command via JSON, kernel executes via shell, auto-commits if changes detected, postcondition observation fires (git tree + command output injected), LLM observes postcondition and may produce new gaps
+
+Tools execute as subprocesses: stdin receives JSON params, stdout returns result. Timeout: 30 seconds. Working directory: CORS_ROOT.
+
+## Key Functions
+
+| Function | Purpose |
+|----------|---------|
+| run_turn(message, contact_id) → str | Complete turn lifecycle, returns synthesis |
+| resolve_hash(ref, trajectory) → str? | Resolve any hash (step/gap/git) |
+| resolve_all_refs(step_refs, content_refs, trajectory) → str | Resolve + format all refs as injection blocks |
+| execute_tool(tool_path, params) → (str, int) | Subprocess tool execution (stdin JSON → stdout) |
+| auto_commit(message) → str? | Git add -A + commit, returns short SHA or None |
+| git_head() → str | Current HEAD hash (short) |
+| git_tree(commit) → str | File listing at commit (--name-only -r) |
+| git_show(ref) → str | Resolve git object to content |
+| git_diff(from_ref, to_ref) → str | Diff between two commits |
+| git(cmd, cwd) → str | Run any git command, return stdout |
+
+## Helper Functions
+
+| Function | Purpose |
+|----------|---------|
+| _parse_step_output(raw, step_refs, content_refs, chain_id) → (Step, list[Gap]) | Parse LLM output → Step + gaps. Extracts JSON block from natural text. Sets gap.vocab and gap.scores from LLM-provided values. Grounded always 0.0 (kernel computes at admission). |
+| _extract_command(raw) → str? | Extract `command` field from LLM JSON output |
+| _find_identity_skill(contact_id, registry) → Skill? | Find .st file with `trigger: "on_contact:<contact_id>"` |
+| _render_identity(skill) → str | Format identity + preferences from .st file for session injection |
+| _synthesize(session, message) → str | Inject SYNTH_SYSTEM and produce final response |
+| _save_turn(trajectory) | Persist trajectory.json and chains.json |
+
+## Configuration
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| CORS_ROOT | Path(__file__).parent | Root directory for all paths |
+| SKILLS_DIR | CORS_ROOT / "skills" | Skills directory |
+| TRAJ_FILE | CORS_ROOT / "trajectory.json" | Trajectory persistence |
+| CHAINS_FILE | CORS_ROOT / "chains.json" | Chain persistence |
+| MAX_ITERATIONS | 30 | Max iteration loop rounds |
+| TRAJECTORY_WINDOW | 10 | Recent chains to render for LLM |
 
 ## Environment Variables
 
 | Variable | Purpose |
 |----------|---------|
-| OPENAI_API_KEY | LLM API access |
-| FILE_WORKSPACE | Working directory (default: repo root) |
+| OPENAI_API_KEY | LLM API access (OpenAI client) |
+| KERNEL_COMPOSE_MODEL | LLM model for session (default: gpt-4.1) |
+
+## Key Responsibilities
+
+| Component | Role |
+|-----------|------|
+| Persistent LLM (Session) | Reads structure, produces meaning (gap articulations, commands, synthesis) |
+| Compiler | Sequences gaps via stack, enforces OMO, manages chains |
+| Kernel (loop.py) | Resolves hashes, executes tools, auto-commits, manages session |
+| Governor (in compile.py) | Monitors epistemic vectors, gates action (HALT, REVERT signals) |
+| Skills (loader.py) | Resolves .st files, provides named hash resolution |
+
+## Context Window Management
+
+The persistent session accumulates only:
+- Trajectory hash tree (initial seed via render_recent)
+- HEAD workspace state
+- User message + identity
+- Freshly resolved hash data (per iteration)
+- LLM's own reasoning
+
+Everything previously observed exists as hash references on the trajectory. Never re-injected. The context window is a workspace, not a warehouse.
+
+## REPL
+
+The module includes a `__main__` block that runs an interactive REPL:
+- `you>` prompt accepts user input
+- `/quit` exits
+- `/wipe` deletes trajectory.json and chains.json (reset)
+- Each input runs `run_turn()` and prints the synthesis

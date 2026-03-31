@@ -124,7 +124,7 @@ All the same format. All hash-addressable. All executable by the same compiler.
 | Type | Purpose |
 |------|---------|
 | SkillStep | One atomic step: action, desc, vocab, post_diff |
-| Skill | Complete skill: hash, name, desc, steps[], source |
+| Skill | Complete skill: hash, name, desc, steps[], source, display_name |
 | SkillRegistry | Hash→Skill and name→Skill maps |
 
 ### Functions
@@ -136,6 +136,7 @@ All the same format. All hash-addressable. All executable by the same compiler.
 | `SkillRegistry.resolve(hash) → Skill?` | Lookup by hash |
 | `SkillRegistry.resolve_by_name(name) → Skill?` | Lookup by name |
 | `SkillRegistry.render_for_prompt() → str` | Render for LLM context |
+| `SkillRegistry.resolve_name(hash) → str?` | Hash → display name for tree rendering (e.g. "kenny", "research"). Extracted from identity.name or defaults to skill name. |
 
 ## Module: tools/st_builder.py
 

@@ -93,7 +93,7 @@ def slugify(text: str) -> str:
 # ── Schema validation ────────────────────────────────────────────────────
 
 VALID_TRIGGERS = {"manual", "every_turn", "on_mention"}
-VALID_TRIGGER_PREFIXES = {"on_contact:", "on_vocab:", "scheduled:"}
+VALID_TRIGGER_PREFIXES = {"on_contact:", "on_vocab:", "scheduled:", "command:"}
 
 REQUIRED_STEP_FIELDS = {"action", "desc"}
 
@@ -169,6 +169,18 @@ def build_st(intent: dict) -> dict:
         "refs": refs,
         "steps": steps,
     }
+
+    # Forward all non-base fields from intent — these are the manifestation config.
+    # What's present shapes how the entity manifests:
+    #   identity + preferences → person
+    #   constraints + sources + scope → compliance/regulation domain
+    #   schema + access_rules → business database
+    #   principles + boundaries → domain expertise
+    # The fields don't explain — they distinguish.
+    BASE_FIELDS = {"name", "desc", "trigger", "author", "refs", "actions"}
+    for key, value in intent.items():
+        if key not in BASE_FIELDS:
+            st[key] = value
 
     return st
 
