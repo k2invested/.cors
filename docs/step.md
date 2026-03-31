@@ -36,7 +36,7 @@ A gap articulation — the LLM's assessment of what needs to happen. Every gap i
 | step_refs | list[str] | **Layer 1**: reasoning steps in the causal chain |
 | origin | str? | Step hash that surfaced this gap |
 | scores | Epistemic | Epistemic signal for the governor |
-| vocab | str? | Mapped precondition (scan_needed, script_edit_needed, etc.) |
+| vocab | str? | Mapped precondition (hash_resolve_needed, hash_edit_needed, pattern_needed, etc.) |
 | vocab_score | float | Confidence in the vocab mapping |
 | resolved | bool | True when the chain closed this gap |
 | dormant | bool | True if below threshold — stored but not acted on |

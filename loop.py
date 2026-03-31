@@ -173,6 +173,7 @@ TOOL_MAP = {
     "external_context":     None,  # LLM surfaces from context
 
     # Mutation tools (composed — 5.4 writes the command)
+    "hash_edit_needed":     "tools/hash_manifest.py",
     "content_needed":       "tools/file_write.py",
     "script_edit_needed":   "tools/file_edit.py",
     "command_needed":       "tools/code_exec.py",
@@ -333,6 +334,7 @@ OBSERVE (kernel resolves, you receive data):
   (workspace files visible via HEAD commit tree. URLs and web research are steps inside workflow .st files, not standalone vocab.)
 
 MUTATE (you compose a command, kernel executes):
+  hash_edit_needed — edit any file (universal: read by hash → compose edit → execute via hash_manifest)
   content_needed — write a new file
   script_edit_needed — edit an existing file
   command_needed — execute a shell command
@@ -699,10 +701,6 @@ Respond with JSON: {{"command": "...", "reasoning": "..."}}"""
                 if commit_sha:
                     print(f"  → committed: {commit_sha}")
 
-                    # Postcondition: observe the commit
-                    post_tree = git_tree(commit_sha)
-                    session.inject(f"## Postcondition: commit:{commit_sha}\n{post_tree}\n\nCommand output:\n{output}")
-
                     step_result = Step.create(
                         desc=f"executed: {gap.desc}",
                         step_refs=[origin_step.hash],
@@ -712,21 +710,27 @@ Respond with JSON: {{"command": "...", "reasoning": "..."}}"""
                     )
                     compiler.record_execution(vocab, True)
 
-                    # LLM observes postcondition → may produce new gaps
-                    raw = session.call("Observe the commit result. Articulate any remaining gaps.")
-                    print(f"  LLM postcondition: {raw[:150]}...")
-
-                    post_step, child_gaps = _parse_step_output(
-                        raw, step_refs=[step_result.hash], content_refs=[commit_sha],
+                    # Universal postcondition: auto-commit → hash_resolve_needed
+                    # Deterministic observation targeting the commit SHA.
+                    # Enters the ledger as a child gap — depth-first, pops next.
+                    postcond = Gap.create(
+                        desc=f"observe commit:{commit_sha}",
+                        content_refs=[commit_sha],
+                        step_refs=[step_result.hash],
+                    )
+                    postcond.scores = Epistemic(relevance=1.0, confidence=1.0, grounded=0.0)
+                    postcond.vocab = "hash_resolve_needed"
+                    postcond_step = Step.create(
+                        desc=f"postcondition: {gap.desc}",
+                        step_refs=[step_result.hash],
+                        content_refs=[commit_sha],
+                        gaps=[postcond],
                         chain_id=entry.chain_id,
                     )
-                    trajectory.append(post_step)
-                    compiler.record_execution("scan_needed", False)  # postcondition is observation
-
-                    if child_gaps:
-                        compiler.emit(post_step)
-                    else:
-                        compiler.resolve_current_gap(gap.hash)
+                    trajectory.append(postcond_step)
+                    compiler.emit(postcond_step)
+                    compiler.resolve_current_gap(gap.hash)
+                    print(f"  → postcondition gap injected: hash_resolve_needed → commit:{commit_sha}")
                 else:
                     # No changes — command was observation-like
                     session.inject(f"## Command output (no mutation)\n{output}")

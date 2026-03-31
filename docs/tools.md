@@ -11,27 +11,23 @@ Standalone Python scripts executed by the kernel as subprocesses. Each tool read
 
 | Tool | Purpose | Input | Output |
 |------|---------|-------|--------|
-| hash_resolve.py | Resolve blob hashes from trajectory | `{"hashes": [...], "depth": N}` | Resolved step data with content, refs, assessment |
-| st_builder.py | Build .st files from semantic intent | `{"name": ..., "actions": [...]}` | Valid .st file written to skills/ |
+| hash_manifest.py | Universal file I/O by hash reference. Read, write, patch, diff. Routes mutations by file type (.st→st_builder, .json→json_patch, .docx→doc_edit, .pdf→pdf_fill). | `{"action": "read\|write\|patch\|diff", "path": "...", "content": "...", "patch": {"old":"..","new":".."}, "ref": "sha"}` | File content, diff, or confirmation |
+| st_builder.py | Build .st files from semantic intent. Supports stepless pure entities. Forwards all non-base fields as manifestation config. | `{"name": ..., "actions": [...], "identity": {}, ...}` | Valid .st file written to skills/ |
 
 ## Observation Tools (resolve hash → data)
 
 | Tool | Vocab | Purpose |
 |------|-------|---------|
-| scan_tree.py | scan_needed | Scan workspace directory / read file content |
 | file_grep.py | pattern_needed | Search file contents by pattern |
-| file_read.py | scan_needed | Read specific file |
 | email_check.py | email_needed | Check email |
-| url_fetch.py | url_needed | Fetch URL content |
-| web_search.py | research_needed | Web search |
-| research_web.py | research_needed | Deep web research |
-| registry_query.py | registry_needed | Query agent registry |
-| recall.py | hash_resolve_needed | Legacy recall (being replaced by hash_resolve) |
+| (inline resolve_hash) | hash_resolve_needed | Resolve step/gap/git hashes from trajectory (no tool script — handled in loop.py) |
+| (inline) | external_context | LLM surfaces from current context (no tool script) |
 
 ## Mutation Tools (execute → commit)
 
 | Tool | Vocab | Purpose |
 |------|-------|---------|
+| hash_manifest.py | hash_edit_needed | Universal file editing — routes by file type to specialized tools |
 | code_exec.py | command_needed | Execute shell commands |
 | file_write.py | content_needed | Write new files |
 | file_edit.py | script_edit_needed | Edit existing files |
@@ -91,7 +87,23 @@ The kernel spawns tools as subprocesses. No shared state. No imports from the co
 
 ## Post-execution
 
-After a mutation tool:
-1. Kernel runs `git add -A && git commit` → captures SHA
+After a mutation tool (universal postcondition):
+1. Kernel runs `auto_commit(message)` → `git add -A && git commit` → captures SHA
 2. SHA recorded on the step's commit field
-3. Postcondition fires: resolve new commit blob as observation
+3. Universal postcondition: every auto_commit injects a `hash_resolve_needed` gap targeting the commit SHA onto the ledger. This is structural — not per-tool. The gap enters as a child (depth-first, pops next) so the system observes the mutation result before proceeding.
+
+### File type routing (hash_manifest.py)
+
+When hash_edit_needed fires, hash_manifest routes mutations by file extension:
+
+| Extension | Delegated tool |
+|-----------|---------------|
+| .st | st_builder.py |
+| .json | json_patch.py |
+| .docx | doc_edit.py |
+| .pdf | pdf_fill.py |
+| (other) | Direct read/write/patch |
+
+### .st auto-route
+
+Any script_edit_needed, content_needed, or json_patch_needed gap targeting a .st file is automatically rerouted to reprogramme_needed by loop.py. This ensures .st files always go through the st_builder for schema validation.

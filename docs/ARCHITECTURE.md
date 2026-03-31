@@ -75,8 +75,8 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 
 | Type | Purpose |
 |------|---------|
-| `LedgerEntry` | A gap on the ledger with placement metadata (chain_id, depth, parent_gap) |
-| `Ledger` | Stack-based ordered frontier. Push origin/child gaps, pop from top, track resolved/history. |
+| `LedgerEntry` | A gap on the ledger with placement metadata (chain_id, depth, parent_gap, priority) |
+| `Ledger` | Stack-based ordered frontier. Push origin/child gaps, pop from top, sort by priority, track resolved/history. |
 | `ChainState` | Enum: OPEN, ACTIVE, SUSPENDED, CLOSED |
 | `GovernorSignal` | Enum: ALLOW, CONSTRAIN, REDIRECT, REVERT, ACT, HALT |
 | `GovernorState` | Tracks epistemic vectors across steps for convergence/stagnation/divergence/oscillation detection |
@@ -87,7 +87,7 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 | Function | Purpose |
 |----------|---------|
 | `Compiler.emit(step)` | Three-part lifecycle: emission → admission (threshold) → placement (stack push) |
-| `Compiler.emit_origin_gaps(step)` | Same but creates new chains per gap (for initial pre-diff) |
+| `Compiler.emit_origin_gaps(step)` | Same but creates new chains per gap (for initial pre-diff). Sorts by priority after emission. |
 | `Compiler.next()` | Pop top of stack, get governor signal. Returns (entry, signal). |
 | `Compiler.validate_omo(vocab)` | Check if proposed action respects O-M-O transition grammar |
 | `Compiler.resolve_current_gap(hash)` | Mark gap resolved, check chain completion |
@@ -104,15 +104,24 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 | `DORMANT_THRESHOLD` | 0.2 | Below this, gap stored as dormant |
 | `MAX_CHAIN_DEPTH` | 15 | Force-close chain beyond this |
 | `SATURATION_THRESHOLD` | 0.05 | Information gain below this = stagnation |
+| `STAGNATION_WINDOW` | 3 | N steps with no movement = stagnation |
 | `CHAIN_EXTRACT_LENGTH` | 8 | Chains longer than this extracted to file |
 
 ### Vocab sets
 
 | Set | Members | Maps to |
 |-----|---------|---------|
-| `OBSERVE_VOCAB` | scan_needed, pattern_needed, hash_resolve_needed, research_needed, email_needed, url_needed, registry_needed, external_context | Hash resolution / read tools |
-| `MUTATE_VOCAB` | content_needed, script_edit_needed, command_needed, message_needed, json_patch_needed, git_revert_needed | Execution tools / .st scripts |
-| `BRIDGE_VOCAB` | judgment_needed, task_needed, commitment_needed, profile_needed, task_status_needed | Internal bridges |
+| `OBSERVE_VOCAB` | pattern_needed, hash_resolve_needed, email_needed, external_context | Hash resolution / read tools |
+| `MUTATE_VOCAB` | hash_edit_needed, content_needed, script_edit_needed, command_needed, message_needed, json_patch_needed, git_revert_needed | Execution tools / .st scripts |
+| `BRIDGE_VOCAB` | reprogramme_needed + dynamic (built from .st registry at load time via `register_bridge_vocab()`) | Entity resolution + reprogramming |
+
+### Key functions (vocab)
+
+| Function | Purpose |
+|----------|---------|
+| `register_bridge_vocab(skill_names)` | Register .st skill names as bridge vocab terms. Called after loading skills. Each .st name becomes `{name}_needed`. |
+| `vocab_priority(vocab)` | Priority ordering for ledger: internal& (10) → external& (20) → external&mut (40) → reprogramme (99). Returns sort key. |
+| `is_observe(vocab)` / `is_mutate(vocab)` / `is_bridge(vocab)` | Vocab set membership checks |
 
 ### Invariants
 
@@ -136,8 +145,8 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 | Type | Purpose |
 |------|---------|
 | `SkillStep` | One atomic step within a skill: action, desc, vocab, post_diff |
-| `Skill` | A complete skill: hash, name, display_name, desc, steps[], source path. display_name: extracted from identity.name or defaults to skill name — used in tree render |
-| `SkillRegistry` | Map of hash→Skill and name→Skill. Resolve by hash or name. |
+| `Skill` | A complete skill: hash, name, display_name, desc, steps[], source path, trigger, is_command. display_name: extracted from identity.name or defaults to skill name — used in tree render |
+| `SkillRegistry` | Map of hash→Skill, name→Skill, and commands dict. Two visibility tiers: bridge skills (LLM-surfaceable) and command skills (hidden, /command only). |
 
 ### Key functions
 
@@ -147,7 +156,10 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 | `load_all(skills_dir)` | Load all .st files → SkillRegistry |
 | `SkillRegistry.resolve(hash)` | Hash → Skill |
 | `SkillRegistry.resolve_name(hash)` | Hash → display name for tree rendering (kenny, research, etc.) |
-| `SkillRegistry.render_for_prompt()` | Render all skills as LLM context |
+| `SkillRegistry.resolve_by_name(name)` | Name → Skill |
+| `SkillRegistry.resolve_command(name)` | Resolve a /command by name. Command skills are hidden from LLM registry. |
+| `SkillRegistry.all_commands()` | List all command skills |
+| `SkillRegistry.render_for_prompt()` | Render all skills as LLM context (excludes command skills) |
 
 ---
 
@@ -169,7 +181,7 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 
 | Prompt | Purpose |
 |--------|---------|
-| `PRE_DIFF_SYSTEM` | Teaches gaps, epistemic triad, hash tree navigation, identity |
+| `PRE_DIFF_SYSTEM` | Teaches gaps, epistemic triad, hash tree navigation, identity, gap discipline. Dynamic: BRIDGE_VOCAB_PLACEHOLDER replaced at runtime with actual entity list from registry. |
 | `COMPOSE_SYSTEM` | Composition prompt for tool parameterization |
 | `SYNTH_SYSTEM` | Synthesis prompt for final response generation |
 
@@ -177,18 +189,28 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 
 | Mode | Description |
 |------|-------------|
-| Deterministic | Kernel resolves — no LLM needed (e.g. scan, registry) |
-| Composed | 5.4 writes command — LLM parameterizes tool execution |
-| Observation-only | Blob step, no post-diff — data ingestion without gap emission |
+| Deterministic | Kernel resolves — no LLM needed (hash_resolve_needed) |
+| Observation-only | Blob step, no post-diff — data ingestion without gap emission (hash_resolve_needed, external_context) |
+| Observation | Tool executes, LLM reasons over result (pattern_needed, email_needed) |
+| Mutation | 5.4 composes command, kernel executes, auto-commit, universal postcondition fires |
+| Reprogramme | Create/update entity .st via st_builder |
+| Entity bridge | Resolve existing .st into context (internal &, no mutation) |
+| .st auto-route | script_edit_needed/content_needed/json_patch_needed targeting .st files rerouted to reprogramme_needed |
 
 ### Key functions
 
 | Function | Purpose |
 |----------|---------|
+| `run_turn(message, contact_id)` | Complete turn lifecycle — returns synthesis |
+| `run_command(cmd_name, args)` | Run a /command .st file directly, bypasses LLM gap routing |
 | `resolve_hash()` | Tries trajectory step → trajectory gap → git object |
-| `TOOL_MAP` | Vocab → tool script mapping |
-| `DETERMINISTIC_VOCAB` | Vocab items resolved by kernel without LLM |
-| `OBSERVATION_ONLY_VOCAB` | Vocab items that produce blob steps with no post-diff |
+| `auto_commit(message)` | Git add -A + commit, returns SHA or None. Universal postcondition: every commit injects hash_resolve_needed gap targeting commit SHA onto ledger. |
+| `TOOL_MAP` | Vocab → tool script mapping (includes hash_edit_needed → tools/hash_manifest.py) |
+| `DETERMINISTIC_VOCAB` | {hash_resolve_needed} — kernel resolves without LLM |
+| `OBSERVATION_ONLY_VOCAB` | {hash_resolve_needed, external_context} — blob steps with no post-diff |
+| `_reprogramme_pass()` | Automatic pre-synthesis pass — agent reviews turn, updates .st files if needed. Runs between iteration loop and synthesis. |
+| `_resolve_entity()` | Resolve entity .st files from content_refs via skill registry |
+| `_render_entity()` | Render a .st entity's full data (identity, preferences, refs, steps) for session injection |
 
 ### Environment variables
 
@@ -201,12 +223,17 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 
 ```
 1. Message arrives
-2. Load trajectory + skills + HEAD
-3. First LLM pass → first atomic step (origin)
-4. Identity .st fires AFTER first step
-5. Compiler admits gaps
-6. Iteration loop: pop → execute by vocab → inject → next step
-7. HALT → synthesize
+2. Load trajectory + skills + HEAD + register_bridge_vocab()
+3. Build dynamic system prompt (BRIDGE_VOCAB_PLACEHOLDER replaced with actual entity list)
+4. First LLM pass → first atomic step (origin)
+5. Identity .st fires AFTER first step
+6. Compiler admits gaps, sorts by priority
+7. Iteration loop: pop → execute by vocab → inject → next step
+   - .st auto-route: mutations targeting .st files rerouted to reprogramme_needed
+   - Universal postcondition: every auto_commit injects hash_resolve_needed → commit SHA
+8. Reprogramme pass (automatic, pre-synthesis housekeeping)
+9. HALT → synthesize
+10. Save trajectory + chains
 ```
 
 ---
@@ -224,11 +251,24 @@ Output: validated .st file written to skills/
 
 ---
 
-## Module: tools/hash_resolve.py
+## Module: tools/hash_manifest.py
 
-**Purpose**: Resolves blob hashes from the trajectory. Reads step hashes from params, looks up in self.json/trajectory, returns full step data for each hash found. Follows refs up to depth N.
+**Purpose**: Universal file I/O by hash reference. Single tool for all file mutations. Read by hash, write, patch, diff. Routes mutations by file type to specialized tools (.st → st_builder.py, .json → json_patch.py, .docx → doc_edit.py, .pdf → pdf_fill.py).
 
-**Mechanisms served**: §5 (Navigation), §12 (Recursive convergence), §13 (Closed hash graph)
+**Mechanisms served**: §3 (Commits), §13 (Closed hash graph), §14 (Vocab bridge)
+
+### Interface
+
+Input (stdin JSON): `{"action": "read|write|patch|diff", "path": "relative/path", "content": "...", "patch": {"old": "...", "new": "..."}, "ref": "commit_sha"}`
+
+### File type routing (TOOL_ROUTES)
+
+| Extension | Delegated tool |
+|-----------|---------------|
+| .st | st_builder.py |
+| .json | json_patch.py |
+| .docx | doc_edit.py |
+| .pdf | pdf_fill.py |
 
 ---
 

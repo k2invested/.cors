@@ -107,11 +107,9 @@ def validate_st(data: dict) -> list[str]:
     if "desc" not in data:
         errors.append("missing 'desc'")
     if "steps" not in data:
-        errors.append("missing 'steps'")
+        data["steps"] = []  # pure entity — no workflow steps
     elif not isinstance(data["steps"], list):
         errors.append("'steps' must be a list")
-    elif len(data["steps"]) == 0:
-        errors.append("'steps' must have at least one step")
     else:
         for i, step in enumerate(data["steps"]):
             for field in REQUIRED_STEP_FIELDS:

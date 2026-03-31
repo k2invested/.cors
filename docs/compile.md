@@ -31,6 +31,7 @@ A gap on the ledger with placement metadata.
 | chain_id | str | Which chain this gap belongs to |
 | depth | int | Depth in the chain (0 = origin) |
 | parent_gap | str? | Gap hash that spawned this entry |
+| priority | int | vocab_priority() value — lower = pops first (default 50) |
 
 ### Ledger
 
@@ -38,11 +39,12 @@ The stack-based ordered frontier.
 
 | Method | Purpose |
 |--------|---------|
-| `push_origin(gap, chain_id)` | Push origin gap, create new chain |
-| `push_child(gap, chain_id, parent_gap, depth)` | Push child gap on top (depth-first) |
+| `push_origin(gap, chain_id)` | Push origin gap, create new chain. Sets priority from vocab_priority(). |
+| `push_child(gap, chain_id, parent_gap, depth)` | Push child gap on top (depth-first). Sets priority from vocab_priority(). |
 | `peek() → LedgerEntry?` | Look at top without removing |
 | `pop() → LedgerEntry?` | Pop top entry — next gap to address |
 | `resolve_gap(hash)` | Mark gap as resolved |
+| `sort_by_priority()` | Sort stack so highest priority gaps pop first. Origins sorted by priority (internal& at top, reprogramme at bottom). Children stay on top for depth-first. |
 | `chain_is_complete(chain_id) → bool` | Are all gaps in this chain resolved? |
 | `is_empty() → bool` | Ledger empty = turn done |
 
@@ -87,7 +89,7 @@ The main sequencer. Owns the ledger, governor state, and chain tracking.
 | Method | Purpose |
 |--------|---------|
 | `emit(step)` | Three-part lifecycle: emission → admission → placement |
-| `emit_origin_gaps(step)` | Same but creates new chains per gap (initial pre-diff) |
+| `emit_origin_gaps(step)` | Same but creates new chains per gap (initial pre-diff). Sorts by priority after emission: internal& first, reprogramme last. |
 | `next() → (LedgerEntry?, GovernorSignal)` | Pop + govern — returns what to do next |
 | `validate_omo(vocab) → bool` | Check O-M-O transition grammar |
 | `record_execution(vocab, produced_commit)` | Track OMO state |
@@ -105,16 +107,32 @@ The main sequencer. Owns the ledger, governor state, and chain tracking.
 
 Three disjoint sets:
 
-**OBSERVE_VOCAB** (hash resolution / read):
-scan_needed, pattern_needed, hash_resolve_needed, research_needed, email_needed, url_needed, registry_needed, external_context
+**OBSERVE_VOCAB** (hash resolution / read — 4 terms):
+pattern_needed, hash_resolve_needed, email_needed, external_context
 
-**MUTATE_VOCAB** (execution / write):
-content_needed, script_edit_needed, command_needed, message_needed, json_patch_needed, git_revert_needed
+**MUTATE_VOCAB** (execution / write — 7 terms):
+hash_edit_needed, content_needed, script_edit_needed, command_needed, message_needed, json_patch_needed, git_revert_needed
 
-**BRIDGE_VOCAB** (internal bridges):
-judgment_needed, task_needed, commitment_needed, profile_needed, task_status_needed
+**BRIDGE_VOCAB** (dynamic — built from .st registry at load time):
+Starts with `{"reprogramme_needed"}`. Each .st file's name becomes a valid vocab term via `register_bridge_vocab()`: admin.st -> admin_needed, research.st -> research_needed. Two types of bridge resolution: reprogramme_needed (create/update .st, internal &mut) and {entity}_needed (resolve existing .st, internal &, context injection).
 
-Helper functions: `is_observe(vocab)`, `is_mutate(vocab)`
+Helper functions: `is_observe(vocab)`, `is_mutate(vocab)`, `is_bridge(vocab)`
+
+### vocab_priority(vocab)
+
+Priority ordering for the ledger. Lower number = pops first (top of stack).
+
+| Priority | Category | Vocab |
+|----------|----------|-------|
+| 10 | Internal & (context bridges) | {entity}_needed (admin_needed, research_needed, etc.) |
+| 20 | External & (observe) | pattern_needed, hash_resolve_needed, email_needed, external_context |
+| 40 | External &mut (mutate) | hash_edit_needed, content_needed, script_edit_needed, etc. |
+| 50 | Unknown | unrecognized vocab |
+| 99 | Reprogramme | reprogramme_needed — runs last |
+
+### register_bridge_vocab(skill_names)
+
+Called by the loop after loading skills. Each .st file's name becomes a valid vocab term. Display names (kenny, clinton) are for tree rendering only — not vocab. Vocab is role-based (admin_needed), not person-based.
 
 ## Constants
 
@@ -146,3 +164,5 @@ The sequence isn't planned — it emerges from vocab mapping + postcondition rul
 - Dormant gaps stored but never enter ledger
 - Force-close at MAX_CHAIN_DEPTH
 - OBSERVE_VOCAB ∩ MUTATE_VOCAB = ∅
+- Origin gaps sorted by priority after initial emission
+- BRIDGE_VOCAB is dynamic — built from .st registry, not hardcoded

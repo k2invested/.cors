@@ -137,8 +137,8 @@ Domain knowledge encoded as hash-addressable step scripts. A predefined hash res
 
 ```
 skills/research.st     → decompose → search → verify → extract → store
-skills/config_edit.st  → resolve blob → identify key → compose edit → verify
-skills/admin.st        → load identity → load principles → load recent chains
+skills/hash_edit.st    → resolve target (O) → compose edit (flexible) → execute edit (M)
+skills/admin.st        → load identity → load principles → load recent chains → load commitments
 ```
 
 Each atomic step is configurable via `post_diff` (see §18). Workflows are scripts where most steps are deterministic. Flexible tasks have post_diff: true on key steps.
@@ -162,9 +162,9 @@ One chain at a time — follow gap_A all the way down before touching gap_B. The
 
 Observe-Mutate-Observe is the transition grammar. Every chain self-organises as OMOMOMO. Enforced by vocab mapping + automatic postconditions:
 
-- **O**: vocab routes to hash resolution (scan_needed, hash_resolve_needed)
-- **M**: vocab routes to execution (script_edit_needed, content_needed) → auto-commit
-- **O**: postcondition auto-fires → resolve new commit blob → verify result
+- **O**: vocab routes to hash resolution (hash_resolve_needed, pattern_needed)
+- **M**: vocab routes to execution (hash_edit_needed, script_edit_needed, content_needed) → auto-commit
+- **O**: universal postcondition auto-fires → hash_resolve_needed targeting commit SHA → verify result
 
 O M O is the atomic unit. The compiler enforces it — no mutation without preceding observation, no mutation without following observation. The sequence isn't planned — it emerges from the structure.
 
@@ -186,10 +186,17 @@ The trajectory is a closed system. Raw data never touches it. External data ente
 
 ## 14. Vocab as Deterministic Bridge
 
-The LLM maps gaps to vocab (a fixed set of ~20 terms). The kernel maps vocab to tools or `.st` files.
+The LLM maps gaps to vocab. The kernel maps vocab to tools or `.st` files.
 
 - **LLM controls**: WHAT needs doing (vocab selection + score)
 - **Kernel controls**: HOW it gets done (tool/.st routing + execution)
+
+Three vocab sets:
+- **OBSERVE_VOCAB** (4 terms): pattern_needed, hash_resolve_needed, email_needed, external_context
+- **MUTATE_VOCAB** (7 terms): hash_edit_needed, content_needed, script_edit_needed, command_needed, message_needed, json_patch_needed, git_revert_needed
+- **BRIDGE_VOCAB** (dynamic): starts with {reprogramme_needed}, grows from .st registry at load time via `register_bridge_vocab()`. Each .st name becomes `{name}_needed`.
+
+Priority ordering via `vocab_priority()`: internal& (10) → external& (20) → external&mut (40) → reprogramme (99). The ledger sorts origin gaps by priority so entity bridges load first and reprogramme runs last.
 
 Some vocab maps to a single tool. Some maps to a `.st` file that expands into child gaps on the ledger. The compiler doesn't distinguish — it pops the stack and routes.
 
@@ -214,6 +221,8 @@ Same model. Different manifestations. Each `.st` file is a blueprint. When the c
 
 `.st` files can carry an `inject` field for scoped prompt control — the kernel modifies the LLM's context for the chain's duration. Structural, scoped, deterministic.
 
+`.st` files allow stepless definitions (pure entities) — a .st with identity/preferences/constraints but no workflow steps. The fields present determine what the entity IS: people have identity + preferences, compliance domains have constraints + sources + scope, databases have schema + access_rules. The builder (`st_builder.py`) forwards all non-base fields as manifestation config.
+
 The step primitive doesn't just track what the system does. It manifests what the system becomes.
 
 ## 18. Identity as .st
@@ -223,6 +232,8 @@ Users, contacts, and agents are `.st` files. `admin.st` fires on every message f
 The user's hash appears on every step they trigger. Identity evolves — the agent updates the `.st` file, git commits, hash changes, future interactions use the latest version.
 
 The identity .st fires AFTER the first step, not before — so user preferences land mid-context where they're most useful. The identity hash is an entity the agent reasons about, not instructions it follows. The agent uses it as a mental model of who the user is — their context, role, thinking style, and history.
+
+`reprogramme_needed` operates in two modes: classifiable mid-turn (the LLM can emit it as a gap) and automatic pre-synthesis (the `_reprogramme_pass()` runs between iteration loop and synthesis as silent housekeeping). Either way, new knowledge is persisted via st_builder, committed, and the commit hash lands on the trajectory.
 
 ## 19. HEAD as Workspace State
 
@@ -244,9 +255,9 @@ Pure Python + JSON + .st + git:
 ```
 cors/
   step.py      ← step primitive, gap, chain, trajectory
-  compile.py   ← compiler: ledger stack, admission, OMO, chain lifecycle
-  loop.py      ← turn loop: persistent 5.4, pre/post, synthesis
-  skills/      ← .st files + loader
-  tools/       ← tool scripts + st_builder
+  compile.py   ← compiler: ledger stack, admission, OMO, chain lifecycle, vocab_priority
+  loop.py      ← turn loop: persistent LLM, pre/post, reprogramme pass, synthesis
+  skills/      ← .st files (admin, hash_edit, research, entities) + loader
+  tools/       ← tool scripts: hash_manifest (universal I/O), st_builder, file_grep, etc.
   .git/        ← content storage
 ```

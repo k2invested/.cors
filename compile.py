@@ -54,6 +54,7 @@ OBSERVE_VOCAB = {
 }
 
 MUTATE_VOCAB = {
+    "hash_edit_needed",
     "content_needed", "script_edit_needed", "command_needed",
     "message_needed", "json_patch_needed", "git_revert_needed",
 }
