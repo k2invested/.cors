@@ -192,11 +192,11 @@ The LLM maps gaps to vocab. The kernel maps vocab to tools or `.st` files.
 - **Kernel controls**: HOW it gets done (tool/.st routing + execution)
 
 Three vocab sets:
-- **OBSERVE_VOCAB** (4 terms): pattern_needed, hash_resolve_needed, email_needed, external_context
+- **OBSERVE_VOCAB** (5 terms): pattern_needed, hash_resolve_needed, email_needed, external_context, clarify_needed
 - **MUTATE_VOCAB** (7 terms): hash_edit_needed, content_needed, script_edit_needed, command_needed, message_needed, json_patch_needed, git_revert_needed
-- **BRIDGE_VOCAB** (dynamic): starts with {reprogramme_needed}, grows from .st registry at load time via `register_bridge_vocab()`. Each .st name becomes `{name}_needed`.
+- **BRIDGE_VOCAB** (1 term): {reprogramme_needed} — the single bridge primitive. No dynamic registration. Entity .st files resolve through hash_resolve_needed automatically (resolve_hash checks skill registry first).
 
-Priority ordering via `vocab_priority()`: internal& (10) → external& (20) → external&mut (40) → reprogramme (99). The ledger sorts origin gaps by priority so entity bridges load first and reprogramme runs last.
+Priority ordering via `vocab_priority()`: observe (20) → mutate (40) → reprogramme (99). The ledger sorts origin gaps by priority so observations run first and reprogramme runs last.
 
 Some vocab maps to a single tool. Some maps to a `.st` file that expands into child gaps on the ledger. The compiler doesn't distinguish — it pops the stack and routes.
 

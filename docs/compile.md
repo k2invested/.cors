@@ -44,7 +44,7 @@ The stack-based ordered frontier.
 | `peek() → LedgerEntry?` | Look at top without removing |
 | `pop() → LedgerEntry?` | Pop top entry — next gap to address |
 | `resolve_gap(hash)` | Mark gap as resolved |
-| `sort_by_priority()` | Sort stack so highest priority gaps pop first. Origins sorted by priority (internal& at top, reprogramme at bottom). Children stay on top for depth-first. |
+| `sort_by_priority()` | Sort stack so highest priority gaps pop first. Origins sorted by priority (observe at top, reprogramme at bottom). Children stay on top for depth-first. |
 | `chain_is_complete(chain_id) → bool` | Are all gaps in this chain resolved? |
 | `is_empty() → bool` | Ledger empty = turn done |
 
@@ -89,7 +89,7 @@ The main sequencer. Owns the ledger, governor state, and chain tracking.
 | Method | Purpose |
 |--------|---------|
 | `emit(step)` | Three-part lifecycle: emission → admission → placement |
-| `emit_origin_gaps(step)` | Same but creates new chains per gap (initial pre-diff). Sorts by priority after emission: internal& first, reprogramme last. |
+| `emit_origin_gaps(step)` | Same but creates new chains per gap (initial pre-diff). Sorts by priority after emission: observe first, reprogramme last. |
 | `next() → (LedgerEntry?, GovernorSignal)` | Pop + govern — returns what to do next |
 | `validate_omo(vocab) → bool` | Check O-M-O transition grammar |
 | `record_execution(vocab, produced_commit)` | Track OMO state |
@@ -107,14 +107,14 @@ The main sequencer. Owns the ledger, governor state, and chain tracking.
 
 Three disjoint sets:
 
-**OBSERVE_VOCAB** (hash resolution / read — 4 terms):
-pattern_needed, hash_resolve_needed, email_needed, external_context
+**OBSERVE_VOCAB** (hash resolution / read / clarification — 5 terms):
+pattern_needed, hash_resolve_needed, email_needed, external_context, clarify_needed
 
 **MUTATE_VOCAB** (execution / write — 7 terms):
 hash_edit_needed, content_needed, script_edit_needed, command_needed, message_needed, json_patch_needed, git_revert_needed
 
-**BRIDGE_VOCAB** (dynamic — built from .st registry at load time):
-Starts with `{"reprogramme_needed"}`. Each .st file's name becomes a valid vocab term via `register_bridge_vocab()`: admin.st -> admin_needed, research.st -> research_needed. Two types of bridge resolution: reprogramme_needed (create/update .st, internal &mut) and {entity}_needed (resolve existing .st, internal &, context injection).
+**BRIDGE_VOCAB** (1 term — static):
+`{"reprogramme_needed"}` — the single bridge primitive. No dynamic registration. No `{entity}_needed` vocab terms. Entity .st files resolve through hash_resolve_needed automatically — resolve_hash checks the skill registry first: if a hash is a .st file, it renders the entity data. Same mechanism as any other hash resolution.
 
 Helper functions: `is_observe(vocab)`, `is_mutate(vocab)`, `is_bridge(vocab)`
 
@@ -124,15 +124,10 @@ Priority ordering for the ledger. Lower number = pops first (top of stack).
 
 | Priority | Category | Vocab |
 |----------|----------|-------|
-| 10 | Internal & (context bridges) | {entity}_needed (admin_needed, research_needed, etc.) |
-| 20 | External & (observe) | pattern_needed, hash_resolve_needed, email_needed, external_context |
-| 40 | External &mut (mutate) | hash_edit_needed, content_needed, script_edit_needed, etc. |
+| 20 | Observe | pattern_needed, hash_resolve_needed, email_needed, external_context, clarify_needed |
+| 40 | Mutate | hash_edit_needed, content_needed, script_edit_needed, etc. |
 | 50 | Unknown | unrecognized vocab |
 | 99 | Reprogramme | reprogramme_needed — runs last |
-
-### register_bridge_vocab(skill_names)
-
-Called by the loop after loading skills. Each .st file's name becomes a valid vocab term. Display names (kenny, clinton) are for tree rendering only — not vocab. Vocab is role-based (admin_needed), not person-based.
 
 ## Constants
 
@@ -165,4 +160,4 @@ The sequence isn't planned — it emerges from vocab mapping + postcondition rul
 - Force-close at MAX_CHAIN_DEPTH
 - OBSERVE_VOCAB ∩ MUTATE_VOCAB = ∅
 - Origin gaps sorted by priority after initial emission
-- BRIDGE_VOCAB is dynamic — built from .st registry, not hardcoded
+- BRIDGE_VOCAB is static — just {reprogramme_needed}. Entity resolution uses hash_resolve_needed.

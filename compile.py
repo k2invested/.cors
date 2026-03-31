@@ -82,24 +82,20 @@ def is_bridge(vocab: str) -> bool:
 def vocab_priority(vocab: str | None) -> int:
     """Priority ordering for the ledger. Lower number = pops first (top of stack).
 
-    1. Internal &  (context bridges) — load mental models first
-    2. External &  (observe)         — scan, read, resolve
-    3. Internal &mut (gap bridges)   — disperse action chains
-    4. External &mut (mutate)        — write, execute, commit
-    5. reprogramme_needed            — update knowledge last
+    1. External &  (observe)         — scan, read, resolve, clarify
+    2. External &mut (mutate)        — write, execute, commit
+    3. reprogramme_needed            — update knowledge last
 
     Stack is LIFO, so higher priority = placed LATER (popped first).
     We return sort key where lower = higher priority = placed later in sorted stack.
+
+    Entity resolution has no separate priority — it flows through
+    hash_resolve_needed (observe, priority 20) like any other hash.
     """
     if vocab is None:
         return 50  # unknown, middle priority
     if vocab == "reprogramme_needed":
         return 99  # lowest priority — runs last, sits at bottom of stack
-    if vocab in BRIDGE_VOCAB and vocab not in MUTATE_VOCAB:
-        # Bridge vocab — check if it's context-only (&) or gap-injecting (&mut)
-        # We can't know from vocab alone, so all entity bridges get internal & priority
-        # The loop differentiates at execution time
-        return 10  # internal & — highest priority
     if vocab in OBSERVE_VOCAB:
         return 20  # external &
     if vocab in MUTATE_VOCAB:
@@ -188,7 +184,7 @@ class Ledger:
 
         Stack is LIFO — last element pops first. So we sort by
         priority DESCENDING: lowest priority (reprogramme=99) at
-        bottom, highest priority (internal&=10) at top.
+        bottom, highest priority (observe=20) at top.
 
         Only sorts origin gaps (depth=0). Child gaps stay on top
         for depth-first resolution.
@@ -401,7 +397,7 @@ class Compiler:
     def emit_origin_gaps(self, step: Step):
         """Emit gaps from the initial pre-diff as origin gaps.
         Each origin gap creates its own chain. After all are emitted,
-        sort by priority: internal& first, reprogramme last."""
+        sort by priority: observe first, reprogramme last."""
         for gap in step.gaps:
             combined = self._admission_score(gap)
 
@@ -417,7 +413,7 @@ class Compiler:
             self.trajectory.add_chain(chain)
             self.ledger.push_origin(gap=gap, chain_id=chain.hash)
 
-        # Sort: internal& (10) pops first, reprogramme (99) pops last
+        # Sort: observe (20) pops first, reprogramme (99) pops last
         self.ledger.sort_by_priority()
 
     # ── 2. Sequencing (pop + route) ──

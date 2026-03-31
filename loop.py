@@ -318,9 +318,9 @@ Low-scoring gaps become dormant — stored on the trajectory as peripheral visio
 
 ## Gap discipline
 
-One gap per entity. If you need context about a person, concept, or workflow — emit ONE gap with {entity}_needed. Do not decompose an entity into sub-gaps ("need their role", "need their history", "need their preferences"). The .st file surfaces everything in one resolution. No hash references needed on entity gaps — the name IS the resolution.
+One gap per entity. If you need context about a person, concept, or workflow — emit ONE gap with hash_resolve_needed and put the entity's hash in content_refs. The kernel checks the skill registry and renders the full .st file data automatically. Do not decompose an entity into sub-gaps ("need their role", "need their history", "need their preferences"). The .st file surfaces everything in one resolution.
 
-Entity bridges have no post-diff. They are context injections — one step, one blob. The data lands in your context and you reason from there.
+Entity resolution has no special vocab — it's just hash_resolve_needed where the hash happens to be a .st file. The kernel resolves it the same way it resolves any other hash.
 
 ## Hash references (two layers, never mixed)
 
@@ -492,8 +492,8 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
     session = Session(model=os.environ.get("KERNEL_COMPOSE_MODEL", "gpt-4.1"))
 
     # Build dynamic system prompt with actual available entities
-    entity_vocab_lines = "\n".join(
-        f"    {s.name}_needed — resolve {s.display_name}:{s.hash} ({s.desc[:60]})"
+    entity_list_lines = "\n".join(
+        f"    {s.display_name}:{s.hash} — {s.desc[:60]}"
         for s in registry.all_skills()
     )
     dynamic_bridge = (
@@ -507,7 +507,7 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
         "  When you reference an entity hash in content_refs, the kernel automatically\n"
         "  resolves it to the .st file's data. Same mechanism as any other hash.\n\n"
         "  Known entities (reference by hash in content_refs):\n"
-        f"{entity_vocab_lines}"
+        f"{entity_list_lines}"
     )
     system_prompt = PRE_DIFF_SYSTEM.replace("BRIDGE_VOCAB_PLACEHOLDER", dynamic_bridge)
     session.set_system(system_prompt)

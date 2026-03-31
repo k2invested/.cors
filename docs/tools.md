@@ -106,4 +106,4 @@ When hash_edit_needed fires, hash_manifest routes mutations by file extension:
 
 ### .st auto-route
 
-Any script_edit_needed, content_needed, or json_patch_needed gap targeting a .st file is automatically rerouted to reprogramme_needed by loop.py. This ensures .st files always go through the st_builder for schema validation.
+Any script_edit_needed, content_needed, json_patch_needed, or hash_edit_needed gap targeting a .st file is automatically rerouted to reprogramme_needed by loop.py. This ensures .st files always go through the st_builder for schema validation.

@@ -111,16 +111,15 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 
 | Set | Members | Maps to |
 |-----|---------|---------|
-| `OBSERVE_VOCAB` | pattern_needed, hash_resolve_needed, email_needed, external_context | Hash resolution / read tools |
+| `OBSERVE_VOCAB` | pattern_needed, hash_resolve_needed, email_needed, external_context, clarify_needed | Hash resolution / read tools / clarification halt |
 | `MUTATE_VOCAB` | hash_edit_needed, content_needed, script_edit_needed, command_needed, message_needed, json_patch_needed, git_revert_needed | Execution tools / .st scripts |
-| `BRIDGE_VOCAB` | reprogramme_needed + dynamic (built from .st registry at load time via `register_bridge_vocab()`) | Entity resolution + reprogramming |
+| `BRIDGE_VOCAB` | reprogramme_needed | The single bridge primitive — create/update entity .st files |
 
 ### Key functions (vocab)
 
 | Function | Purpose |
 |----------|---------|
-| `register_bridge_vocab(skill_names)` | Register .st skill names as bridge vocab terms. Called after loading skills. Each .st name becomes `{name}_needed`. |
-| `vocab_priority(vocab)` | Priority ordering for ledger: internal& (10) → external& (20) → external&mut (40) → reprogramme (99). Returns sort key. |
+| `vocab_priority(vocab)` | Priority ordering for ledger: observe (20) → mutate (40) → reprogramme (99). Returns sort key. |
 | `is_observe(vocab)` / `is_mutate(vocab)` / `is_bridge(vocab)` | Vocab set membership checks |
 
 ### Invariants
@@ -181,7 +180,7 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 
 | Prompt | Purpose |
 |--------|---------|
-| `PRE_DIFF_SYSTEM` | Teaches gaps, epistemic triad, hash tree navigation, identity, gap discipline. Dynamic: BRIDGE_VOCAB_PLACEHOLDER replaced at runtime with actual entity list from registry. |
+| `PRE_DIFF_SYSTEM` | Teaches gaps, epistemic triad, hash tree navigation, identity, gap discipline, clarify_needed. Dynamic: BRIDGE_VOCAB_PLACEHOLDER replaced at runtime with entity list + explanation that entity resolution uses hash_resolve_needed (no separate vocab). |
 | `COMPOSE_SYSTEM` | Composition prompt for tool parameterization |
 | `SYNTH_SYSTEM` | Synthesis prompt for final response generation |
 
@@ -192,10 +191,10 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 | Deterministic | Kernel resolves — no LLM needed (hash_resolve_needed) |
 | Observation-only | Blob step, no post-diff — data ingestion without gap emission (hash_resolve_needed, external_context) |
 | Observation | Tool executes, LLM reasons over result (pattern_needed, email_needed) |
-| Mutation | 5.4 composes command, kernel executes, auto-commit, universal postcondition fires |
+| Clarify | clarify_needed halts iteration, gap persists on trajectory for next-turn resume |
+| Mutation | 5.4 composes command, kernel executes, auto-commit, universal postcondition fires. Failed executions (non-zero exit) recorded as "FAILED: desc" on trajectory, not committed, gap left unresolved. |
 | Reprogramme | Create/update entity .st via st_builder |
-| Entity bridge | Resolve existing .st into context (internal &, no mutation) |
-| .st auto-route | script_edit_needed/content_needed/json_patch_needed targeting .st files rerouted to reprogramme_needed |
+| .st auto-route | script_edit_needed/content_needed/json_patch_needed/hash_edit_needed targeting .st files rerouted to reprogramme_needed |
 
 ### Key functions
 
@@ -203,11 +202,13 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 |----------|---------|
 | `run_turn(message, contact_id)` | Complete turn lifecycle — returns synthesis |
 | `run_command(cmd_name, args)` | Run a /command .st file directly, bypasses LLM gap routing |
-| `resolve_hash()` | Tries trajectory step → trajectory gap → git object |
+| `resolve_hash()` | Tries skill registry (.st entity) → trajectory step → trajectory gap → git object |
+| `_find_dangling_gaps()` | Find unresolved gaps from prior turns (clarify_needed, interrupted). Called at turn start for resume check. |
 | `auto_commit(message)` | Git add -A + commit, returns SHA or None. Universal postcondition: every commit injects hash_resolve_needed gap targeting commit SHA onto ledger. |
 | `TOOL_MAP` | Vocab → tool script mapping (includes hash_edit_needed → tools/hash_manifest.py) |
 | `DETERMINISTIC_VOCAB` | {hash_resolve_needed} — kernel resolves without LLM |
 | `OBSERVATION_ONLY_VOCAB` | {hash_resolve_needed, external_context} — blob steps with no post-diff |
+| `_skill_registry` | Module-level variable set by run_turn. Used by resolve_hash to check if a hash is a .st file. |
 | `_reprogramme_pass()` | Automatic pre-synthesis pass — agent reviews turn, updates .st files if needed. Runs between iteration loop and synthesis. |
 | `_resolve_entity()` | Resolve entity .st files from content_refs via skill registry |
 | `_render_entity()` | Render a .st entity's full data (identity, preferences, refs, steps) for session injection |
@@ -223,17 +224,20 @@ Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on 
 
 ```
 1. Message arrives
-2. Load trajectory + skills + HEAD + register_bridge_vocab()
-3. Build dynamic system prompt (BRIDGE_VOCAB_PLACEHOLDER replaced with actual entity list)
-4. First LLM pass → first atomic step (origin)
-5. Identity .st fires AFTER first step
-6. Compiler admits gaps, sorts by priority
-7. Iteration loop: pop → execute by vocab → inject → next step
-   - .st auto-route: mutations targeting .st files rerouted to reprogramme_needed
+2. Load trajectory + skills + HEAD. Set _skill_registry for resolve_hash access.
+3. Build dynamic system prompt (BRIDGE_VOCAB_PLACEHOLDER replaced with entity list + hash_resolve explanation)
+4. Resume check: _find_dangling_gaps() surfaces unresolved gaps from prior turns
+5. First LLM pass → first atomic step (origin)
+6. Identity .st fires AFTER first step
+7. Compiler admits gaps, sorts by priority
+8. Iteration loop: pop → execute by vocab → inject → next step
+   - clarify_needed: halt iteration, gap persists for next-turn resume
+   - .st auto-route: mutations targeting .st files (incl. hash_edit_needed) rerouted to reprogramme_needed
+   - Execution failure: non-zero exit recorded as "FAILED: desc", not committed, gap left unresolved
    - Universal postcondition: every auto_commit injects hash_resolve_needed → commit SHA
-8. Reprogramme pass (automatic, pre-synthesis housekeeping)
-9. HALT → synthesize
-10. Save trajectory + chains
+9. Reprogramme pass (automatic, pre-synthesis housekeeping)
+10. HALT → synthesize
+11. Save trajectory + chains
 ```
 
 ---
