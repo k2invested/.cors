@@ -915,12 +915,22 @@ Respond with JSON: {{"command": "...", "reasoning": "..."}}"""
             print(f"\n  ALL GAPS RESOLVED (iteration {iteration + 1})")
             break
 
-    # ── 6. SYNTHESIS ─────────────────────────────────────────────────
+    # ── 6. REPROGRAMME PASS ─────────────────────────────────────────
+    #
+    # Automatic, pre-synthesis. The agent reviews the turn and updates
+    # any .st files that need it. Not a gap — housekeeping.
+    # The commit hash lands on trajectory so synthesis can see it.
+
+    reprogramme_step = _reprogramme_pass(session, registry, trajectory)
+    if reprogramme_step:
+        trajectory.append(reprogramme_step)
+
+    # ── 7. SYNTHESIS ─────────────────────────────────────────────────
 
     print("\n── SYNTHESIS ──")
     response = _synthesize(session, user_message)
 
-    # ── 7. SAVE ──────────────────────────────────────────────────────
+    # ── 8. SAVE ──────────────────────────────────────────────────────
 
     _save_turn(trajectory)
 
@@ -1069,6 +1079,64 @@ def _render_entity(skill: Skill) -> str:
     lines.append(f"  steps: {' → '.join(s.action for s in skill.steps)}")
 
     return "\n".join(lines)
+
+
+def _reprogramme_pass(session: Session, registry: SkillRegistry,
+                      trajectory: Trajectory) -> Step | None:  # noqa: ARG001
+    """Automatic pre-synthesis reprogramme pass.
+
+    The agent reviews the turn and decides if any .st files need updating.
+    Not a gap — silent housekeeping. The commit hash lands on trajectory
+    so synthesis can reference it.
+
+    Returns a blob step with commit hash, or None if nothing to update.
+    """
+    entity_list = "\n".join(
+        f"  {s.display_name}:{s.hash} ({s.name}.st)"
+        for s in registry.all_skills()
+    )
+
+    raw = session.call(
+        "## Pre-synthesis reprogramme check\n"
+        "Review this turn. Did you learn anything new about any entity that should be persisted?\n"
+        "- A preference correction or clarification\n"
+        "- A new person, concept, or domain mentioned\n"
+        "- Updated context about a known entity\n\n"
+        f"Known entities:\n{entity_list}\n\n"
+        "If YES: respond with a JSON intent for st_builder (same format as before).\n"
+        "If NO: respond with exactly: NO_UPDATE"
+    )
+
+    if "NO_UPDATE" in raw:
+        print("  reprogramme: no updates needed")
+        return None
+
+    print(f"\n── REPROGRAMME ──")
+    print(f"  LLM: {raw[:150]}...")
+
+    intent = _extract_json(raw)
+    if not intent:
+        print("  reprogramme: no valid intent extracted")
+        return None
+
+    # Ensure steps field exists (even empty for pure entity updates)
+    if "steps" not in intent or not intent["steps"]:
+        intent["steps"] = [{"action": "entity_update", "desc": "knowledge updated from conversation"}]
+
+    output, code = execute_tool("tools/st_builder.py", intent)
+    print(f"  st_builder: {output[:150]}")
+
+    commit_sha = auto_commit(f"reprogramme: {intent.get('name', 'unknown')}")
+    if commit_sha:
+        print(f"  → committed: {commit_sha}")
+        step = Step.create(
+            desc=f"reprogrammed: {intent.get('name', 'unknown')}",
+            content_refs=[commit_sha],
+            commit=commit_sha,
+        )
+        return step
+
+    return None
 
 
 def _find_identity_skill(contact_id: str, registry: SkillRegistry) -> Skill | None:
