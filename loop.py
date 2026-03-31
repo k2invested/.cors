@@ -689,7 +689,7 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
                 for ref in gap.content_refs
             ) or ".st" in gap.desc.lower()
 
-            if targets_st and vocab in ("script_edit_needed", "content_needed", "json_patch_needed"):
+            if targets_st and vocab in ("script_edit_needed", "content_needed", "json_patch_needed", "hash_edit_needed"):
                 print(f"  → mutation targeting .st file, rerouting to reprogramme")
                 # Swap vocab to reprogramme and re-push
                 gap.vocab = "reprogramme_needed"
@@ -711,27 +711,79 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
             if resolved_data:
                 session.inject(f"## Resolved context for mutation\n{resolved_data}")
 
-            # 5.4 composes the command
-            compose_prompt = f"""Compose a command to resolve this gap:
-  gap:{gap.hash} "{gap.desc}"
-  vocab: {vocab}
-
-Respond with JSON: {{"command": "...", "reasoning": "..."}}"""
+            # 5.4 composes the action
+            if vocab == "hash_edit_needed":
+                # Route through hash_manifest.py — JSON params, not shell command
+                compose_prompt = (
+                    f"Compose a file edit to resolve this gap:\n"
+                    f"  gap:{gap.hash} \"{gap.desc}\"\n\n"
+                    f"Respond with JSON params for hash_manifest.py:\n"
+                    f'{{"action": "patch", "path": "relative/file/path", '
+                    f'"patch": {{"old": "exact text to replace", "new": "replacement text"}}}}\n\n'
+                    f"Or for a full rewrite:\n"
+                    f'{{"action": "write", "path": "relative/file/path", "content": "full file content"}}\n\n'
+                    f"Use the EXACT current file content for the 'old' field. Do not guess."
+                )
+            else:
+                compose_prompt = (
+                    f"Compose a shell command to resolve this gap:\n"
+                    f"  gap:{gap.hash} \"{gap.desc}\"\n"
+                    f"  vocab: {vocab}\n\n"
+                    f"This is macOS. Use python3 one-liners for JSON edits, not sed.\n"
+                    f"Respond with JSON: {{\"command\": \"...\", \"reasoning\": \"...\"}}"
+                )
 
             raw = session.call(compose_prompt)
             print(f"  LLM compose: {raw[:150]}...")
 
-            command = _extract_command(raw)
-            if command:
-                print(f"  → executing: {command[:100]}")
-                result = subprocess.run(
-                    command, shell=True, cwd=str(CORS_ROOT),
-                    capture_output=True, text=True, timeout=30,
-                )
-                output = result.stdout[:500] or result.stderr[:500] or "(no output)"
-                print(f"  → output: {output[:100]}")
+            # Execute based on vocab type
+            executed = False
+            exec_failed = False
+            output = ""
 
-                # Auto-commit if mutation
+            if vocab == "hash_edit_needed":
+                intent = _extract_json(raw)
+                if intent:
+                    output, code = execute_tool("tools/hash_manifest.py", intent)
+                    print(f"  → hash_manifest: {output[:100]}")
+                    executed = True
+                    exec_failed = code != 0
+                else:
+                    print("  → no valid params extracted")
+            else:
+                command = _extract_command(raw)
+                if command:
+                    print(f"  → executing: {command[:100]}")
+                    result = subprocess.run(
+                        command, shell=True, cwd=str(CORS_ROOT),
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    output = result.stdout[:500] or result.stderr[:500] or "(no output)"
+                    print(f"  → output: {output[:100]}")
+                    executed = True
+                    exec_failed = result.returncode != 0
+                    if exec_failed:
+                        print(f"  → FAILED (exit {result.returncode})")
+                else:
+                    print("  → no command extracted")
+
+            # If execution failed, record failure on trajectory, don't commit
+            if exec_failed:
+                print(f"  → execution failed, recording on trajectory")
+                session.inject(f"## EXECUTION FAILED for gap:{gap.hash}\n{output}")
+                step_result = Step.create(
+                    desc=f"FAILED: {gap.desc}",
+                    step_refs=[origin_step.hash],
+                    content_refs=gap.content_refs,
+                    chain_id=entry.chain_id,
+                )
+                # Don't resolve — let the LLM see the failure and re-articulate
+                trajectory.append(step_result)
+                compiler.add_step_to_chain(step_result.hash)
+                continue
+
+            # Auto-commit if mutation succeeded
+            if executed:
                 commit_sha = auto_commit(f"step: {gap.desc[:50]}")
                 if commit_sha:
                     print(f"  → committed: {commit_sha}")
@@ -746,8 +798,6 @@ Respond with JSON: {{"command": "...", "reasoning": "..."}}"""
                     compiler.record_execution(vocab, True)
 
                     # Universal postcondition: auto-commit → hash_resolve_needed
-                    # Deterministic observation targeting the commit SHA.
-                    # Enters the ledger as a child gap — depth-first, pops next.
                     postcond = Gap.create(
                         desc=f"observe commit:{commit_sha}",
                         content_refs=[commit_sha],
@@ -778,7 +828,7 @@ Respond with JSON: {{"command": "...", "reasoning": "..."}}"""
                     compiler.record_execution(vocab, False)
                     compiler.resolve_current_gap(gap.hash)
             else:
-                print("  → no command extracted, resolving gap")
+                # Nothing executed — resolve and move on
                 compiler.resolve_current_gap(gap.hash)
                 step_result = Step.create(
                     desc=f"skipped: {gap.desc}",
