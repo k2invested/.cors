@@ -62,23 +62,9 @@ MUTATE_VOCAB = {
 
 BRIDGE_VOCAB: set[str] = {"reprogramme_needed"}  # the single bridge primitive
 
-
-def register_bridge_vocab(skill_names: list[str]):
-    """Register .st skill names as bridge vocab terms.
-
-    Called by the loop after loading skills. Each .st file's name becomes
-    a valid vocab term: admin.st → admin_needed, research.st → research_needed.
-
-    Display names (kenny, clinton) are for tree rendering only — not vocab.
-    Vocab is role-based (admin_needed), not person-based (kenny_needed).
-
-    Two types of bridge resolution:
-      - reprogramme_needed: create/update an entity .st (internal &mut, triggers st_builder)
-      - {entity}_needed: resolve an existing entity .st (internal &, context injection)
-    """
-    global BRIDGE_VOCAB
-    for name in skill_names:
-        BRIDGE_VOCAB.add(f"{name}_needed")
+# Entity resolution (internal &) has no vocab — it's just hash_resolve_needed
+# where the hash happens to be a .st file. The kernel checks the skill registry
+# during hash resolution and renders entity data if found.
 
 
 def is_observe(vocab: str) -> bool:

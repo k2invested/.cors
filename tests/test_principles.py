@@ -371,10 +371,7 @@ os.unlink(tmp)
 
 section("§9b: Priority Ordering")
 
-# Register bridge vocab so priority tests work
-register_bridge_vocab([s.name for s in registry.all_skills()])
-
-test("vocab_priority: bridge = 10", vocab_priority("admin_needed") == 10)
+test("vocab_priority: bridge (reprogramme) = 99", vocab_priority("reprogramme_needed") == 99)
 test("vocab_priority: observe = 20", vocab_priority("pattern_needed") == 20)
 test("vocab_priority: mutate = 40", vocab_priority("hash_edit_needed") == 40)
 test("vocab_priority: reprogramme = 99", vocab_priority("reprogramme_needed") == 99)
@@ -383,28 +380,24 @@ test("vocab_priority: None = 50", vocab_priority(None) == 50)
 
 # Priority sorting on ledger
 ledger_p = Ledger()
-g_bridge = make_gap("entity gap", vocab="admin_needed")
 g_observe = make_gap("observe gap", vocab="pattern_needed")
 g_mutate = make_gap("mutate gap", vocab="hash_edit_needed")
 g_reprog = make_gap("reprogramme", vocab="reprogramme_needed")
 
-ledger_p.push_origin(g_bridge, "c1")
-ledger_p.push_origin(g_observe, "c2")
-ledger_p.push_origin(g_mutate, "c3")
-ledger_p.push_origin(g_reprog, "c4")
+ledger_p.push_origin(g_observe, "c1")
+ledger_p.push_origin(g_mutate, "c2")
+ledger_p.push_origin(g_reprog, "c3")
 ledger_p.sort_by_priority()
 
-# After sort: reprogramme(99) at bottom, bridge(10) at top → pops first
+# After sort: reprogramme(99) at bottom, observe(20) at top → pops first
 popped_first = ledger_p.pop()
-test("priority: bridge pops first", popped_first.gap.vocab == "admin_needed")
+test("priority: observe pops first", popped_first.gap.vocab == "pattern_needed")
 popped_second = ledger_p.pop()
-test("priority: observe pops second", popped_second.gap.vocab == "pattern_needed")
-popped_third = ledger_p.pop()
-test("priority: mutate pops third", popped_third.gap.vocab == "hash_edit_needed")
+test("priority: mutate pops second", popped_second.gap.vocab == "hash_edit_needed")
 popped_last = ledger_p.pop()
 test("priority: reprogramme pops last", popped_last.gap.vocab == "reprogramme_needed")
 
-test("LedgerEntry has priority field", hasattr(LedgerEntry(gap=g_bridge, chain_id="x"), 'priority'))
+test("LedgerEntry has priority field", hasattr(LedgerEntry(gap=g_observe, chain_id="x"), 'priority'))
 
 # ── §9c: Admission Score (deterministic grounded) ────────────────────────
 
@@ -442,18 +435,12 @@ test("low relevance rejected despite grounding", score_low < ADMISSION_THRESHOLD
 
 # ── §14b: Dynamic Bridge Vocab ───────────────────────────────────────────
 
-section("§14b: Dynamic Bridge Vocab")
+section("§14b: Bridge Vocab")
 
 test("BRIDGE_VOCAB is a set", isinstance(BRIDGE_VOCAB, set))
-test("reprogramme_needed in bridge (hardcoded seed)", "reprogramme_needed" in BRIDGE_VOCAB)
-
-# Register dynamic bridge vocab
-register_bridge_vocab(["admin", "research", "clinton"])
-test("admin_needed registered", "admin_needed" in BRIDGE_VOCAB)
-test("research_needed registered", "research_needed" in BRIDGE_VOCAB)
-test("clinton_needed registered", "clinton_needed" in BRIDGE_VOCAB)
-test("is_bridge detects dynamic vocab", is_bridge("admin_needed"))
+test("reprogramme_needed is the single bridge primitive", BRIDGE_VOCAB == {"reprogramme_needed"})
 test("is_bridge detects reprogramme", is_bridge("reprogramme_needed"))
+test("entity resolution has no vocab (just hash_resolve)", not is_bridge("admin_needed"))
 
 # No overlap between observe/mutate/bridge
 test("observe ∩ mutate = ∅", len(OBSERVE_VOCAB & MUTATE_VOCAB) == 0)

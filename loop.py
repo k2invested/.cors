@@ -40,7 +40,6 @@ from step import Step, Gap, Epistemic, Trajectory
 from compile import (
     Compiler, GovernorSignal,
     is_observe, is_mutate, is_bridge,
-    register_bridge_vocab,
 )
 from skills.loader import load_all, SkillRegistry, Skill
 
@@ -107,14 +106,24 @@ def auto_commit(message: str) -> str | None:
 
 # ── Hash resolution ──────────────────────────────────────────────────────
 
+_skill_registry: SkillRegistry | None = None  # set by run_turn for resolve_hash access
+
+
 def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
     """Resolve any hash to its content.
 
     Resolution order:
-      1. Step hash → step data from trajectory
-      2. Gap hash → gap data from trajectory
-      3. Git object → git show (blob/tree/commit)
+      1. Skill hash → .st entity data (internal &, context injection)
+      2. Step hash → step data from trajectory
+      3. Gap hash → gap data from trajectory
+      4. Git object → git show (blob/tree/commit)
     """
+    # Try skill registry first — entity .st files
+    if _skill_registry:
+        skill = _skill_registry.resolve(ref)
+        if skill:
+            return _render_entity(skill)
+
     # Try trajectory step
     step = trajectory.resolve(ref)
     if step:
@@ -474,8 +483,9 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
 
     trajectory = Trajectory.load(str(TRAJ_FILE))
     Trajectory.load_chains(str(CHAINS_FILE), trajectory)
+    global _skill_registry
     registry = load_all(str(SKILLS_DIR))
-    register_bridge_vocab([s.name for s in registry.all_skills()])
+    _skill_registry = registry
     head = git_head()
     head_tree = git_tree()
 
@@ -487,13 +497,16 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
         for s in registry.all_skills()
     )
     dynamic_bridge = (
-        "BRIDGE (entity resolution + reprogramming):\n"
+        "BRIDGE:\n"
         "  reprogramme_needed — create or update an entity .st file. USE THIS when:\n"
         "    - User corrects or clarifies a preference\n"
         "    - User mentions a new person, concept, or domain to track\n"
         "    - User says 'remember', 'update', 'track', or corrects your understanding\n"
-        "    - Any knowledge needs to be persisted beyond this conversation\n"
-        "  Available entities to resolve:\n"
+        "    - Any knowledge needs to be persisted beyond this conversation\n\n"
+        "  Entity resolution has NO vocab — it's just hash_resolve_needed.\n"
+        "  When you reference an entity hash in content_refs, the kernel automatically\n"
+        "  resolves it to the .st file's data. Same mechanism as any other hash.\n\n"
+        "  Known entities (reference by hash in content_refs):\n"
         f"{entity_vocab_lines}"
     )
     system_prompt = PRE_DIFF_SYSTEM.replace("BRIDGE_VOCAB_PLACEHOLDER", dynamic_bridge)
@@ -942,36 +955,6 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
                     content_refs=gap.content_refs,
                     chain_id=entry.chain_id,
                 )
-                compiler.resolve_current_gap(gap.hash)
-
-        elif vocab and is_bridge(vocab):
-            # ── Entity resolution: resolve existing .st ──
-            # vocab is entity-specific: clinton_needed → clinton.st
-            # Internal & — context injection, no mutation.
-            print(f"  → entity resolve ({vocab})")
-
-            entity_name = vocab.replace("_needed", "")
-            skill = registry.resolve_by_name(entity_name)
-            if skill:
-                session.inject(f"## Entity: {skill.display_name}:{skill.hash}\n{_render_entity(skill)}")
-            else:
-                entity_data = _resolve_entity(gap.content_refs, registry, trajectory)
-                if entity_data:
-                    session.inject(f"## Entity data\n{entity_data}")
-                elif resolved_data:
-                    session.inject(f"## Context\n{resolved_data}")
-
-            raw = session.call(f"Entity data for gap:{gap.hash} \"{gap.desc}\" is now in context. Reason over it. Articulate any new gaps.")
-            print(f"  LLM: {raw[:150]}...")
-
-            step_result, child_gaps = _parse_step_output(
-                raw, step_refs=[origin_step.hash], content_refs=gap.content_refs,
-                chain_id=entry.chain_id,
-            )
-
-            if child_gaps:
-                compiler.emit(step_result)
-            else:
                 compiler.resolve_current_gap(gap.hash)
 
         else:
