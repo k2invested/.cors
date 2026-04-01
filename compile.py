@@ -596,11 +596,17 @@ class Compiler:
                 return True
         return False
 
-    def record_background_trigger(self, chain_id: str):
+    def record_background_trigger(self, chain_id: str, refs: list[str] | None = None):
         """Record that a chain triggered a background workflow."""
         if not hasattr(self, '_background_triggers'):
             self._background_triggers = set()
         self._background_triggers.add(chain_id)
+        if refs:
+            if not hasattr(self, '_background_trigger_refs'):
+                self._background_trigger_refs = {}
+            stored = self._background_trigger_refs.setdefault(chain_id, set())
+            for ref in refs:
+                stored.add(ref)
 
     def record_await(self, chain_id: str):
         """Record that a chain set an await checkpoint."""
@@ -624,6 +630,23 @@ class Compiler:
             self._awaited_chains = set()
         unresolved = self._background_triggers - self._awaited_chains
         return len(unresolved) > 0
+
+    def background_refs(self) -> list[str]:
+        """Refs associated with unresolved background triggers."""
+        if not hasattr(self, '_background_triggers'):
+            return []
+        if not hasattr(self, '_awaited_chains'):
+            self._awaited_chains = set()
+        if not hasattr(self, '_background_trigger_refs'):
+            return []
+
+        refs: list[str] = []
+        unresolved = self._background_triggers - self._awaited_chains
+        for chain_id in unresolved:
+            for ref in sorted(self._background_trigger_refs.get(chain_id, set())):
+                if ref not in refs:
+                    refs.append(ref)
+        return refs
 
     # ── 6. Status ──
 

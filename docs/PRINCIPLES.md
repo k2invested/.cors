@@ -163,11 +163,57 @@ loop.py
 
 ---
 
-## §3. Vocab Determines Manifestation
+## §3. The Step Manifestation Engine
 
-How a gap manifests — what the system DOES with it — is entirely determined by the vocab tagged onto it. The gap is the universal primitive. The vocab is the configuration that shapes its execution. This is the separation between WHAT (the gap) and HOW (the vocab). The LLM decides what needs doing. The kernel decides how it gets done.
+The kernel is a step manifestation engine. A gap is the universal primitive, but a gap is never just a sentence. A gap is a structural seed that can manifest as context injection, ledger dispersal, mutation, reintegration, or persistence depending on its configuration.
 
-Think of vocab as the gap's type signature. Just as a type system routes values through different execution paths without changing the values themselves, vocab routes gaps through different resolution paths without changing the gaps themselves. The gap remains immutable. The vocab determines its fate.
+The important separation is not merely WHAT versus HOW. It is:
+
+- **Gap** = the measured discrepancy
+- **Manifestation config** = the structural law of how that discrepancy should unfold
+- **Activation identity** = which exact curated step package, if any, should fire
+
+Primitive kernel vocab still matters, but only as the stable execution algebra for the kernel's native mechanisms. For curated workflows, exact activation can be carried by step-file hash while priority, grouping, routing, and analytics remain derivable from gap structure itself. The hash does not need to carry semantic meaning. It only needs to identify the exact package to manifest.
+
+This is what makes `.st` structural rather than cosmetic. A `.st` file is not “a file the system reads.” It is a step primitive whose resolution manifests further structure.
+
+### Structural distinction: `entity.st` vs `action.st`
+
+The distinction between `entity.st` and `action.st` is not naming convention. It is derivable from manifestation shape.
+
+- **`entity.st`** manifests primarily as context injection or semantic scope refinement. It sharpens the system's internal state model: identity, preferences, domain knowledge, constraints, boundaries, tracked entities, and long-horizon background concerns.
+- **`action.st`** manifests primarily as ledger dispersal. Its steps become executable gaps or embeddings that the compiler can sequence depth-first under the normal laws.
+- **Hybrid `.st`** can do both. It may inject semantic context first, then disperse action gaps, or mix context and action within one package.
+
+The system should be able to derive this distinction from structure alone: the gap shape, manifestation mode, and skeleton contract reveal whether the artifact is entity-like, action-like, or hybrid.
+
+### Two skeletons, one engine
+
+The step manifestation engine has two authoring surfaces:
+
+- the **workflow skeleton** — structural, deterministic, compiler-facing
+- the **semantic skeleton** — entity/state-facing, persistence-facing, optionally hybrid
+
+The workflow skeleton expresses lawful step flow. The semantic skeleton expresses what an entity IS, what semantic context it carries, and when it also owns executable flow.
+
+They are not separate systems. They are two views of the same manifestation engine:
+
+- one for executable structure
+- one for persistent semantic state
+
+### Two sides of the same coin
+
+`reason_needed` and `reprogramme_needed` are complementary manifestations of the same OS-level mechanism.
+
+- **`reason_needed`** is the more stateful, conscious, structural side. It reasons over step flows, chains, entity space, and executable packages. It constructs or refines structures the system can deterministically derive, execute, inspect, or crystallize.
+- **`reprogramme_needed`** is the more stateless, subconscious, persistence side. It updates the system's long-horizon internal state model: entities, preferences, domain structures, and tracked background concerns. It keeps the operating context alive over long periods without forcing every update through explicit structural planning.
+
+Together they form the operating system for the LLM:
+
+- `reason_needed` manages structural execution intelligence
+- `reprogramme_needed` manages persistent semantic calibration
+
+One is conscious flow architecture. The other is subconscious state continuity. Both are step manifestation.
 
 ### Tier 1: Observe (external &, priority 20)
 
@@ -204,10 +250,10 @@ Four codons govern the reasoning lifecycle. The biological analogy is precise: a
 
 | Vocab | Codon | Priority | Manifestation |
 |-------|-------|----------|--------------|
-| `reason_needed` | **START** | 90 | Planning primitive + reorientation checkpoint + heartbeat trigger. Three roles: (1) PLAN — decompose complex tasks into commitment chains built bottom-up. (2) REORIENT — recalibrate after compiler rejection or immutability violation. (3) HEARTBEAT — inspect background sub-agent progress, close/revisit/refine. |
+| `reason_needed` | **START** | 90 | Stateful structural abstraction. Planning primitive + reorientation checkpoint + heartbeat trigger. Reasons over semantic trees, entity space, executable skeletons, and step-chain structure. |
 | `await_needed` | **PAUSE** | 95 | Synchronization checkpoint. Suspends parent chain until referenced sub-agent completes. Renders sub-agent's full semantic tree → parent inspects → accept/correct/reactivate. If turn ends before sub-agent finishes, persists as dangling gap — heartbeat picks up next turn. |
 | `commit_needed` | **END** | 98 | Reintegration. Renders full commitment tree into main context. Closes or continues chain. NOT directly classifiable — injected by reason.st at lowest relevance behind commitment gaps. |
-| `reprogramme_needed` | **PERSIST** | 99 | World-building. No post_diff — fire and forget. st_builder composes .st from semantic intent. Injected with PRINCIPLES.md + entity registry. Also fires as pre-synthesis pass (safety net). Background triggers get automatic heartbeat if no manual await is set. |
+| `reprogramme_needed` | **PERSIST** | 99 | Stateless semantic state update. World-building and long-horizon calibration. Persists entity and semantic-state changes so the system stays informed across turns and time horizons. |
 
 **Codon priority ordering:** reason (90) → await (95) → commit (98) → reprogramme (99). Within the bridge tier, planning fires first, checkpoints fire after inline work, reintegration fires after commitment gaps resolve, and persistence fires last.
 
@@ -215,16 +261,19 @@ Mid-turn commitment activation follows the compiler laws exactly: reason_needed 
 
 **Law 9 guarantee:** Background triggers (reprogramme_needed) always close the loop. If the main agent sets a manual `await_needed`, the parent chain suspends and resumes when the sub-agent finishes. If no manual await is set, an automatic `reason_needed` heartbeat persists after synthesis — next turn, the agent inspects the sub-agent's semantic tree and either closes, revisits, or refines. The loop is always closed.
 
-### Tier 4: .st Resolution (internal &, no vocab)
+### Tier 4: `.st` Resolution (internal &, no dedicated entity vocab)
 
-Entity .st files have no dedicated vocab. They resolve through `hash_resolve_needed` when the LLM references their hash in content_refs. The kernel checks the skill registry — if the hash is a .st file, it renders entity data. This is elegant because it means entity resolution uses the exact same mechanism as any other hash resolution. No special routing. No entity-specific vocabulary. The .st file IS the entity. The hash IS the address. The vocab IS hash_resolve_needed. One mechanism, universal.
+Entity-style and action-style `.st` files do not require separate top-level vocab names just to exist. They are still addressable through hash resolution. But what they MANIFEST into is structural, not textual.
 
-Two sub-modes determined by .st content:
+When a `.st` hash is resolved, the system should treat it as a step package, not as dead data. Its manifestation mode is derivable from its structure:
 
-| .st has steps? | Mode | What happens |
-|---------------|------|-------------|
-| No (pure entity) | Context injection | Data injected into LLM context. One blob step. No branching. |
-| Yes (workflow) | Gap ledger mutation | Each step becomes a gap on the ledger. Chain plays out depth-first. |
+| `.st` structural shape | Manifestation | What happens |
+|------------------------|---------------|-------------|
+| Pure entity semantics | Context injection | Semantic state is injected: identity, preferences, scope, constraints, domain knowledge |
+| Action workflow | Ledger dispersal | Steps become executable gaps or deterministic package activations |
+| Hybrid | Mixed manifestation | Semantic context injects first, action gaps or embeddings disperse after |
+
+So the principle is not “the system reads `.st` files.” The principle is “the system resolves step packages, and their structure determines manifestation.”
 
 ### Auto-routes (policy-driven)
 
@@ -431,19 +480,26 @@ loop.py
 
 ---
 
-## §5. Reprogramme: The Higher-Order Gap Rendering Engine
+## §5. Reprogramme: The Semantic State Engine
 
-Reprogramme is the engine that creates and calibrates the .st ecosystem. While every other mechanism operates WITHIN the ecosystem, reprogramme BUILDS the ecosystem. It is the generalization engine — calibrating the system to its environment by rendering the gaps that no existing entity or workflow can fill.
+Reprogramme is the semantic state engine of the system. While reason operates on conscious structural flow, reprogramme maintains the subconscious internal state model that lets the system remain calibrated over long horizons. It creates and updates the semantic substrate the rest of the system reasons with.
 
 The analogy is genetic engineering: the cell (kernel) operates on proteins (steps), but the genetic engineer (reprogramme) designs the DNA (.st files) that encodes the proteins. The cell doesn't know or care about the engineer. It just reads the genes and expresses them. But the engineer knows the cell intimately — and designs genes that compose with its machinery.
 
-### On-demand rendering
+### On-demand semantic persistence
 
-The LLM explicitly surfaces `reprogramme_needed` — "this entity needs to be created or updated." The reprogramme agent composes a .st file from semantic intent, constrained by PRINCIPLES.md. This is deliberate world-building: the user says "track Clinton" or "build a video pipeline" and the system manifests a new entity.
+The LLM explicitly surfaces `reprogramme_needed` when semantic state must be created, updated, or stabilized. This is not primarily executable planning. It is persistence: the user corrects a preference, introduces a new person, extends domain scope, asks the system to remember something, or establishes a long-horizon background concern. Reprogramme carries those changes into the system's semantic substrate.
 
-### Natural rendering through semantic vocab triggering
+### Structural relation to reason
 
-Observe bridges (`hash_resolve_needed`) keep .st entities alive on the trajectory so long as they are salient. When the LLM references a .st hash in a gap's content_refs, the kernel resolves it automatically — the entity resurfaces if the gap is relevant enough to be admitted. No explicit "load entity" needed. The trajectory IS the memory. Relevance IS the recall trigger.
+Reason and reprogramme are two sides of the same manifestation engine.
+
+- Reason structures flow.
+- Reprogramme structures state.
+
+Reason is more stateful and conscious. Reprogramme is more stateless and subconscious. Reason asks: *what executable structure should exist or be activated?* Reprogramme asks: *what semantic state should persist so the system remains informed?*
+
+This is why reprogramme is the mechanism that lets the user keep the system informed over long periods. It is the semantic continuity layer of the OS.
 
 This means the .st ecosystem is self-sustaining:
 - Entities referenced frequently → high co-occurrence → high grounded score → easier to admit
@@ -451,20 +507,19 @@ This means the .st ecosystem is self-sustaining:
 - Dormant entities can be revived if they recur — the hash is always resolvable
 - The reprogramme agent creates new entities when gaps can't be filled by existing ones
 
-### The rendering cycle
+### The state update cycle
 
 ```
 LLM perceives trajectory
-  → articulates gap referencing .st hash
-  → kernel resolves hash → entity data injected (context) or gaps dispersed (workflow)
-  → LLM reasons with entity context
-  → if knowledge is stale or missing → reprogramme_needed surfaces
-  → reprogramme agent creates/updates .st
+  → entity and semantic state resolve through step package manifestation
+  → LLM reasons with current semantic state
+  → if state is stale, missing, or corrected → reprogramme_needed surfaces
+  → reprogramme persists semantic update
   → commit → hash evolves → trajectory tracks the evolution
-  → next turn, the evolved entity is what gets resolved
+  → next turn, the evolved semantic state is what resolves
 ```
 
-Reprogramme operates in two modes: **classifiable mid-turn** (the LLM emits it as a gap) and **automatic pre-synthesis** (the `_reprogramme_pass()` runs between the iteration loop and synthesis as silent housekeeping). Either way, new knowledge is persisted via st_builder, committed, and the commit hash lands on the trajectory.
+Reprogramme operates in two modes: **classifiable mid-turn** and **automatic pre-synthesis**. Either way, it persists semantic state so the system remains calibrated beyond the current turn.
 
 ### Code mechanisms
 
@@ -618,42 +673,67 @@ loop.py
 
 ---
 
-## §7. Post-Diff: The Fluidity Dial
+## §7. Post-Diff: The Re-Entry Primitive
 
-The `post_diff` flag exists on every gap that enters the ledger. It is the system's fluidity control — a single boolean that determines whether reasoning continues after execution or whether execution is terminal.
+`post_diff` is not just a fluidity dial. It is a workflow-management primitive of the manifestation engine.
 
-- **post_diff: true** → execute → LLM reasons → gaps may surface → chain may branch
-- **post_diff: false** → execute → move on → no reasoning, no branching
+The codons handle lifecycle boundaries:
 
-This is not a minor configuration detail. It is the mechanism that allows the same ledger, the same compiler, and the same OMO rhythm to express the full spectrum from pure deterministic workflow (all false) to fully autonomous exploration (all true), with any mix in between. A single turn can contain strict pipeline steps and open-ended reasoning on the same ledger. The fluidity is per-step, not per-turn or per-agent.
+- `reason_needed` → start / structural activation
+- `await_needed` → wait / synchronization
+- `commit_needed` → stop / reintegration
 
-Think of post_diff as the difference between a reflex and a deliberation. A reflex (post_diff: false) fires and completes — the knee-jerk response, no contemplation. A deliberation (post_diff: true) fires and then reflects — did that work? what do I see now? should I branch? The system can mix reflexes and deliberations in any sequence. A workflow that needs precision uses false. A step that faces ambiguity uses true. The .st author chooses.
+`post_diff` governs something different: whether execution **re-enters semantic measurement** after a step has manifested.
 
-### What this means for .st composition
+- **post_diff: false** → manifest → continue linearly. The step is treated as a closed expression unit.
+- **post_diff: true** → manifest → re-enter measurement. The result is opened back up to reasoning, verification, branching, or further dispersal.
 
-When an .st author designs a workflow, post_diff is the primary tool for controlling chain behaviour:
+So `post_diff` is not a codon. It is the branch/re-entry primitive. In the biological analogy, it behaves more like a splice or translation-control site than a start or stop codon. It determines whether the manifestation engine continues as a straight sequence or re-opens the chain to semantic branching.
 
-- **Deterministic pipeline**: all steps post_diff: false → execute in sequence, no branching, predictable step count
-- **Guided exploration**: key decision points post_diff: true, execution steps post_diff: false → branches only where needed
-- **Full autonomy**: all steps post_diff: true → the chain can branch at any point, step count is emergent
+This matters because LIFO and OMO are not enough on their own to validate a workflow skeleton. A skeleton can satisfy start/wait/stop boundaries and still be incoherent if re-entry points are wrong. `post_diff` is what tells the system where reflection, branch emission, verification, or recursive manifestation are even allowed.
 
-The .st author doesn't control the compiler. They control fluidity. The compiler enforces laws. The governor monitors convergence. But whether the chain CAN branch at a given point — that's the .st author's design decision, expressed as post_diff.
+### What `post_diff` means structurally
+
+When a workflow is compiled, every manifested step must declare one of two states:
+
+- **closed expression** (`post_diff: false`)
+  The step completes and the sequencer proceeds. Use for deterministic injection, fixed observation, fixed mutation, and non-branching persistence.
+
+- **open expression** (`post_diff: true`)
+  The step completes and the sequencer re-enters semantic measurement. Use for decision points, diagnosis, verification, reasoning, recursive embedding, and any step whose result may lawfully emit child gaps.
+
+The important point is that this is a structural permission, not just a runtime mood. If a step is not marked open, the workflow should not branch there.
+
+### What this means for workflow design
+
+When designing a workflow skeleton or `.st` package:
+
+- **Deterministic pipeline**: mostly `post_diff: false`
+- **Guided branching**: `post_diff: true` only at explicit decision or verification points
+- **Recursive structural reasoning**: `post_diff: true` at the points where the system is allowed to reopen the chain and emit new structure
+
+So `post_diff` should be treated as a first-class workflow primitive alongside the codons, not as a minor step option.
 
 ### Code mechanisms
 
 ```
 skills/*.st
-├─ Each step object has "post_diff": true|false
-├─ true → after execution, LLM reasons → may emit child gaps → chain branches
-└─ false → after execution, move to next gap → deterministic progression
+├─ Each step object can carry "post_diff": true|false
+└─ This expresses whether the step is structurally open or closed after manifestation
+
+skills/loader.py
+└─ SkillStep.post_diff → preserved on loaded step packages
+
+schemas/skeleton.v1.json
+├─ Every non-terminal phase requires post_diff
+└─ post_diff is part of the structural contract submitted for compilation
+
+tools/skeleton_compile.py
+└─ Preserves post_diff into stepchain.v1 as manifestation-time structure
 
 loop.py
-├─ Iteration loop
-│   ├─ if post_diff is true → inject result → call LLM → parse new step → emit gaps
-│   └─ if post_diff is false → inject result → create blob step → no LLM call
-│
-└─ The LLM never sees post_diff — it is a kernel-side control
-    └─ The .st author controls fluidity, not the LLM
+└─ Current runtime still only partially enforces post_diff generically
+   → the principle is ahead of the implementation here
 ```
 
 ---
@@ -663,6 +743,29 @@ loop.py
 The compiler has laws. They are absolute. No gap, no .st file, no LLM output can violate them. They are the physics of this system — not guidelines, not best practices, not configurable parameters. They are inviolable constraints that make everything else possible, the way the laws of thermodynamics constrain but enable all of chemistry.
 
 But the recursive nature of .st composition allows workflows to achieve fluidity WITHIN those laws — not by breaking them, but by structuring gaps so the laws work in their favour. This is the key insight: rigidity at the compiler level enables fluidity at the composition level.
+
+### The mRNA model
+
+The manifestation engine should be understood as an mRNA model with the compiler integrated as the sequencer.
+
+- **Layer 0 primitives** are the nucleotide alphabet: step, gap, refs, scores, manifestation config.
+- **Skeletons** are the transcribed structural sequence: the authored description of what can lawfully manifest.
+- **The compiler** is the sequencer or ribosome: it does not invent meaning, it translates lawful structure into executable order.
+- **The ledger** is the translation surface: one active branch, deepest child first, return to branch root before next sibling.
+- **The trajectory** is expressed structure: the realized chain, mutation record, and resolved semantic tree.
+
+In this model, the compiler does not sit outside manifestation. It is part of manifestation. A skeleton is not valid merely because it is well-formed JSON. It is only valid if it can be sequenced under the compiler's laws.
+
+That means the manifestation engine must be able to reject workflow skeletons that cannot compile under:
+
+- **LIFO** — every child branch must close before the next sibling proceeds
+- **Depth-first** — branch descent must return to root before sibling continuation
+- **OMO** — no mutation path may produce consecutive mutations without lawful observation/re-entry between
+- **Postcondition** — every mutation path must admit verification
+- **Loop closure** — background branches must rejoin by await or heartbeat
+- **Post-diff coherence** — only open-expression steps may lawfully branch
+
+So the compiler laws are not merely runtime safety checks. They are part of the static manifestation validity of the workflow itself.
 
 ### The eight laws
 
@@ -684,15 +787,36 @@ But the recursive nature of .st composition allows workflows to achieve fluidity
 
 **9. Loop always closes** — Every background trigger must eventually reintegrate with the parent trajectory. Either the flow-builder agent sets a manual `await_needed` checkpoint (synchronous — parent chain suspends, resumes when sub-agent finishes) or the kernel inserts an automatic `reason_needed` heartbeat after synthesis (asynchronous — next turn, agent inspects sub-agent's semantic tree). The heartbeat is recursive: if inspection triggers further background work, another heartbeat persists. The loop closes when all background chains are resolved. This is not a constraint on the flow-builder — it is a guarantee by the kernel.
 
-### How .st files compose within the laws
+### Workflow validation
 
-A .st file's steps are gaps. When they disperse onto the ledger, they follow every law. But the .st AUTHOR controls:
+Because the compiler is part of the manifestation engine, every workflow skeleton submitted by `reason_needed` should be statically checkable before execution.
+
+A valid workflow skeleton must answer:
+
+- where does manifestation start?
+- where may it suspend?
+- where does it reintegrate?
+- where may it reopen to semantic measurement?
+- can every branch descend and return under LIFO?
+- can every mutate path satisfy OMO without illegal sibling jumps?
+
+This means a workflow checker should validate, at minimum:
+
+- branch-root / child / sibling ordering is compatible with depth-first return
+- every mutation path has lawful observation before and after
+- `post_diff` is present and coherent at every branchable step
+- await or heartbeat closure exists for every background branch
+- no phase structure implies impossible sequencing under the ledger laws
+
+### How `.st` files and skeletons compose within the laws
+
+A `.st` file's steps, or a compiled workflow skeleton's phases, are still subject to the same laws. The author controls structural expression. The compiler controls lawful sequencing.
 
 - **Relevance scores** — sequences execution order within the same priority bracket
 - **Vocab selection** — determines which tier each step operates in
-- **post_diff** — controls whether the chain can branch after each step
+- **post_diff** — controls whether the chain may reopen after each step
 
-This means an .st file can structure a workflow that LOOKS like it bypasses rules but actually leverages them:
+This means a workflow can look fluid while still being mechanically lawful, because the manifestation engine is validating and sequencing it under one set of compiler laws.
 
 ```
 research.st:
@@ -860,11 +984,11 @@ The old commitment system tracked promises as registry entries. In cors, reasoni
 
 `reason.st` is the system's most versatile codon. It serves three distinct roles through the same mechanism:
 
-**Role 1: Planning primitive** — For complex tasks, the main agent emits `reason_needed` to decompose and structure the work. The specialized reason agent has full semantic tree visibility and can build commitment chains **bottom-up**: leaf-level chains first (the atomic sub-tasks), then mid-level chains that embed them via content_refs, then top-level orchestration. Consecutive `reason_needed` steps build layers — the more layers, the more consecutive reason passes. Each step in the constructed chain encodes the full 7-axis gap configuration `{action, desc, vocab, relevance, post_diff, content_refs, step_refs}`. Existing .st files can be embedded by placing their hash in a step's content_refs — their gaps will disperse depth-first when resolved. New .st files can be written inline as steps with all axes specified. The resulting semantic tree is directly extractable to a .st file via `chain_to_st`.
+**Role 1: Planning primitive** — For complex tasks, the main agent emits `reason_needed` to decompose and structure work as executable manifestation. The reason agent has semantic tree visibility and can build lawful step flow bottom-up: leaf chains first, then composed parents, then top-level orchestration. Its natural authoring surface is the workflow skeleton: a structural description the system can deterministically derive, compile, inspect, and execute.
 
 **Role 2: Reorientation checkpoint** — When the compiler rejects a chain (missing await, OMO violation, codon immutability), the fallback is `reason_needed`. The agent re-renders its semantic trees, sees what went wrong, and reconstructs its approach. This is the same role `reclassify` played in v4.5 but through an existing primitive rather than a separate mechanism. Any rejection resolves to reason.
 
-**Role 3: Heartbeat trigger** — When background work is in progress without a manual await, the kernel persists an automatic `reason_needed` after synthesis. Next turn, this heartbeat fires — the agent renders the sub-agent's full semantic tree, inspects results, and routes: close (report to user), revisit (adjust the chain), or refine+reactivate (trigger more work). The heartbeat recurs until all background chains resolve.
+**Role 3: Heartbeat trigger** — When background work is in progress without a manual await, the kernel persists an automatic `reason_needed` after synthesis. Next turn, this heartbeat fires — the agent renders the sub-agent's semantic tree and the entity/state space it depends on, inspects results, and routes: close, revisit, or refine+reactivate. The heartbeat recurs until all background chains resolve.
 
 ### Six outcomes
 
@@ -876,7 +1000,7 @@ The LLM's post-diff after viewing the rendered trees determines the path:
 
 **3. Manifest (agency)** — the LLM references a reasoning commitment hash AND composes a prompt. This is the agency trigger — the system manifests an agent from the commitment's context. `commit_needed` is injected as the LAST step at LOWEST relevance, behind all commitment gaps — it fires only after the entire commitment resolves.
 
-**4. Plan (decompose)** — for complex tasks, the agent writes the commitment chain as a semantic tree following the chain construction specification. Build layers back-to-front: leaf chains first, then parents that adopt them. The resulting tree is directly extractable to .st via `chain_to_st`.
+**4. Plan (decompose)** — for complex tasks, the agent writes executable structure as a workflow skeleton. Build layers back-to-front: leaf chains first, then parents that adopt them. The system can deterministically derive execution packages from that structure.
 
 **5. Heartbeat (inspect)** — inspect background sub-agent's semantic tree. Three sub-paths: accept (close the loop, report), revisit (adjust the chain), refine+reactivate (trigger more work with its own heartbeat).
 
@@ -900,12 +1024,13 @@ reason_needed surfaces
         - compiler rejection → routes to reorient (recalibrate)
         - confusion → clarify_needed
   → step 3: construct or act (flex, rel=0.8, post_diff=true)
-      if planning: write commitment chain as semantic tree
-        - each step encodes full gap config {action, desc, vocab, relevance, post_diff, content_refs, step_refs}
-        - embed existing .st by hash in content_refs (gaps disperse depth-first)
+      if planning: write executable structure as workflow skeleton
+        - structural law lives in the skeleton
+        - activation identity may point at exact curated step packages by hash
+        - entity/action distinction is derivable from manifestation structure
         - embed await_needed after any background trigger
         - build back-to-front: leaf chains first, parents adopt them
-        - resulting tree extractable to .st via chain_to_st
+        - resulting structure is deterministically compilable by the system
       if refining: hash_edit updates the reasoning chain
       if manifesting: compose agent trigger + inject commitment gaps + trailing commit_needed
       if heartbeat: render sub-agent tree → accept/revisit/refine
@@ -972,21 +1097,24 @@ Turn N+3: (if refined) → heartbeat fires → check refinement → close
 
 Each heartbeat is a full reason cycle: render tree → assess → act. The agent is autonomously managing long-running workflows across turns. The heartbeat IS the autonomy mechanism — the system monitors its own background work, course-corrects, and reports when done.
 
-### Deterministic .st extraction from semantic trees
+### Deterministic package derivation from semantic trees
 
-A fully resolved commitment chain already contains everything a .st file needs. If the chain-building agents write their commitment chains within the guided specification — each step as `{action, desc, vocab, relevance, post_diff, content_refs, step_refs}` — then extraction is pure serialization via `chain_to_st`:
+A fully resolved commitment chain already contains enough structure to crystallize into a reusable package. The important distinction is:
+
+- executable flow should derive through the workflow skeleton and deterministic compilation
+- semantic persistence should derive through the semantic skeleton and persistence tooling
 
 ```
-Commitment chain (semantic tree on trajectory)     ← runtime representation
-  ↓ deterministic extraction (chain_to_st tool)
-.st file (JSON in skills/)                          ← crystallized representation
-  ↓ future invocation
-Gaps on ledger (same shape as original chain)       ← re-instantiated
+Commitment chain / semantic tree on trajectory  ← runtime representation
+  ↓ structural derivation
+workflow skeleton / semantic skeleton          ← author-time crystallization
+  ↓ deterministic compilation / persistence
+action package / entity package                ← reusable manifestation
+  ↓ future activation
+same structural laws re-enter the ledger       ← re-instantiated manifestation
 ```
 
-This is the discovery → crystallization pipeline. The chain-building agents don't need to invoke reprogramme to persist their work — the kernel can extract it directly. reprogramme remains the tool for creating entities and novel .st files from scratch. Extraction handles the case where a successful chain should become a reusable workflow.
-
-Existing .st files can be drawn into chains as embeddings — place the .st hash in a step's content_refs and the compiler disperses its gaps depth-first when resolved. New .st files can be written as inline steps with all 7 gap axes specified, then extracted to standalone .st files after the chain validates. The semantic tree encodes the full gap configuration — nothing is lost in the round-trip.
+This is the discovery → crystallization pipeline. Reason owns executable structural derivation. Reprogramme owns semantic persistence and state continuity. They are different manifestations of the same OS-level machinery, not competing systems.
 
 ### What this replaces
 

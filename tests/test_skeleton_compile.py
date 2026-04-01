@@ -39,6 +39,13 @@ def example_skeleton() -> dict:
                     "execution_mode": "runtime_vocab",
                     "runtime_vocab": "hash_resolve_needed",
                 },
+                "generation": {
+                    "spawn_mode": "none",
+                    "spawn_trigger": "none",
+                    "branch_policy": "depth_first_to_parent",
+                    "sibling_policy": "after_descendants",
+                    "return_policy": "resume_transition",
+                },
                 "allowed_vocab": ["hash_resolve_needed"],
                 "post_diff": False,
                 "transitions": {"on_done": "phase_reason"},
@@ -58,6 +65,13 @@ def example_skeleton() -> dict:
                     "dispersal": "mixed",
                     "execution_mode": "runtime_vocab",
                     "runtime_vocab": "reason_needed",
+                },
+                "generation": {
+                    "spawn_mode": "mixed",
+                    "spawn_trigger": "conditional",
+                    "branch_policy": "depth_first_to_parent",
+                    "sibling_policy": "after_descendants",
+                    "return_policy": "resume_transition",
                 },
                 "allowed_vocab": ["reason_needed", "hash_edit_needed"],
                 "post_diff": True,
@@ -82,10 +96,44 @@ def example_skeleton() -> dict:
                     "emits_commit": True,
                     "protected_kind": "action",
                 },
+                "generation": {
+                    "spawn_mode": "action",
+                    "spawn_trigger": "on_post_diff",
+                    "branch_policy": "depth_first_to_parent",
+                    "sibling_policy": "after_descendants",
+                    "return_policy": "resume_transition",
+                },
                 "allowed_vocab": ["hash_edit_needed"],
                 "post_diff": True,
                 "requires_postcondition": True,
-                "transitions": {"on_done": "phase_done"},
+                "transitions": {"on_done": "phase_verify"},
+            },
+            {
+                "id": "phase_verify",
+                "kind": "verify",
+                "goal": "verify result",
+                "action": "verify_result",
+                "gap_template": {
+                    "desc": "mutation result must be observed",
+                    "content_refs": ["$commit"],
+                    "step_refs": ["$prev"],
+                },
+                "manifestation": {
+                    "kernel_class": "observe",
+                    "dispersal": "mixed",
+                    "execution_mode": "runtime_vocab",
+                    "runtime_vocab": "hash_resolve_needed",
+                },
+                "generation": {
+                    "spawn_mode": "mixed",
+                    "spawn_trigger": "on_post_diff",
+                    "branch_policy": "depth_first_to_parent",
+                    "sibling_policy": "after_descendants",
+                    "return_policy": "resume_transition",
+                },
+                "allowed_vocab": ["hash_resolve_needed", "reason_needed"],
+                "post_diff": True,
+                "transitions": {"on_close": "phase_done"},
             },
             {
                 "id": "phase_done",
@@ -119,7 +167,13 @@ def test_compile_skeleton_returns_stepchain_package():
     assert stepchain["version"] == "stepchain.v1"
     assert stepchain["source_version"] == "skeleton.v1"
     assert stepchain["root"] == "phase_observe"
-    assert stepchain["phase_order"] == ["phase_observe", "phase_reason", "phase_mutate", "phase_done"]
+    assert stepchain["phase_order"] == [
+        "phase_observe",
+        "phase_reason",
+        "phase_mutate",
+        "phase_verify",
+        "phase_done",
+    ]
 
 
 def test_compile_skeleton_resolves_top_level_symbolic_refs():
@@ -139,6 +193,15 @@ def test_compile_skeleton_derives_priority_from_structure():
     assert priorities["phase_mutate"] == 40
 
 
+def test_compile_skeleton_preserves_generation_contract():
+    stepchain = skeleton_compile_module.compile_skeleton(example_skeleton())["stepchain"]
+    reason = next(node for node in stepchain["nodes"] if node["id"] == "phase_reason")
+    mutate = next(node for node in stepchain["nodes"] if node["id"] == "phase_mutate")
+    assert reason["generation"]["spawn_mode"] == "mixed"
+    assert reason["generation"]["spawn_trigger"] == "conditional"
+    assert mutate["generation"]["branch_policy"] == "depth_first_to_parent"
+
+
 def test_compile_skeleton_groups_allowed_vocab_by_family():
     stepchain = skeleton_compile_module.compile_skeleton(example_skeleton())["stepchain"]
     reason = next(node for node in stepchain["nodes"] if node["id"] == "phase_reason")
@@ -152,6 +215,68 @@ def test_compile_skeleton_rejects_invalid_contract():
     result = skeleton_compile_module.compile_skeleton(broken)
     assert result["status"] == "error"
     assert any("runtime_vocab manifestation requires runtime_vocab" in error for error in result["errors"])
+
+
+def test_compile_skeleton_rejects_invalid_generation_reentry():
+    broken = example_skeleton()
+    broken["phases"][0]["generation"]["spawn_mode"] = "context"
+    broken["phases"][0]["generation"]["spawn_trigger"] = "on_post_diff"
+    result = skeleton_compile_module.compile_skeleton(broken)
+    assert result["status"] == "error"
+    assert any("uses on_post_diff offspring but post_diff is false" in error for error in result["errors"])
+
+
+def test_compile_skeleton_rejects_mutation_without_observe_closure():
+    broken = example_skeleton()
+    broken["phases"][2]["transitions"] = {"on_done": "phase_done"}
+    result = skeleton_compile_module.compile_skeleton(broken)
+    assert result["status"] == "error"
+    assert any("must reach observe/verify before terminal or next mutate" in error for error in result["errors"])
+
+
+def test_compile_skeleton_rejects_commit_without_commit_consumer():
+    broken = example_skeleton()
+    broken["phases"][3]["gap_template"]["content_refs"] = ["@target"]
+    result = skeleton_compile_module.compile_skeleton(broken)
+    assert result["status"] == "error"
+    assert any("emits_commit but no downstream phase consumes $commit" in error for error in result["errors"])
+
+
+def test_compile_skeleton_rejects_unreachable_phase():
+    broken = example_skeleton()
+    broken["phases"].insert(
+        -1,
+        {
+            "id": "phase_orphan",
+            "kind": "observe",
+            "goal": "orphan",
+            "action": "observe_orphan",
+            "gap_template": {
+                "desc": "orphan",
+                "content_refs": [],
+                "step_refs": [],
+            },
+            "manifestation": {
+                "kernel_class": "observe",
+                "dispersal": "context",
+                "execution_mode": "runtime_vocab",
+                "runtime_vocab": "hash_resolve_needed",
+            },
+            "generation": {
+                "spawn_mode": "none",
+                "spawn_trigger": "none",
+                "branch_policy": "depth_first_to_parent",
+                "sibling_policy": "after_descendants",
+                "return_policy": "resume_transition",
+            },
+            "allowed_vocab": ["hash_resolve_needed"],
+            "post_diff": False,
+            "transitions": {"on_done": "phase_done"},
+        },
+    )
+    result = skeleton_compile_module.compile_skeleton(broken)
+    assert result["status"] == "error"
+    assert any("phase phase_orphan is unreachable from root phase_observe" in error for error in result["errors"])
 
 
 def test_st_builder_detects_skeleton_input():

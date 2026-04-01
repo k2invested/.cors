@@ -87,6 +87,13 @@ def hybrid_doc() -> dict:
                     "activation_ref": "@reviewer_flow",
                     "activation_alias": "reviewer_flow"
                 },
+                "generation": {
+                    "spawn_mode": "mixed",
+                    "spawn_trigger": "conditional",
+                    "branch_policy": "depth_first_to_parent",
+                    "sibling_policy": "after_descendants",
+                    "return_policy": "resume_transition"
+                },
                 "allowed_vocab": ["reason_needed", "hash_edit_needed"],
                 "post_diff": True,
                 "transitions": {

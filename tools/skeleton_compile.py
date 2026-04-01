@@ -93,6 +93,95 @@ def normalize_embed(embed, refs: dict[str, str]) -> list[str]:
     return [resolve_symbolic_ref(embed, refs)]
 
 
+def is_terminal_phase(phase: dict) -> bool:
+    return phase.get("kind") == "terminal" or phase.get("terminal") is True
+
+
+def phase_successors(phase: dict) -> list[str]:
+    return list(phase.get("transitions", {}).values())
+
+
+def reachable_phase_ids(root: str, phase_map: dict[str, dict]) -> set[str]:
+    seen: set[str] = set()
+    stack = [root]
+    while stack:
+        pid = stack.pop()
+        if pid in seen or pid not in phase_map:
+            continue
+        seen.add(pid)
+        stack.extend(phase_successors(phase_map[pid]))
+    return seen
+
+
+def can_reach_target(
+    start: str,
+    phase_map: dict[str, dict],
+    predicate,
+    *,
+    stop_predicate=None,
+    memo: dict[str, bool] | None = None,
+    visiting: set[str] | None = None,
+) -> bool:
+    if start not in phase_map:
+        return False
+    if memo is None:
+        memo = {}
+    if visiting is None:
+        visiting = set()
+    if start in memo:
+        return memo[start]
+    phase = phase_map[start]
+    if predicate(phase):
+        memo[start] = True
+        return True
+    if stop_predicate is not None and stop_predicate(phase):
+        memo[start] = False
+        return False
+    if start in visiting:
+        return False
+    visiting.add(start)
+    result = any(
+        can_reach_target(
+            target,
+            phase_map,
+            predicate,
+            stop_predicate=stop_predicate,
+            memo=memo,
+            visiting=visiting,
+        )
+        for target in phase_successors(phase)
+    )
+    visiting.remove(start)
+    memo[start] = result
+    return result
+
+
+def phase_consumes_commit(phase: dict) -> bool:
+    gap_template = phase.get("gap_template", {})
+    return "$commit" in gap_template.get("content_refs", [])
+
+
+def is_observe_like(phase: dict) -> bool:
+    if phase.get("kind") in {"observe", "verify"}:
+        return True
+    manifestation = phase.get("manifestation", {})
+    return manifestation.get("kernel_class") == "observe"
+
+
+def is_mutate_like(phase: dict) -> bool:
+    if phase.get("kind") == "mutate":
+        return True
+    manifestation = phase.get("manifestation", {})
+    return manifestation.get("kernel_class") == "mutate"
+
+
+def is_reason_like(phase: dict) -> bool:
+    if phase.get("kind") in {"reason", "higher_order"}:
+        return True
+    manifestation = phase.get("manifestation", {})
+    return manifestation.get("runtime_vocab") == "reason_needed"
+
+
 def compile_phase(phase: dict, refs: dict[str, str]) -> dict:
     node = {
         "id": phase["id"],
@@ -110,6 +199,7 @@ def compile_phase(phase: dict, refs: dict[str, str]) -> dict:
         manifestation["activation_ref"] = resolve_symbolic_ref(manifestation["activation_ref"], refs)
 
     node["manifestation"] = manifestation
+    node["generation"] = deepcopy(phase["generation"])
     node["priority"] = derive_priority(phase["kind"], manifestation)
     node["allowed_vocab"] = list(phase["allowed_vocab"])
     node["vocab_buckets"] = classify_allowed_vocab(phase["allowed_vocab"])
@@ -175,6 +265,35 @@ def validate_skeleton(doc: dict) -> list[str]:
         if manifestation is None:
             errors.append(f"phase {pid} missing manifestation")
             continue
+        generation = phase.get("generation")
+        if generation is None:
+            errors.append(f"phase {pid} missing generation")
+        else:
+            for field in (
+                "spawn_mode",
+                "spawn_trigger",
+                "branch_policy",
+                "sibling_policy",
+                "return_policy",
+            ):
+                if field not in generation:
+                    errors.append(f"phase {pid} generation missing {field}")
+
+            spawn_mode = generation.get("spawn_mode")
+            spawn_trigger = generation.get("spawn_trigger")
+            if spawn_mode == "none" and spawn_trigger not in {None, "none"}:
+                errors.append(f"phase {pid} generation with spawn_mode=none must use spawn_trigger=none")
+            if spawn_mode in {"context", "action", "mixed", "embed"} and spawn_trigger == "none":
+                errors.append(f"phase {pid} generation with offspring must declare a spawn trigger")
+            if (spawn_trigger in {"on_post_diff", "conditional"}) and not phase.get("post_diff", False):
+                errors.append(f"phase {pid} uses {spawn_trigger} offspring but post_diff is false")
+            if spawn_mode in {"context", "action", "mixed", "embed"} and generation.get("sibling_policy") != "after_descendants":
+                errors.append(f"phase {pid} offspring must block siblings until descendants return")
+            if spawn_mode in {"context", "action", "mixed", "embed"} and generation.get("branch_policy") not in {
+                "depth_first_to_parent",
+                "depth_first_to_root",
+            }:
+                errors.append(f"phase {pid} offspring must declare a depth-first branch policy")
 
         for field in ("kernel_class", "dispersal", "execution_mode"):
             if field not in manifestation:
@@ -193,8 +312,117 @@ def validate_skeleton(doc: dict) -> list[str]:
     return errors
 
 
+def validate_workflow_coherence(doc: dict) -> list[str]:
+    errors: list[str] = []
+    phase_map = {phase["id"]: phase for phase in doc["phases"]}
+    root = doc["root"]
+    reachable = reachable_phase_ids(root, phase_map)
+    terminal_ids = {pid for pid, phase in phase_map.items() if is_terminal_phase(phase)}
+    success_terminal = doc["closure"]["success"]["requires_terminal"]
+
+    for pid in phase_map:
+        if pid not in reachable:
+            errors.append(f"phase {pid} is unreachable from root {root}")
+
+    if success_terminal not in reachable:
+        errors.append(f"success terminal {success_terminal} is not reachable from root {root}")
+
+    terminal_path_memo: dict[str, bool] = {}
+    for pid in reachable:
+        phase = phase_map[pid]
+        if is_terminal_phase(phase):
+            continue
+        if not can_reach_target(
+            pid,
+            phase_map,
+            is_terminal_phase,
+            memo=terminal_path_memo,
+        ):
+            errors.append(f"phase {pid} has no path to a terminal phase")
+
+    observe_path_memo: dict[str, bool] = {}
+    commit_path_memo: dict[str, bool] = {}
+    reason_path_memo: dict[str, bool] = {}
+    for pid in reachable:
+        phase = phase_map[pid]
+        if is_mutate_like(phase):
+            successors = phase_successors(phase)
+            if not successors:
+                errors.append(f"mutate phase {pid} must have a successor for OMO closure")
+            elif not any(
+                can_reach_target(
+                    target,
+                    phase_map,
+                    is_observe_like,
+                    stop_predicate=lambda p: is_terminal_phase(p) or is_mutate_like(p),
+                    memo=observe_path_memo,
+                )
+                for target in successors
+            ):
+                errors.append(
+                    f"mutate phase {pid} must reach observe/verify before terminal or next mutate"
+                )
+
+            manifestation = phase.get("manifestation", {})
+            if manifestation.get("emits_commit") and successors and not any(
+                can_reach_target(
+                    target,
+                    phase_map,
+                    phase_consumes_commit,
+                    stop_predicate=lambda p: is_terminal_phase(p) or is_mutate_like(p),
+                    memo=commit_path_memo,
+                )
+                for target in successors
+            ):
+                errors.append(
+                    f"mutate phase {pid} emits_commit but no downstream phase consumes $commit before branch closure"
+                )
+
+        manifestation = phase.get("manifestation", {})
+        await_policy = manifestation.get("await_policy")
+        if phase.get("kind") == "await" and "await_needed" not in phase.get("allowed_vocab", []):
+            errors.append(f"await phase {pid} must allow await_needed")
+        if await_policy in {"manual", "heartbeat"} or manifestation.get("background"):
+            successors = phase_successors(phase)
+            if not successors:
+                errors.append(f"phase {pid} uses await/background semantics but has no reintegration path")
+            elif not any(
+                can_reach_target(
+                    target,
+                    phase_map,
+                    is_reason_like,
+                    stop_predicate=is_terminal_phase,
+                    memo=reason_path_memo,
+                )
+                for target in successors
+            ):
+                errors.append(
+                    f"phase {pid} uses await/background semantics but cannot reach reason_needed-style reintegration"
+                )
+
+        generation = phase.get("generation")
+        if generation:
+            spawn_mode = generation.get("spawn_mode")
+            return_policy = generation.get("return_policy")
+            if spawn_mode in {"context", "action", "mixed", "embed"}:
+                if return_policy == "terminal" and not any(
+                    target in terminal_ids for target in phase_successors(phase)
+                ):
+                    errors.append(
+                        f"phase {pid} uses terminal return_policy but has no terminal successor"
+                    )
+                if return_policy == "resume_transition" and not phase_successors(phase):
+                    errors.append(
+                        f"phase {pid} uses resume_transition return_policy but has no transition target"
+                    )
+
+    return errors
+
+
 def compile_skeleton(doc: dict) -> dict:
     errors = validate_skeleton(doc)
+    if not errors:
+        errors.extend(validate_workflow_coherence(doc))
     if errors:
         return {"status": "error", "errors": errors}
 

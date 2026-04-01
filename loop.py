@@ -34,6 +34,7 @@ import json
 import os
 import subprocess
 import time
+import hashlib
 from pathlib import Path
 
 from step import Step, Gap, Epistemic, Trajectory
@@ -50,6 +51,7 @@ CORS_ROOT    = Path(__file__).parent
 SKILLS_DIR   = CORS_ROOT / "skills"
 TRAJ_FILE    = CORS_ROOT / "trajectory.json"
 CHAINS_FILE  = CORS_ROOT / "chains.json"
+CHAINS_DIR   = CORS_ROOT / "chains"
 MAX_ITERATIONS = 30
 TRAJECTORY_WINDOW = 10   # how many recent chains to render for LLM
 _turn_counter = 0        # increments each turn — used for cross-turn gap threshold
@@ -207,12 +209,23 @@ ENTITY_MANIFEST_FIELDS = {
     "schema", "access_rules", "principles", "boundaries", "domain_knowledge",
 }
 
+NODE_DEFAULT_RELEVANCE = {
+    "observe": 1.0,
+    "reason": 0.9,
+    "higher_order": 0.9,
+    "mutate": 0.8,
+    "verify": 0.7,
+    "embed": 0.75,
+    "await": 0.65,
+    "clarify": 1.0,
+}
+
 
 def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
     """Resolve any hash to its content as a semantic tree.
 
     Resolution order:
-      1. Skill hash → .st entity data (internal &, context injection)
+      1. Skill hash → .st step package render (entity-like packages usually inject semantic state)
       2. Step hash → semantic tree branch (follows step_refs recursively)
       3. Gap hash → gap data with scores
       4. Git object → git show (blob/tree/commit)
@@ -235,6 +248,10 @@ def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
     gap = trajectory.resolve_gap(ref)
     if gap:
         return _render_gap_tree(gap, trajectory)
+
+    package = _load_chain_package(ref, trajectory)
+    if package:
+        return _render_chain_package(package, ref, trajectory)
 
     # Try git object
     content = git_show(ref)
@@ -312,13 +329,6 @@ def _render_gap_tree(gap, _trajectory: Trajectory = None) -> str:
         lines.append(f"  status: active")
     return "\n".join(lines)
 
-    # Try git object
-    content = git_show(ref)
-    if not content.startswith("(unresolvable"):
-        return content
-
-    return None
-
 
 def resolve_all_refs(step_refs: list[str], content_refs: list[str],
                      trajectory: Trajectory) -> str:
@@ -333,6 +343,242 @@ def resolve_all_refs(step_refs: list[str], content_refs: list[str],
         if data:
             blocks.append(f"── resolved {ref} ──\n{data}")
     return "\n\n".join(blocks) if blocks else ""
+
+
+def _stable_doc_hash(doc: dict) -> str:
+    raw = json.dumps(doc, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode()).hexdigest()[:12]
+
+
+def _chain_package_path(ref: str) -> Path:
+    return CHAINS_DIR / f"{ref}.json"
+
+
+def _persist_chain_package(doc: dict) -> str:
+    CHAINS_DIR.mkdir(exist_ok=True)
+    package_hash = _stable_doc_hash(doc)
+    path = _chain_package_path(package_hash)
+    if not path.exists():
+        with open(path, "w") as f:
+            json.dump(doc, f, indent=2)
+    return package_hash
+
+
+def _load_chain_package(ref: str, trajectory: Trajectory | None = None) -> dict | None:
+    path = _chain_package_path(ref)
+    if path.exists():
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            return None
+
+    if trajectory:
+        chain = trajectory.chains.get(ref)
+        if chain:
+            steps = []
+            for step_hash in chain.steps:
+                step = trajectory.resolve(step_hash)
+                if step:
+                    steps.append(step.to_dict())
+            return {
+                "hash": chain.hash,
+                "origin_gap": chain.origin_gap,
+                "desc": chain.desc,
+                "resolved": chain.resolved,
+                "steps": steps,
+            }
+    return None
+
+
+def _render_chain_package(package: dict, ref: str, trajectory: Trajectory | None = None) -> str:
+    if package.get("version") == "stepchain.v1":
+        lines = [f"stepchain:{ref} \"{package.get('name', '')}\""]
+        lines.append(f"  root: {package.get('root')}")
+        lines.append(f"  trigger: {package.get('trigger')}")
+        phase_order = package.get("phase_order", [])
+        if phase_order:
+            lines.append(f"  phases: {' -> '.join(phase_order)}")
+        nodes = package.get("nodes", [])
+        for node in nodes:
+            if node.get("terminal"):
+                continue
+            activation = node.get("activation_key") or node.get("manifestation", {}).get("execution_mode")
+            lines.append(
+                f"  - {node['id']} [{node.get('kind')}] spawn:{node.get('generation', {}).get('spawn_mode')} "
+                f"post_diff:{str(node.get('post_diff')).lower()} activate:{activation}"
+            )
+        return "\n".join(lines)
+
+    if "origin_gap" in package and "steps" in package:
+        lines = [f"chain:{ref} \"{package.get('desc', '')}\""]
+        lines.append(f"  origin_gap: {package.get('origin_gap')}")
+        lines.append(f"  resolved: {package.get('resolved', False)}")
+        for step in package.get("steps", [])[:6]:
+            lines.append(f"  - step:{step.get('hash', '?')} \"{step.get('desc', '')}\"")
+        if len(package.get("steps", [])) > 6:
+            lines.append("  - ...")
+        return "\n".join(lines)
+
+    return f"(unrenderable chain package: {ref})"
+
+
+def _runtime_ref_list(refs: list[str]) -> list[str]:
+    return [ref for ref in refs if isinstance(ref, str) and not ref.startswith("$")]
+
+
+def _node_runtime_vocab(node: dict) -> str | None:
+    manifestation = node.get("manifestation", {})
+    runtime_vocab = manifestation.get("runtime_vocab")
+    if runtime_vocab:
+        return runtime_vocab
+
+    kernel_class = manifestation.get("kernel_class")
+    if kernel_class == "observe":
+        return "hash_resolve_needed"
+    if kernel_class == "mutate":
+        return "hash_edit_needed"
+    if kernel_class == "clarify":
+        return "clarify_needed"
+    if kernel_class == "bridge":
+        return "reason_needed"
+
+    allowed_vocab = node.get("allowed_vocab", [])
+    return allowed_vocab[0] if allowed_vocab else None
+
+
+def _node_relevance(node: dict, index: int) -> float:
+    base = NODE_DEFAULT_RELEVANCE.get(node.get("kind"), 0.7)
+    return max(0.3, base - (0.03 * index))
+
+
+def _activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
+                            origin_step: Step, entry_chain_id: str) -> Step:
+    step = Step.create(
+        desc=f"activated step package:{package_ref} for {gap.desc}",
+        step_refs=[origin_step.hash],
+        content_refs=[package_ref] + gap.content_refs,
+        chain_id=entry_chain_id,
+    )
+    for st_step in skill.steps:
+        child_gap = Gap.create(
+            desc=st_step.desc,
+            content_refs=[package_ref] + gap.content_refs,
+        )
+        child_gap.scores = Epistemic(
+            relevance=st_step.__dict__.get("relevance", 0.8),
+            confidence=0.8,
+            grounded=0.0,
+        )
+        child_gap.vocab = st_step.vocab
+        child_gap.turn_id = _turn_counter
+        step.gaps.append(child_gap)
+    return step
+
+
+def _activate_stepchain_package(package: dict, package_ref: str, gap: Gap,
+                                origin_step: Step, entry_chain_id: str) -> Step:
+    step = Step.create(
+        desc=f"activated json chain:{package_ref} for {gap.desc}",
+        step_refs=[origin_step.hash],
+        content_refs=[package_ref] + gap.content_refs,
+        chain_id=entry_chain_id,
+    )
+    nodes_by_id = {node["id"]: node for node in package.get("nodes", [])}
+    phase_order = package.get("phase_order", [])
+    for index, node_id in enumerate(phase_order):
+        node = nodes_by_id.get(node_id)
+        if not node or node.get("terminal"):
+            continue
+        gap_template = node.get("gap_template", {})
+        child_refs = [package_ref] + gap.content_refs + _runtime_ref_list(gap_template.get("content_refs", []))
+        activation_ref = node.get("manifestation", {}).get("activation_ref")
+        if activation_ref:
+            child_refs.append(activation_ref)
+        child_gap = Gap.create(
+            desc=gap_template.get("desc", node.get("goal", "")),
+            content_refs=child_refs,
+            step_refs=_runtime_ref_list(gap_template.get("step_refs", [])),
+        )
+        child_gap.scores = Epistemic(
+            relevance=_node_relevance(node, index),
+            confidence=0.8,
+            grounded=0.0,
+        )
+        child_gap.vocab = _node_runtime_vocab(node)
+        child_gap.turn_id = _turn_counter
+        step.gaps.append(child_gap)
+    return step
+
+
+def _available_chain_refs(registry: SkillRegistry) -> str:
+    lines = []
+    for skill in sorted(registry.all_skills(), key=lambda s: s.display_name):
+        if _is_entity_skill(skill):
+            continue
+        kind = "codon" if "codons" in skill.source else "step"
+        lines.append(f"  {skill.hash} ({skill.name}.st, {kind}) — {skill.desc[:80]}")
+    if CHAINS_DIR.exists():
+        for path in sorted(CHAINS_DIR.glob("*.json")):
+            try:
+                with open(path) as f:
+                    package = json.load(f)
+            except json.JSONDecodeError:
+                continue
+            if package.get("version") == "stepchain.v1":
+                lines.append(
+                    f"  {path.stem} ({package.get('name', 'unnamed')}.json, stepchain) — "
+                    f"{package.get('desc', '')[:80]}"
+                )
+    return "\n".join(lines) if lines else "  (none)"
+
+
+def _emit_reason_skill(reason_skill: Skill, gap: Gap, origin_step: Step,
+                       entry_chain_id: str) -> Step:
+    reason_step = Step.create(
+        desc=f"reason activated: {gap.desc}",
+        step_refs=[origin_step.hash],
+        content_refs=[reason_skill.hash] + gap.content_refs,
+        chain_id=entry_chain_id,
+    )
+    for st_step in reason_skill.steps:
+        child_gap = Gap.create(
+            desc=st_step.desc,
+            content_refs=gap.content_refs,
+        )
+        child_gap.scores = Epistemic(
+            relevance=st_step.__dict__.get("relevance", 0.8),
+            confidence=0.8,
+            grounded=0.0,
+        )
+        child_gap.vocab = st_step.vocab
+        child_gap.turn_id = _turn_counter
+        reason_step.gaps.append(child_gap)
+    return reason_step
+
+
+def _activate_chain_reference(chain_ref: str, activation: str, gap: Gap,
+                              origin_step: Step, entry_chain_id: str,
+                              registry: SkillRegistry, compiler: Compiler,
+                              trajectory: Trajectory) -> Step | None:
+    if activation == "background":
+        compiler.record_background_trigger(entry_chain_id, refs=[chain_ref])
+        return Step.create(
+            desc=f"scheduled background chain:{chain_ref} for {gap.desc}",
+            step_refs=[origin_step.hash],
+            content_refs=[chain_ref] + gap.content_refs,
+            chain_id=entry_chain_id,
+        )
+
+    skill = registry.resolve(chain_ref)
+    if skill:
+        return _activate_skill_package(skill, chain_ref, gap, origin_step, entry_chain_id)
+
+    package = _load_chain_package(chain_ref, trajectory)
+    if package and package.get("version") == "stepchain.v1":
+        return _activate_stepchain_package(package, chain_ref, gap, origin_step, entry_chain_id)
+
+    return None
 
 
 # ── Tool execution ───────────────────────────────────────────────────────
@@ -667,26 +913,31 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
         for s in registry.all_skills()
     )
     dynamic_bridge = (
-        "BRIDGE (three codons):\n"
-        "  reason_needed — START CODON. Activate a reasoning chain. USE THIS when:\n"
+        "BRIDGE (four codons):\n"
+        "  reason_needed — START CODON. Stateful structural abstraction. USE THIS when:\n"
         "    - A decision requires deeper analysis than one step\n"
         "    - Long-term planning or judgment is needed\n"
-        "    - You need to traverse the trajectory tree to build understanding\n"
-        "    - A commitment needs activation (reference commitment hash + compose prompt)\n"
-        "    Renders reasoning trees, then routes: observe / refine / manifest agency.\n\n"
+        "    - You need to traverse the trajectory tree or entity space to build understanding\n"
+        "    - Executable step flow or chain structure needs to be derived or refined\n"
+        "    - A commitment needs activation, reintegration, or reorientation\n"
+        "    Reasons over semantic trees, entity space, and executable structure.\n\n"
+        "  await_needed — PAUSE CODON. Synchronization checkpoint.\n"
+        "    Use this when background work must explicitly rejoin the parent chain.\n"
+        "    Suspends the parent flow until the sub-agent or background branch is ready.\n\n"
         "  commit_needed — END CODON. Do NOT emit this directly. It is injected automatically\n"
         "    by reason.st when a commitment is manifested. It sits at lowest relevance behind\n"
         "    all commitment gaps — fires last, reintegrates the full commitment tree into\n"
         "    main context, then closes or continues the chain. Compiler laws maintained.\n\n"
-        "  reprogramme_needed — PERSIST CODON. Create or update an entity .st file. USE THIS when:\n"
+        "  reprogramme_needed — PERSIST CODON. Stateless semantic state update. USE THIS when:\n"
         "    - User corrects or clarifies a preference\n"
         "    - User mentions a new person, concept, or domain to track\n"
         "    - User says 'remember', 'update', 'track', or corrects your understanding\n"
-        "    - Any knowledge needs to be persisted beyond this conversation\n"
-        "    Persists reasoning into the .st ecosystem.\n\n"
-        "  Entity resolution has NO vocab — it's just hash_resolve_needed.\n"
-        "  When you reference an entity hash in content_refs, the kernel automatically\n"
-        "  resolves it to the .st file's data. Same mechanism as any other hash.\n\n"
+        "    - Semantic state must persist beyond the current turn or horizon\n"
+        "    Persists long-horizon internal state so the system stays informed.\n\n"
+        "  .st resolution has no dedicated entity vocab — it still enters through hash resolution.\n"
+        "  When you reference a .st hash in content_refs, the kernel resolves the step package.\n"
+        "  Entity-like packages usually manifest as semantic/context injection.\n"
+        "  Action-like packages may be activated structurally through curated workflows.\n\n"
         "  Known entities (reference by hash in content_refs):\n"
         f"{entity_list_lines}"
     )
@@ -1204,44 +1455,120 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
                     compiler.resolve_current_gap(gap.hash)
 
         elif vocab == "reason_needed":
-            # ── Bridge codon: reasoning chain activation (start codon) ──
-            # Resolve existing reasoning → assess → construct trigger → commit
-            # reason.st disperses its gaps onto the ledger — plays out depth-first
+            # ── Bridge codon: stateful structural reasoning (start codon) ──
+            # reason.st activates higher-order flow reasoning over semantic trees,
+            # entity space, and executable structure. Its steps disperse depth-first.
             print(f"  → reason (start codon)")
 
             reason_skill = registry.resolve_by_name("reason")
             if reason_skill:
-                # Inject the reason.st entity data + any existing chain context
                 session.inject(f"## Reasoning activation: {gap.desc}")
                 if resolved_data:
                     session.inject(f"## Existing context\n{resolved_data}")
                 session.inject(f"## Entity Tree\n{_render_entity_tree(registry)}")
-
-                # Create a step that carries reason.st's gaps
-                reason_step = Step.create(
-                    desc=f"reason activated: {gap.desc}",
-                    step_refs=[origin_step.hash],
-                    content_refs=[reason_skill.hash] + gap.content_refs,
-                    chain_id=entry.chain_id,
+                session.inject(
+                    "## Available chain packages (.st and .json)\n"
+                    f"{_available_chain_refs(registry)}"
                 )
-                # Disperse reason.st steps as gaps
-                for st_step in reason_skill.steps:
-                    child_gap = Gap.create(
-                        desc=st_step.desc,
-                        content_refs=gap.content_refs,
-                    )
-                    child_gap.scores = Epistemic(
-                        relevance=st_step.__dict__.get("relevance", 0.8),
-                        confidence=0.8, grounded=0.0,
-                    )
-                    child_gap.vocab = st_step.vocab
-                    child_gap.turn_id = _turn_counter
-                    reason_step.gaps.append(child_gap)
 
-                trajectory.append(reason_step)
-                compiler.emit(reason_step)
-                compiler.resolve_current_gap(gap.hash)
-                step_result = reason_step
+                raw = session.call(
+                    "Choose one manifestation for this reason_needed activation.\n"
+                    "Return JSON only.\n\n"
+                    "1. Emit the native reason codon:\n"
+                    '{"mode":"emit_reason_codon"}\n\n'
+                    "2. Submit a workflow skeleton for deterministic compilation:\n"
+                    '{"mode":"submit_skeleton","activation":"none|current_turn|background","skeleton":{...skeleton.v1...}}\n\n'
+                    "3. Activate an existing chain package by hash (.st skill hash or saved stepchain .json hash):\n"
+                    '{"mode":"activate_existing_chain","chain_ref":"hash","activation":"current_turn|background"}\n\n'
+                    "Use submit_skeleton when you are constructing a new action/workflow chain.\n"
+                    "Use activate_existing_chain when reusing an existing package.\n"
+                    "Use emit_reason_codon when you need the native reason.st toolset.\n"
+                    "If you activate background work, it will return through heartbeat reason_needed.\n"
+                    "If you submit a skeleton, it must be valid skeleton.v1."
+                )
+                intent = _extract_json(raw) or {"mode": "emit_reason_codon"}
+                mode = intent.get("mode", "emit_reason_codon")
+
+                if mode == "submit_skeleton":
+                    skeleton = intent.get("skeleton")
+                    if isinstance(skeleton, dict) and skeleton.get("version") == "skeleton.v1":
+                        output, code = execute_tool("tools/skeleton_compile.py", skeleton)
+                        if code == 0:
+                            compile_result = json.loads(output)
+                            stepchain = compile_result["stepchain"]
+                            package_hash = _persist_chain_package(stepchain)
+                            activation = intent.get("activation", "none")
+                            session.inject(
+                                "## Compiled chain package\n"
+                                f"{_render_chain_package(stepchain, package_hash, trajectory)}"
+                            )
+                            if activation in {"current_turn", "background"}:
+                                step_result = _activate_chain_reference(
+                                    package_hash,
+                                    activation,
+                                    gap,
+                                    origin_step,
+                                    entry.chain_id,
+                                    registry,
+                                    compiler,
+                                    trajectory,
+                                )
+                            else:
+                                step_result = Step.create(
+                                    desc=f"compiled chain package:{package_hash} for {gap.desc}",
+                                    step_refs=[origin_step.hash],
+                                    content_refs=[package_hash] + gap.content_refs,
+                                    chain_id=entry.chain_id,
+                                )
+                        else:
+                            session.inject(f"## Skeleton compile errors\n{output}")
+                            step_result = _emit_reason_skill(reason_skill, gap, origin_step, entry.chain_id)
+                            trajectory.append(step_result)
+                            compiler.emit(step_result)
+                            compiler.add_step_to_chain(step_result.hash)
+                            compiler.resolve_current_gap(gap.hash)
+                            step_result = None
+                    else:
+                        step_result = _emit_reason_skill(reason_skill, gap, origin_step, entry.chain_id)
+                        trajectory.append(step_result)
+                        compiler.emit(step_result)
+                        compiler.add_step_to_chain(step_result.hash)
+                        compiler.resolve_current_gap(gap.hash)
+                        step_result = None
+                elif mode == "activate_existing_chain":
+                    chain_ref = intent.get("chain_ref")
+                    activation = intent.get("activation", "current_turn")
+                    if isinstance(chain_ref, str):
+                        step_result = _activate_chain_reference(
+                            chain_ref,
+                            activation,
+                            gap,
+                            origin_step,
+                            entry.chain_id,
+                            registry,
+                            compiler,
+                            trajectory,
+                        )
+                    if not step_result:
+                        fallback = _emit_reason_skill(reason_skill, gap, origin_step, entry.chain_id)
+                        trajectory.append(fallback)
+                        compiler.emit(fallback)
+                        compiler.add_step_to_chain(fallback.hash)
+                        compiler.resolve_current_gap(gap.hash)
+                        step_result = None
+                else:
+                    step_result = _emit_reason_skill(reason_skill, gap, origin_step, entry.chain_id)
+                    trajectory.append(step_result)
+                    compiler.emit(step_result)
+                    compiler.add_step_to_chain(step_result.hash)
+                    compiler.resolve_current_gap(gap.hash)
+                    step_result = None
+
+                if step_result:
+                    if step_result.gaps:
+                        trajectory.append(step_result)
+                        compiler.emit(step_result)
+                    compiler.resolve_current_gap(gap.hash)
             else:
                 # No reason.st — fall through to normal reasoning
                 if resolved_data:
@@ -1312,9 +1639,9 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
                     compiler.resolve_current_gap(gap.hash)
 
         elif vocab == "reprogramme_needed":
-            # ── Bridge primitive: create/update entity .st via st_builder ──
-            # The LLM needs to reprogramme its knowledge about an entity.
-            # Route to st_builder to create or update the .st file.
+            # ── Bridge codon: stateless semantic state update ──
+            # The LLM needs to persist or recalibrate long-horizon semantic state.
+            # Current implementation routes this through st_builder.
             print(f"  → reprogramme ({vocab})")
 
             # Resolve any existing entity data for context
@@ -1366,51 +1693,34 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
                 f"{entity_list}\n\n"
                 "## Available /command workflows\n"
                 f"{cmd_list}\n\n"
-                "## Compose a JSON .st file\n\n"
-                "A .st file is a manifestation blueprint. It encodes what an entity IS and what it DOES.\n\n"
-                "### Two modes of .st resolution\n"
-                "When the kernel resolves a .st hash, the mode depends on what's in the file:\n\n"
-                "1. CONTEXT INJECTION (internal &) — pure entity, no steps or only identity/preferences.\n"
-                "   The .st data is injected into the LLM's context. No gaps enter the ledger.\n"
-                "   The LLM reads it and reasons from it. One blob step, no branching.\n"
-                "   Use for: people, concepts, domain knowledge, preferences, compliance rules.\n"
-                "   Example: admin.st — identity + preferences, loaded every turn.\n\n"
-                "2. GAP LEDGER MUTATION (internal &mut) — has workflow steps.\n"
-                "   Each step becomes a gap on the ledger. The compiler sequences them.\n"
-                "   The chain plays out depth-first with OMO rhythm.\n"
-                "   Use for: research pipelines, edit workflows, debug loops, task automation.\n"
-                "   Example: research.st — 5 steps that disperse as gaps.\n\n"
-                "The distinction is structural: if steps[] is empty or absent, it's context injection.\n"
-                "If steps[] has entries, it's gap mutation. The kernel handles both automatically.\n\n"
-                "### Manifestation fields (what the entity IS)\n"
-                "Include only fields relevant to this entity type:\n"
+                "## Compose semantic state for a .st package\n\n"
+                "Treat .st as step manifestation, not as plain file content.\n"
+                "Your job here is to persist semantic state that keeps the system informed over time.\n\n"
+                "### Structural distinction\n"
+                "- entity.st: manifests primarily as semantic/context injection.\n"
+                "- action.st: manifests primarily as executable step flow.\n"
+                "- hybrid .st: can carry both semantic context and executable flow.\n"
+                "In this branch, prefer entity or semantic-state updates unless the user explicitly asked\n"
+                "to change an existing executable package.\n\n"
+                "### What reprogramme is for\n"
+                "Use this branch to persist:\n"
+                "- people, identities, preferences, communication style\n"
+                "- concepts, domains, constraints, sources, scope\n"
+                "- long-horizon tracked entities and background concerns\n"
+                "- corrections to the system's internal model\n\n"
+                "### Manifestation fields\n"
+                "Include only fields relevant to the semantic state being persisted:\n"
                 "- People: identity + preferences\n"
                 "- Domain/compliance: constraints + sources + scope\n"
-                "- Workflows: steps with actions\n"
-                "- Concepts: refs linking to related entity hashes\n\n"
-                "### Steps (what the entity DOES when resolved)\n"
-                "Each step is a gap that enters the compiler's ledger. Steps are the primitive.\n\n"
-                "COMPOSE FROM EXISTING WORKFLOWS FIRST. Before writing new steps:\n"
-                "1. Check the known entities and /commands above\n"
-                "2. If an existing .st already does what a step needs, reference it by vocab\n"
-                "3. The existing workflow's gaps will disperse onto the ledger — you get its full chain for free\n"
-                "4. Only write new steps for logic that no existing workflow covers\n"
-                "Example: a video review workflow might reference research.st for sourcing, "
-                "hash_edit.st for edits, and admin.st for preferences — all composed, not rebuilt.\n\n"
-                "- vocab: triggers a tool or another .st file. Use existing vocab:\n"
-                "  OBSERVE: hash_resolve_needed, pattern_needed, email_needed, external_context, clarify_needed\n"
-                "  MUTATE: hash_edit_needed, stitch_needed, content_needed, command_needed, message_needed\n"
-                "  BRIDGE: reprogramme_needed\n"
-                "  Or reference another .st entity — its gaps will disperse onto the ledger.\n\n"
-                "- relevance (0.0-1.0): controls execution order within same priority bracket.\n"
-                "  Highest relevance fires first. Use descending relevance to sequence steps:\n"
-                "  first step = 1.0, second = 0.9, third = 0.8, etc.\n\n"
-                "- post_diff (true/false): controls fluidity.\n"
-                "  false = deterministic. Execute and move on. No reasoning, no branching.\n"
-                "    Use for: pure data injection, hash resolution, deterministic execution.\n"
-                "  true = flexible. LLM reasons after execution. May surface child gaps. Chain may branch.\n"
-                "    Use for: composition, diagnosis, review, verification — anything that might need iteration.\n"
-                "  Rule: if the step might fail or reveal something unexpected, use true.\n\n"
+                "- Concepts: refs linking to related entity hashes\n"
+                "- Hybrid state: semantic fields plus steps only if the executable aspect is intrinsic\n\n"
+                "### Composition rule\n"
+                "Compose from existing entities and workflows first. Reuse known hashes where possible.\n"
+                "Only create new steps when the semantic package genuinely needs executable structure.\n\n"
+                "### Runtime note\n"
+                "Entity-like packages usually manifest as semantic injection when resolved.\n"
+                "Action-like packages belong to the structural workflow side of the system.\n"
+                "Current persistence path still writes JSON .st files through st_builder.\n\n"
                 "### Entity references\n"
                 "Reference other entities by hash, not name.\n"
                 "Use refs to map names to hashes: {\"admin\": \"72b1d5ffc964\"}\n\n"
@@ -1419,7 +1729,7 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
                 "- on_contact:X: fires when user X messages\n"
                 "- command:X: hidden from LLM, triggered via /X command only\n\n"
                 "```json\n"
-                '{"name": "entity_name", "desc": "what this entity is",\n'
+                '{"name": "entity_name", "desc": "what this semantic package is",\n'
                 ' "trigger": "manual | on_contact:X | command:X",\n'
                 ' "refs": {"entity_name": "entity_hash"},\n'
                 ' "steps": [\n'
@@ -1430,8 +1740,8 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
                 ' ],\n'
                 ' "identity": {}, "preferences": {}, "constraints": {}, "sources": [], "scope": ""}\n'
                 "```\n"
-                "Only include fields relevant to this entity type. Omit empty fields.\n"
-                "If updating an existing entity, include only the fields that changed."
+                "Only include fields relevant to this semantic package. Omit empty fields.\n"
+                "If updating an existing entity or semantic package, include only the fields that changed."
             )
             print(f"  LLM compose: {raw[:150]}...")
 
@@ -1550,10 +1860,11 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
 
     if compiler.needs_heartbeat():
         print("\n── HEARTBEAT: persisting reason_needed for background sub-agent ──")
+        heartbeat_refs = compiler.background_refs()
         heartbeat_gap = Gap.create(
             desc="heartbeat: background sub-agent in progress — inspect results, close or revisit",
             step_refs=[origin_step.hash],
-            content_refs=[],
+            content_refs=heartbeat_refs,
         )
         heartbeat_gap.scores = Epistemic(relevance=0.9, confidence=0.8, grounded=0.0)
         heartbeat_gap.vocab = "reason_needed"

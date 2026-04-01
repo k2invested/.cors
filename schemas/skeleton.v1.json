@@ -155,6 +155,126 @@
         "codon"
       ]
     },
+    "spawnMode": {
+      "enum": [
+        "none",
+        "context",
+        "action",
+        "mixed",
+        "embed"
+      ]
+    },
+    "spawnTrigger": {
+      "enum": [
+        "none",
+        "on_manifest",
+        "on_post_diff",
+        "conditional"
+      ]
+    },
+    "branchPolicy": {
+      "enum": [
+        "depth_first_to_parent",
+        "depth_first_to_root"
+      ]
+    },
+    "siblingPolicy": {
+      "enum": [
+        "after_descendants"
+      ]
+    },
+    "returnPolicy": {
+      "enum": [
+        "resume_parent",
+        "resume_transition",
+        "terminal"
+      ]
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "spawn_mode",
+        "spawn_trigger",
+        "branch_policy",
+        "sibling_policy",
+        "return_policy"
+      ],
+      "properties": {
+        "spawn_mode": {
+          "$ref": "#/$defs/spawnMode"
+        },
+        "spawn_trigger": {
+          "$ref": "#/$defs/spawnTrigger"
+        },
+        "branch_policy": {
+          "$ref": "#/$defs/branchPolicy"
+        },
+        "sibling_policy": {
+          "$ref": "#/$defs/siblingPolicy"
+        },
+        "return_policy": {
+          "$ref": "#/$defs/returnPolicy"
+        },
+        "max_generation_depth": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "spawn_mode": {
+                "const": "none"
+              }
+            },
+            "required": [
+              "spawn_mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "spawn_trigger": {
+                "const": "none"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "spawn_mode": {
+                "enum": [
+                  "context",
+                  "action",
+                  "mixed",
+                  "embed"
+                ]
+              }
+            },
+            "required": [
+              "spawn_mode"
+            ]
+          },
+          "then": {
+            "properties": {
+              "spawn_trigger": {
+                "enum": [
+                  "on_manifest",
+                  "on_post_diff",
+                  "conditional"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
     "manifestation": {
       "type": "object",
       "additionalProperties": false,
@@ -344,6 +464,9 @@
         "manifestation": {
           "$ref": "#/$defs/manifestation"
         },
+        "generation": {
+          "$ref": "#/$defs/generation"
+        },
         "allowed_vocab": {
           "type": "array",
           "minItems": 1,
@@ -418,6 +541,7 @@
           "required": [
             "gap_template",
             "manifestation",
+            "generation",
             "allowed_vocab",
             "post_diff",
             "transitions"
@@ -457,6 +581,7 @@
           "required": [
             "gap_template",
             "manifestation",
+            "generation",
             "allowed_vocab",
             "post_diff",
             "transitions"
@@ -493,6 +618,7 @@
           "required": [
             "gap_template",
             "manifestation",
+            "generation",
             "allowed_vocab",
             "post_diff",
             "transitions"
@@ -529,6 +655,7 @@
           "required": [
             "gap_template",
             "manifestation",
+            "generation",
             "allowed_vocab",
             "post_diff",
             "transitions"
@@ -558,6 +685,7 @@
           "required": [
             "gap_template",
             "manifestation",
+            "generation",
             "allowed_vocab",
             "post_diff",
             "transitions"
@@ -590,6 +718,7 @@
           "required": [
             "gap_template",
             "manifestation",
+            "generation",
             "allowed_vocab",
             "post_diff",
             "terminal"
@@ -623,6 +752,7 @@
           "required": [
             "gap_template",
             "manifestation",
+            "generation",
             "allowed_vocab",
             "post_diff",
             "transitions"
@@ -644,6 +774,7 @@
           "required": [
             "gap_template",
             "manifestation",
+            "generation",
             "allowed_vocab",
             "post_diff",
             "transitions",

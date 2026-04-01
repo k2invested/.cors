@@ -65,6 +65,31 @@ def validate_skeleton_contract(doc: dict) -> list[str]:
             if manifestation.get("kernel_class") == "clarify" and manifestation.get("runtime_vocab") not in (None, "clarify_needed"):
                 errors.append(f"phase {pid} clarify manifestation must use clarify_needed")
 
+        generation = phase.get("generation")
+        if generation is None and kind != "terminal":
+            errors.append(f"phase {pid} missing generation")
+        elif generation is not None:
+            required_generation = {
+                "spawn_mode",
+                "spawn_trigger",
+                "branch_policy",
+                "sibling_policy",
+                "return_policy",
+            }
+            missing_generation = required_generation - set(generation)
+            if missing_generation:
+                errors.append(
+                    f"phase {pid} generation missing fields: {sorted(missing_generation)}"
+                )
+            spawn_mode = generation.get("spawn_mode")
+            spawn_trigger = generation.get("spawn_trigger")
+            if spawn_mode == "none" and spawn_trigger not in (None, "none"):
+                errors.append(f"phase {pid} generation with spawn_mode=none must use spawn_trigger=none")
+            if spawn_mode in {"context", "action", "mixed", "embed"} and spawn_trigger == "none":
+                errors.append(f"phase {pid} generation with offspring must declare a spawn trigger")
+            if spawn_trigger in {"on_post_diff", "conditional"} and not phase.get("post_diff", False):
+                errors.append(f"phase {pid} uses {spawn_trigger} offspring but post_diff is false")
+
         if "allowed_vocab" not in phase:
             errors.append(f"phase {pid} missing allowed_vocab")
         if "post_diff" not in phase:
@@ -137,8 +162,18 @@ def test_skeleton_schema_has_phase_variants():
     ]
     manifestation = schema["$defs"]["manifestation"]
     assert manifestation["required"] == ["kernel_class", "dispersal", "execution_mode"]
+    generation = schema["$defs"]["generation"]
+    assert generation["required"] == [
+        "spawn_mode",
+        "spawn_trigger",
+        "branch_policy",
+        "sibling_policy",
+        "return_policy",
+    ]
     assert schema["$defs"]["executionMode"]["enum"] == ["runtime_vocab", "curated_step_hash", "inline"]
     assert schema["$defs"]["dispersalMode"]["enum"] == ["context", "action", "mixed", "embed"]
+    assert schema["$defs"]["spawnMode"]["enum"] == ["none", "context", "action", "mixed", "embed"]
+    assert schema["$defs"]["spawnTrigger"]["enum"] == ["none", "on_manifest", "on_post_diff", "conditional"]
 
 
 def test_skeleton_schema_restricts_vocab_to_runtime_surface():
@@ -181,6 +216,13 @@ def test_skeleton_schema_valid_example_contract():
                     "runtime_vocab": "hash_resolve_needed",
                     "protected_kind": "generic"
                 },
+                "generation": {
+                    "spawn_mode": "none",
+                    "spawn_trigger": "none",
+                    "branch_policy": "depth_first_to_parent",
+                    "sibling_policy": "after_descendants",
+                    "return_policy": "resume_transition"
+                },
                 "allowed_vocab": ["hash_resolve_needed", "pattern_needed"],
                 "post_diff": False,
                 "resolve": ["target", "context"],
@@ -204,6 +246,14 @@ def test_skeleton_schema_valid_example_contract():
                     "execution_mode": "runtime_vocab",
                     "runtime_vocab": "reason_needed",
                     "await_policy": "none"
+                },
+                "generation": {
+                    "spawn_mode": "mixed",
+                    "spawn_trigger": "conditional",
+                    "branch_policy": "depth_first_to_parent",
+                    "sibling_policy": "after_descendants",
+                    "return_policy": "resume_transition",
+                    "max_generation_depth": 4
                 },
                 "allowed_vocab": ["reason_needed", "hash_edit_needed", "clarify_needed"],
                 "post_diff": True,
@@ -232,6 +282,13 @@ def test_skeleton_schema_valid_example_contract():
                     "protected_kind": "action",
                     "emits_commit": True
                 },
+                "generation": {
+                    "spawn_mode": "action",
+                    "spawn_trigger": "on_post_diff",
+                    "branch_policy": "depth_first_to_parent",
+                    "sibling_policy": "after_descendants",
+                    "return_policy": "resume_transition"
+                },
                 "allowed_vocab": ["hash_edit_needed"],
                 "post_diff": True,
                 "requires_postcondition": True,
@@ -255,6 +312,13 @@ def test_skeleton_schema_valid_example_contract():
                     "execution_mode": "runtime_vocab",
                     "runtime_vocab": "hash_resolve_needed"
                 },
+                "generation": {
+                    "spawn_mode": "mixed",
+                    "spawn_trigger": "on_post_diff",
+                    "branch_policy": "depth_first_to_root",
+                    "sibling_policy": "after_descendants",
+                    "return_policy": "resume_transition"
+                },
                 "allowed_vocab": ["hash_resolve_needed", "reason_needed"],
                 "post_diff": True,
                 "transitions": {
@@ -277,6 +341,13 @@ def test_skeleton_schema_valid_example_contract():
                     "dispersal": "context",
                     "execution_mode": "runtime_vocab",
                     "runtime_vocab": "clarify_needed"
+                },
+                "generation": {
+                    "spawn_mode": "none",
+                    "spawn_trigger": "none",
+                    "branch_policy": "depth_first_to_parent",
+                    "sibling_policy": "after_descendants",
+                    "return_policy": "terminal"
                 },
                 "allowed_vocab": ["clarify_needed"],
                 "post_diff": False,
@@ -328,6 +399,13 @@ def test_skeleton_schema_invalid_example_contract():
                     "dispersal": "mixed",
                     "execution_mode": "curated_step_hash"
                 },
+                "generation": {
+                    "spawn_mode": "none",
+                    "spawn_trigger": "none",
+                    "branch_policy": "depth_first_to_parent",
+                    "sibling_policy": "after_descendants",
+                    "return_policy": "resume_transition"
+                },
                 "allowed_vocab": ["reason_needed"]
             },
             {
@@ -357,7 +435,74 @@ def test_skeleton_schema_invalid_example_contract():
 
     assert "root must reference an existing phase id" in errors
     assert "phase phase_reason curated_step_hash manifestation requires activation_ref" in errors
+    assert "phase phase_reason missing post_diff" in errors
     assert "phase phase_reason missing transitions" in errors
     assert "phase phase_reason missing gap_template" in errors
     assert "terminal phase phase_done must set terminal=true" in errors
     assert "closure.success.requires_terminal must reference a terminal phase" in errors
+
+
+def test_skeleton_schema_rejects_post_diff_offspring_mismatch():
+    doc = {
+        "version": "skeleton.v1",
+        "name": "broken_generation",
+        "desc": "bad re-entry",
+        "trigger": "manual",
+        "refs": {},
+        "root": "phase_observe",
+        "phases": [
+            {
+                "id": "phase_observe",
+                "kind": "observe",
+                "goal": "resolve",
+                "action": "resolve",
+                "gap_template": {
+                    "desc": "resolve",
+                    "content_refs": [],
+                    "step_refs": []
+                },
+                "manifestation": {
+                    "kernel_class": "observe",
+                    "dispersal": "context",
+                    "execution_mode": "runtime_vocab",
+                    "runtime_vocab": "hash_resolve_needed"
+                },
+                "generation": {
+                    "spawn_mode": "context",
+                    "spawn_trigger": "on_post_diff",
+                    "branch_policy": "depth_first_to_parent",
+                    "sibling_policy": "after_descendants",
+                    "return_policy": "resume_transition"
+                },
+                "allowed_vocab": ["hash_resolve_needed"],
+                "post_diff": False,
+                "transitions": {
+                    "on_done": "phase_done"
+                }
+            },
+            {
+                "id": "phase_done",
+                "kind": "terminal",
+                "goal": "done",
+                "action": "close_loop",
+                "terminal": True
+            }
+        ],
+        "closure": {
+            "success": {
+                "requires_terminal": "phase_done",
+                "requires_no_active_gaps": True
+            },
+            "failure": {
+                "allow_force_close": True,
+                "allow_clarify_terminal": True
+            },
+            "limits": {
+                "max_chain_depth": 5,
+                "max_redirects": 2
+            }
+        }
+    }
+
+    errors = validate_skeleton_contract(doc)
+    assert any("uses on_post_diff offspring but post_diff is false" in error for error in errors)
