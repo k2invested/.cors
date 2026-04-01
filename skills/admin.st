@@ -1,13 +1,12 @@
 {
   "name": "admin",
-  "desc": "Kenny — system architect, step kernel builder, primary admin user",
+  "desc": "Kenny \u2014 system architect, step kernel builder, primary admin user. Communication style and energy are mirrored, not just words.",
   "trigger": "on_contact:admin",
+  "author": "agent",
   "refs": {
-    "identity": null,
-    "principles": null,
-    "recent_chains": null,
-    "commitments": null
+    "identity": "kenny:72b1d5ffc964"
   },
+  "steps": [],
   "identity": {
     "name": "Kenny",
     "role": "architect",
@@ -19,6 +18,8 @@
     "communication": {
       "style": "direct, concise, no filler",
       "mirror_then_extend": true,
+      "mirror_communication_style": true,
+      "match_energy": true,
       "no_trailing_summaries": true,
       "plain_text_only": true,
       "mobile_first": true
@@ -37,31 +38,5 @@
       "values_deterministic_control": true,
       "prefers_single_bundled_pr": true
     }
-  },
-  "steps": [
-    {
-      "action": "load_identity",
-      "desc": "surface who Kenny is, how he thinks, how he works",
-      "resolve": ["identity"],
-      "post_diff": false
-    },
-    {
-      "action": "load_principles",
-      "desc": "surface system principles Kenny defined — step primitive, OMO, hash layers",
-      "resolve": ["principles"],
-      "post_diff": false
-    },
-    {
-      "action": "load_recent",
-      "desc": "surface recent reasoning chains from prior interactions",
-      "resolve": ["recent_chains"],
-      "post_diff": false
-    },
-    {
-      "action": "load_commitments",
-      "desc": "surface active commitments and tracked work",
-      "resolve": ["commitments"],
-      "post_diff": false
-    }
-  ]
+  }
 }
