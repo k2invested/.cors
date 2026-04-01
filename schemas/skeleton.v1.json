@@ -379,9 +379,9 @@
       "enum": [
         "hash_resolve_needed",
         "pattern_needed",
-        "email_needed",
+        "mailbox_needed",
         "external_context",
-        "clarify_needed"
+        "research_needed"
       ]
     },
     "mutateVocab": {
@@ -391,7 +391,7 @@
         "content_needed",
         "script_edit_needed",
         "command_needed",
-        "message_needed",
+        "email_needed",
         "json_patch_needed",
         "git_revert_needed"
       ]
@@ -401,28 +401,30 @@
         "reason_needed",
         "await_needed",
         "commit_needed",
-        "reprogramme_needed"
+        "reprogramme_needed",
+        "clarify_needed"
       ]
     },
     "anyRuntimeVocab": {
       "enum": [
         "hash_resolve_needed",
         "pattern_needed",
-        "email_needed",
+        "mailbox_needed",
         "external_context",
-        "clarify_needed",
+        "research_needed",
         "hash_edit_needed",
         "stitch_needed",
         "content_needed",
         "script_edit_needed",
         "command_needed",
-        "message_needed",
+        "email_needed",
         "json_patch_needed",
         "git_revert_needed",
         "reason_needed",
         "await_needed",
         "commit_needed",
-        "reprogramme_needed"
+        "reprogramme_needed",
+        "clarify_needed"
       ]
     },
     "phaseBase": {

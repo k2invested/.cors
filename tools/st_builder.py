@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from compile import OBSERVE_VOCAB, MUTATE_VOCAB, BRIDGE_VOCAB
+from vocab import OBSERVE_VOCAB, MUTATE_VOCAB, BRIDGE_VOCAB
 from skills.loader import compute_skill_hash
 
 SKILLS_DIR = str(ROOT / "skills")

@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from compile import OBSERVE_VOCAB, MUTATE_VOCAB, BRIDGE_VOCAB
+from vocab import OBSERVE_VOCAB, MUTATE_VOCAB, BRIDGE_VOCAB
 from skills.loader import load_skill, load_all
 from tools.skeleton_compile import compile_skeleton
 from tools.semantic_skeleton_compile import compile_semantic_skeleton

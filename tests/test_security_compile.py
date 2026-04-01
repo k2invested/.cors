@@ -125,7 +125,7 @@ def test_security_compile_accepts_simple_gap():
 
 
 def test_security_compile_rejects_invalid_gap_vocab():
-    result = security_compile_module.security_compile(gap_doc(vocab="research_needed"))
+    result = security_compile_module.security_compile(gap_doc(vocab="url_needed"))
     assert result["result"]["status"] == "rejected"
     codes = {item["code"] for item in result["result"]["violations"]}
     assert "invalid_runtime_vocab" in codes

@@ -223,9 +223,9 @@ The kernel resolves data. The LLM receives it. No mutation. These are the system
 |-------|--------------|-----------|
 | `hash_resolve_needed` | Kernel resolves hash → step/gap/skill/.st/git blob. If hash is a .st entity, full entity data injected. | Deterministic — blob step, no branching |
 | `pattern_needed` | Kernel runs file_grep → results injected | LLM reasons over results, may branch |
-| `email_needed` | Kernel checks email → results injected | LLM reasons over results, may branch |
+| `mailbox_needed` | Kernel checks mailbox state → results injected | LLM reasons over results, may branch |
 | `external_context` | LLM surfaces from current context — no tool | Blob step, no branching |
-| `clarify_needed` | Halts iteration. Gap desc becomes the question. Persists on trajectory for resume next turn. | No post-diff — the turn ends |
+| `research_needed` | Activates the controlled research workflow from a domain/entity/hash seed | Workflow-defined review, verification, and follow-up |
 
 ### Tier 2: Mutate (external &mut, priority 40)
 
@@ -238,7 +238,7 @@ The LLM composes. The kernel executes. Auto-commit. Postcondition fires. These a
 | `content_needed` | file_write.py — write new file | LLM composes content | Commit tree |
 | `script_edit_needed` | file_edit.py — edit existing file | LLM composes shell command | Commit tree |
 | `command_needed` | code_exec.py — execute shell command. Output blob-hashed into git. | LLM composes command | `logs/` (output blob) |
-| `message_needed` | email_send.py — send email/message | LLM composes message | Commit tree |
+| `email_needed` | email_send.py — send email/message | LLM composes message | mailbox |
 | `json_patch_needed` | json_patch.py — surgical JSON mutation | LLM composes patch | Commit tree |
 | `git_revert_needed` | git_ops.py — revert/checkout | LLM composes git command | Commit tree |
 
@@ -254,8 +254,9 @@ Four codons govern the reasoning lifecycle. The biological analogy is precise: a
 | `await_needed` | **PAUSE** | 95 | Synchronization checkpoint. Suspends parent chain until referenced sub-agent completes. Renders sub-agent's full semantic tree → parent inspects → accept/correct/reactivate. If turn ends before sub-agent finishes, persists as dangling gap — heartbeat picks up next turn. |
 | `commit_needed` | **END** | 98 | Reintegration. Renders full commitment tree into main context. Closes or continues chain. NOT directly classifiable — injected by reason.st at lowest relevance behind commitment gaps. |
 | `reprogramme_needed` | **PERSIST** | 99 | Stateless semantic state update. World-building and long-horizon calibration. Persists entity and semantic-state changes so the system stays informed across turns and time horizons. |
+| `clarify_needed` | **CROSS-TURN** | 15 | Forced user-boundary bridge. Halts iteration, turns the gap desc into the clarification question, persists unresolved state across turns, and resumes when the user replies. |
 
-**Codon priority ordering:** reason (90) → await (95) → commit (98) → reprogramme (99). Within the bridge tier, planning fires first, checkpoints fire after inline work, reintegration fires after commitment gaps resolve, and persistence fires last.
+**Codon priority ordering:** clarify (15) surfaces before ordinary observation because it blocks lawful progress. Then reason (90) → await (95) → commit (98) → reprogramme (99). Within the bridge tier, planning fires first, checkpoints fire after inline work, reintegration fires after commitment gaps resolve, and persistence fires last.
 
 Mid-turn commitment activation follows the compiler laws exactly: reason_needed fires → commitment gaps disperse onto ledger → commit_needed sits at bottom → commitment resolves depth-first → commit reintegrates → main chain resumes. The compiler doesn't know it's processing a commitment. It just sees gaps at various depths. Same laws, same stack.
 
@@ -295,14 +296,15 @@ Every `auto_commit()` injects a `hash_resolve_needed` gap targeting the commit. 
 
 ```
 compile.py
-├─ OBSERVE_VOCAB = {pattern_needed, hash_resolve_needed, email_needed, external_context, clarify_needed}
-├─ MUTATE_VOCAB  = {hash_edit_needed, stitch_needed, content_needed, script_edit_needed, command_needed, message_needed, json_patch_needed, git_revert_needed}
-├─ BRIDGE_VOCAB  = {reason_needed, commit_needed, reprogramme_needed, await_needed}
+├─ OBSERVE_VOCAB = {pattern_needed, hash_resolve_needed, mailbox_needed, external_context, research_needed}
+├─ MUTATE_VOCAB  = {hash_edit_needed, stitch_needed, content_needed, script_edit_needed, command_needed, email_needed, json_patch_needed, git_revert_needed}
+├─ BRIDGE_VOCAB  = {reason_needed, commit_needed, reprogramme_needed, await_needed, clarify_needed}
 ├─ is_observe(vocab) → vocab in OBSERVE_VOCAB
 ├─ is_mutate(vocab)  → vocab in MUTATE_VOCAB
 ├─ is_bridge(vocab)  → vocab in BRIDGE_VOCAB
 └─ vocab_priority(vocab)
-    ├─ observe → 20 (fires first)
+    ├─ clarify_needed → 15 (forced clarification boundary)
+    ├─ observe → 20
     ├─ mutate  → 40
     ├─ unknown → 50
     ├─ reason_needed → 90 (planning/reorientation)
@@ -315,6 +317,8 @@ loop.py
 │   ├─ vocab → {tool: path, post_observe: target}
 │   ├─ hash_resolve_needed → {tool: None} (kernel resolves directly)
 │   ├─ pattern_needed → {tool: "tools/file_grep.py"}
+│   ├─ mailbox_needed → {tool: "tools/email_check.py"}
+│   ├─ research_needed → {tool: "tools/research_web.py"}
 │   ├─ hash_edit_needed → {tool: "tools/hash_manifest.py"}
 │   ├─ stitch_needed → {tool: "tools/stitch_generate.py", post_observe: "ui_output/"}
 │   └─ ... (full map in loop.py TOOL_MAP constant)

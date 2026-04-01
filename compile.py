@@ -33,6 +33,7 @@ import math
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from step import Gap, Step, Chain, Epistemic, Trajectory
+from vocab import OBSERVE_VOCAB, MUTATE_VOCAB, BRIDGE_VOCAB, is_observe, is_mutate, is_bridge
 
 
 # ── Configuration ─────────────────────────────────────────────────────────
@@ -50,35 +51,8 @@ CHAIN_EXTRACT_LENGTH = 8        # chains longer than this get extracted to file
 
 # ── Vocab ─────────────────────────────────────────────────────────────────
 
-OBSERVE_VOCAB = {
-    "pattern_needed", "hash_resolve_needed",
-    "email_needed", "external_context",
-    "clarify_needed",
-}
-
-MUTATE_VOCAB = {
-    "hash_edit_needed", "stitch_needed",
-    "content_needed", "script_edit_needed", "command_needed",
-    "message_needed", "json_patch_needed", "git_revert_needed",
-}
-
-BRIDGE_VOCAB: set[str] = {"reprogramme_needed", "reason_needed", "commit_needed", "await_needed"}  # the four bridge codons
-
-# Entity resolution (internal &) has no vocab — it's just hash_resolve_needed
-# where the hash happens to be a .st file. The kernel checks the skill registry
-# during hash resolution and renders entity data if found.
-
-
-def is_observe(vocab: str) -> bool:
-    return vocab in OBSERVE_VOCAB
-
-
-def is_mutate(vocab: str) -> bool:
-    return vocab in MUTATE_VOCAB
-
-
-def is_bridge(vocab: str) -> bool:
-    return vocab in BRIDGE_VOCAB
+# Entity resolution (internal &) has no dedicated entity vocab — it still
+# flows through hash_resolve_needed where the hash happens to be a .st file.
 
 
 def vocab_priority(vocab: str | None) -> int:
@@ -100,6 +74,8 @@ def vocab_priority(vocab: str | None) -> int:
         return 99  # lowest priority — runs last, sits at bottom of stack
     if vocab == "commit_needed":
         return 98  # just above reprogramme — fires after all commitment gaps
+    if vocab == "clarify_needed":
+        return 15  # forced clarification should surface before ordinary observation
     if vocab == "await_needed":
         return 95  # checkpoint — fires after inline work, before commit/reprogramme
     if vocab == "reason_needed":
@@ -335,6 +311,9 @@ class Compiler:
         self.active_chain: Chain | None = None
         self.last_was_mutation: bool = False  # OMO tracking
         self.current_turn: int = current_turn  # for cross-turn threshold
+        self._background_triggers: set[str] = set()
+        self._awaited_chains: set[str] = set()
+        self._background_trigger_refs: dict[str, set[str]] = {}
 
     # ── 1. Emission → Admission → Placement ──
 
@@ -498,9 +477,16 @@ class Compiler:
             return self.next()  # recurse to get next entry
 
         if signal == GovernorSignal.REDIRECT:
-            # Skip this chain, try next origin gap
-            self.skip_chain(entry.chain_id)
-            return self.next()
+            # Skip this chain only if another chain can actually surface.
+            has_alternative = any(
+                other.chain_id != entry.chain_id for other in self.ledger.stack
+            )
+            if has_alternative:
+                self.skip_chain(entry.chain_id)
+                return self.next()
+            # No alternative chain exists, so fall back to the current entry
+            # instead of recursing forever on an unchanged stack.
+            signal = GovernorSignal.ALLOW
 
         # Pop and return
         popped = self.ledger.pop()
@@ -586,32 +572,20 @@ class Compiler:
         for chain_id, state in self.ledger.chain_states.items():
             if state == ChainState.CLOSED:
                 continue
-            # Check if chain had a reprogramme trigger but no await
-            has_reprogramme = False
-            has_await = False
-            for entry in self.ledger.history:
-                # Check resolved history for this chain
-                pass  # simplified — tracked via background_triggers
             if chain_id in self._background_triggers and chain_id not in self._awaited_chains:
                 return True
         return False
 
     def record_background_trigger(self, chain_id: str, refs: list[str] | None = None):
         """Record that a chain triggered a background workflow."""
-        if not hasattr(self, '_background_triggers'):
-            self._background_triggers = set()
         self._background_triggers.add(chain_id)
         if refs:
-            if not hasattr(self, '_background_trigger_refs'):
-                self._background_trigger_refs = {}
             stored = self._background_trigger_refs.setdefault(chain_id, set())
             for ref in refs:
                 stored.add(ref)
 
     def record_await(self, chain_id: str):
         """Record that a chain set an await checkpoint."""
-        if not hasattr(self, '_awaited_chains'):
-            self._awaited_chains = set()
         self._awaited_chains.add(chain_id)
 
     def needs_heartbeat(self) -> bool:
@@ -624,20 +598,12 @@ class Compiler:
 
         Law 9: the loop always closes.
         """
-        if not hasattr(self, '_background_triggers'):
-            return False
-        if not hasattr(self, '_awaited_chains'):
-            self._awaited_chains = set()
         unresolved = self._background_triggers - self._awaited_chains
         return len(unresolved) > 0
 
     def background_refs(self) -> list[str]:
         """Refs associated with unresolved background triggers."""
-        if not hasattr(self, '_background_triggers'):
-            return []
-        if not hasattr(self, '_awaited_chains'):
-            self._awaited_chains = set()
-        if not hasattr(self, '_background_trigger_refs'):
+        if not self._background_trigger_refs:
             return []
 
         refs: list[str] = []

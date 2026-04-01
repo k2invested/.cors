@@ -182,8 +182,9 @@ def test_skeleton_schema_restricts_vocab_to_runtime_surface():
     assert "hash_resolve_needed" in allowed
     assert "reason_needed" in allowed
     assert "hash_edit_needed" in allowed
+    assert "mailbox_needed" in allowed
+    assert "research_needed" in allowed
     assert "scan_needed" not in allowed
-    assert "research_needed" not in allowed
     assert "url_needed" not in allowed
 
 

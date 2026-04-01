@@ -181,7 +181,7 @@ def execute_iteration(
             print("  → OMO violation: need observation first")
             if resolved_data:
                 session.inject(f"## Context for gap:{gap.hash}\n{resolved_data}")
-            compiler.record_execution("scan_needed", False)
+            compiler.record_execution("hash_resolve_needed", False)
 
         if resolved_data:
             session.inject(f"## Resolved context for mutation\n{resolved_data}")

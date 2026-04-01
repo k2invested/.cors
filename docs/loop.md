@@ -181,6 +181,4 @@ This means loop closure is not only “all current gaps resolved.” The system 
 
 Some of the prompt language still reaches slightly beyond what the runtime strictly supports.
 
-There is also residual legacy vocab drift. The OMO violation path still records `"scan_needed"` even though `scan_needed` is not part of the live compiler vocab algebra.
-
 So [loop.py](/Users/k2invested/Desktop/cors/loop.py) is the best place to understand how one turn is assembled, while [execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py) is the best place to understand how one admitted gap is actually executed. The main remaining drift is not loader lossiness anymore; it is prompt and vocab convergence around the newer structural package model.

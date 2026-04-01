@@ -21,6 +21,10 @@ from pathlib import Path
 
 
 CORS_ROOT = Path(__file__).parent.parent
+if str(CORS_ROOT) not in sys.path:
+    sys.path.insert(0, str(CORS_ROOT))
+
+from vocab import OBSERVE_VOCAB, MUTATE_VOCAB, BRIDGE_VOCAB
 
 
 def _is_runtime_placeholder(ref: str) -> bool:
@@ -76,11 +80,11 @@ def classify_allowed_vocab(allowed_vocab: list[str]) -> dict[str, list[str]]:
         "bridge": [],
     }
     for vocab in allowed_vocab:
-        if vocab in {"pattern_needed", "hash_resolve_needed", "email_needed", "external_context", "clarify_needed"}:
+        if vocab in OBSERVE_VOCAB:
             buckets["observe"].append(vocab)
-        elif vocab in {"hash_edit_needed", "stitch_needed", "content_needed", "script_edit_needed", "command_needed", "message_needed", "json_patch_needed", "git_revert_needed"}:
+        elif vocab in MUTATE_VOCAB:
             buckets["mutate"].append(vocab)
-        elif vocab in {"reason_needed", "await_needed", "commit_needed", "reprogramme_needed"}:
+        elif vocab in BRIDGE_VOCAB:
             buckets["bridge"].append(vocab)
     return buckets
 
