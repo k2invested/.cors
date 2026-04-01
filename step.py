@@ -594,56 +594,70 @@ class Trajectory:
 
         lines = []
         for chain in chains:
-            # Chain header with time range
-            status = "resolved" if chain.resolved else f"active, {chain.length()} steps"
-            desc = chain.desc or "in progress"
-            # Time: last step absolute timestamp
-            last_step = self.steps.get(chain.steps[-1]) if chain.steps else None
-            time_str = ""
-            if last_step and last_step.t > 0:
-                time_str = f" [{absolute_time(last_step.t)}]"
-            lines.append(f"chain:{chain.hash}  \"{desc}\" ({status}){time_str}")
-            lines.append(f"  origin: {chain.origin_gap}")
-
-            # Render each step as a branch
-            for i, step_hash in enumerate(chain.steps):
-                step = self.steps.get(step_hash)
-                if not step:
-                    lines.append(f"  {'├' if i < len(chain.steps)-1 else '└'}─ step:{step_hash} (unresolved)")
-                    continue
-
-                is_last_step = (i == len(chain.steps) - 1)
-                branch = "└" if is_last_step else "├"
-                cont = " " if is_last_step else "│"
-
-                # Step line — desc + refs + time
-                ref_str = self._render_refs(step.step_refs, step.content_refs, registry)
-                commit_str = f" → commit:{step.commit}" if step.commit else ""
-                time_tag = f" ({absolute_time(step.t)})" if step.t > 0 else ""
-                lines.append(f"  {branch}─ step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}{time_tag}")
-
-                # Step's gaps as sub-branches
-                active = [g for g in step.gaps if not g.dormant and not g.resolved]
-                resolved = [g for g in step.gaps if g.resolved]
-                dormant = [g for g in step.gaps if g.dormant]
-                all_gaps = active + resolved + dormant
-
-                for j, gap in enumerate(all_gaps):
-                    is_last_gap = (j == len(all_gaps) - 1)
-                    gbranch = "└" if is_last_gap else "├"
-
-                    if gap.dormant:
-                        score = gap.scores.magnitude()
-                        lines.append(f"  {cont}   {gbranch}─ gap:{gap.hash} (dormant, score:{score:.2f})")
-                    elif gap.resolved:
-                        lines.append(f"  {cont}   {gbranch}─ gap:{gap.hash} (resolved)")
-                    else:
-                        # Active gap — show desc, vocab, refs
-                        gref_str = self._render_refs(gap.step_refs, gap.content_refs, registry)
-                        vocab_str = f" [{gap.vocab}]" if gap.vocab else ""
-                        lines.append(f"  {cont}   {gbranch}─ gap:{gap.hash} \"{gap.desc}\"{vocab_str}{gref_str}")
+            lines.extend(self._render_chain_lines(chain, registry=registry))
 
         return "\n".join(lines)
+
+    def render_chain(self, chain_id: str, registry=None, highlight_gap: str | None = None) -> str:
+        """Render one chain as a semantic tree.
+
+        Used for active-chain injection during iteration. Optionally marks
+        the currently addressed gap so the LLM sees its causal branch.
+        """
+        chain = self.chains.get(chain_id)
+        if not chain:
+            return f"(missing chain: {chain_id})"
+        return "\n".join(self._render_chain_lines(chain, registry=registry, highlight_gap=highlight_gap))
+
+    def _render_chain_lines(self, chain: "Chain", registry=None,
+                            highlight_gap: str | None = None) -> list[str]:
+        lines = []
+        status = "resolved" if chain.resolved else f"active, {chain.length()} steps"
+        desc = chain.desc or "in progress"
+        last_step = self.steps.get(chain.steps[-1]) if chain.steps else None
+        time_str = ""
+        if last_step and last_step.t > 0:
+            time_str = f" [{absolute_time(last_step.t)}]"
+        lines.append(f"chain:{chain.hash}  \"{desc}\" ({status}){time_str}")
+        origin_marker = " [focus]" if highlight_gap and chain.origin_gap == highlight_gap else ""
+        lines.append(f"  origin: {chain.origin_gap}{origin_marker}")
+
+        for i, step_hash in enumerate(chain.steps):
+            step = self.steps.get(step_hash)
+            if not step:
+                lines.append(f"  {'├' if i < len(chain.steps)-1 else '└'}─ step:{step_hash} (unresolved)")
+                continue
+
+            is_last_step = (i == len(chain.steps) - 1)
+            branch = "└" if is_last_step else "├"
+            cont = " " if is_last_step else "│"
+
+            ref_str = self._render_refs(step.step_refs, step.content_refs, registry)
+            commit_str = f" → commit:{step.commit}" if step.commit else ""
+            time_tag = f" ({absolute_time(step.t)})" if step.t > 0 else ""
+            lines.append(f"  {branch}─ step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}{time_tag}")
+
+            active = [g for g in step.gaps if not g.dormant and not g.resolved]
+            resolved = [g for g in step.gaps if g.resolved]
+            dormant = [g for g in step.gaps if g.dormant]
+            all_gaps = active + resolved + dormant
+
+            for j, gap in enumerate(all_gaps):
+                is_last_gap = (j == len(all_gaps) - 1)
+                gbranch = "└" if is_last_gap else "├"
+                focus = " [focus]" if highlight_gap and gap.hash == highlight_gap else ""
+
+                if gap.dormant:
+                    score = gap.scores.magnitude()
+                    lines.append(f"  {cont}   {gbranch}─ gap:{gap.hash} (dormant, score:{score:.2f}){focus}")
+                elif gap.resolved:
+                    lines.append(f"  {cont}   {gbranch}─ gap:{gap.hash} (resolved){focus}")
+                else:
+                    gref_str = self._render_refs(gap.step_refs, gap.content_refs, registry)
+                    vocab_str = f" [{gap.vocab}]" if gap.vocab else ""
+                    lines.append(f"  {cont}   {gbranch}─ gap:{gap.hash} \"{gap.desc}\"{vocab_str}{gref_str}{focus}")
+
+        return lines
 
     def _render_steps_as_tree(self, steps: list["Step"], registry=None) -> str:
         """Render loose steps (no chains yet) as a flat hash tree."""

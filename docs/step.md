@@ -1,46 +1,46 @@
 # step.py
 
-`step.py` is the runtime foundation of the kernel. Everything else assumes its object model.
+[step.py](/Users/k2invested/Desktop/cors/step.py) is the runtime foundation of the kernel. Every other layer assumes its object model.
 
-## What A Step Is Here
+## The Primitive
 
-A step is the unit of meaningful movement. In code, that means one object that carries:
+A step is the unit of meaningful movement. In the current code a step records:
 
-- the reasoning ancestry that was followed
+- the causal ancestry that was followed
 - the content hashes that grounded the move
 - the semantic description of what happened
 - any emitted gaps
 - an optional commit if the move mutated the workspace
 
-The design is still built around two hash layers and the code preserves that separation:
+The file preserves the two-hash-layer distinction cleanly:
 
-- `step_refs` are causal ancestry
+- `step_refs` are reasoning ancestry
 - `content_refs` are evidence or acted-on artifacts
 
-The two layers are never merged into one field.
+Those layers stay separate all the way through the runtime.
 
-## Hash Functions
+## Hashing
 
 The file exposes two basic hash helpers:
 
-- `blob_hash(content)` for 12-character content hashes
+- `blob_hash(content)` for 12-character SHA-derived content hashes
 - `chain_hash(step_hashes)` for chain identity
 
-`Step.create()` includes the timestamp in its hash input, so steps are unique events rather than pure content-addressed values. `Gap.create()` hashes from description plus refs, so repeated identical gap articulations collapse more naturally.
+`Step.create()` includes the timestamp in the hash input, so a step is treated as an event, not a pure content-addressed object. `Gap.create()` hashes from description plus refs, so repeated identical gap articulations collapse more naturally.
 
 ## Epistemic
 
-`Epistemic` is the score carrier used by the compiler and governor. It has three fields:
+`Epistemic` carries the runtime score vector:
 
 - `relevance`
 - `confidence`
 - `grounded`
 
-The code comments in `step.py` are older and slightly misleading here. The runtime behavior in `compile.py` is the authority: relevance and confidence come from the model, while grounded is recomputed deterministically from trajectory co-occurrence when the compiler admits a gap.
+It also exposes `as_vector()`, `distance_to()`, and `magnitude()` so the governor can reason over convergence and stagnation. One important accuracy note: the comments in `step.py` are older than the live runtime. In practice, `compile.py` is authoritative for how these values are used. Relevance and confidence come from the model. Grounded is recomputed deterministically by the compiler from trajectory structure.
 
 ## Gap
 
-`Gap` is the kernel’s unit of unresolved discrepancy. Its important fields are:
+`Gap` is the kernel’s unit of unresolved discrepancy. Its main fields are:
 
 - `hash`
 - `desc`
@@ -54,11 +54,11 @@ The code comments in `step.py` are older and slightly misleading here. The runti
 - `dormant`
 - `turn_id`
 
-Two details matter operationally:
+Two operational details matter.
 
-Every gap is indexed on the trajectory whether it is active or dormant.
+Every gap is indexed on the trajectory, even if it never enters the ledger. Dormant gaps are still part of the semantic graph.
 
-`turn_id` exists so the compiler can apply stricter readmission thresholds to old dangling gaps and dormant promotions.
+`turn_id` exists so the compiler can apply stricter readmission rules to old dangling gaps and dormant promotions across turns.
 
 ## Step
 
@@ -74,7 +74,7 @@ Every gap is indexed on the trajectory whether it is active or dormant.
 - `chain_id`
 - `parent`
 
-Useful runtime helpers:
+The helper surface is small but important:
 
 - `is_mutation()`
 - `is_observation()`
@@ -83,20 +83,20 @@ Useful runtime helpers:
 - `dormant_gaps()`
 - `all_refs()`
 
-The post-diff surface is intentionally simple in the current runtime. The step itself does not store first-class `action`, `resolve`, `condition`, or `post_diff`. Those concepts currently live elsewhere or are inferred when extracting or loading `.st` files.
+The file intentionally keeps the runtime step lean. It does not store first-class `action`, `resolve`, `condition`, or package-manifestation metadata. Those concepts live in `.st` files, skeletons, compilers, or extraction tools rather than on the runtime `Step` itself.
 
 ## Chain
 
-`Chain` is how the system groups steps into a higher-order unit. A chain stores:
+`Chain` groups steps into a higher-order unit. In the current implementation it stores:
 
-- its own hash
-- the origin gap
-- the ordered member step hashes
-- a summary description
+- `hash`
+- `origin_gap`
+- `steps`
+- `desc`
 - `resolved`
 - `extracted`
 
-Chains are rehashed as new steps are appended. Long resolved chains can be written out to `chains/*.json`.
+Chains are rehashed as new steps are appended. Long resolved chains can be written out to `chains/*.json`, and unresolved passive chains can keep accumulating across turns.
 
 ## Trajectory
 
@@ -107,48 +107,36 @@ Chains are rehashed as new steps are appended. Long resolved chains can be writt
 - `chains`
 - `gap_index`
 
-This gives the kernel fast lookup by hash while still preserving chronology.
+This gives the kernel direct lookup by hash while preserving chronology.
 
 Important behaviors in the current implementation:
 
-- `append(step)` indexes both the step and all of its gaps
-- `co_occurrence(hash)` drives deterministic grounding
-- `dormant_gaps()` and `recurring_dormant()` make dormant memory visible
+- `append(step)` indexes both the step and all emitted gaps
+- `co_occurrence(hash)` supports deterministic grounded scoring
+- `dormant_gaps()` and `recurring_dormant()` expose dormant memory
 - `extract_chains()` writes long resolved chains to disk
-- `find_passive_chains()` and `append_to_passive_chain()` support cross-turn accumulation against unresolved chains
+- `find_passive_chains()` and `append_to_passive_chain()` let unresolved chains continue across turns
 
-That passive-chain behavior is easy to miss from the old docs, but it matters: the system is not limited to strictly local within-turn chains.
+That passive-chain behavior matters. The runtime is not limited to purely local within-turn chains.
 
 ## Rendering
 
-`Trajectory.render_recent()` is the main semantic-tree renderer the model sees.
+`Trajectory.render_recent()` is the main salient trajectory renderer injected into the session. It renders chains, origin gaps, steps, gaps, refs, commits, and timestamps in a semantic-tree style.
 
-It renders:
+`Trajectory.render_chain()` is now the active-branch renderer. Given a `chain_id`, it renders the chain the current ledger entry belongs to and can mark the currently addressed gap with `[focus]`. This is what `loop.py` now injects as `## Active Chain Tree` while the system is working a gap.
 
-- chains
-- origin gaps
-- steps
-- active, resolved, and dormant gaps
-- refs with named `.st` hashes when the skill registry can resolve them
-- commit hashes on mutation steps
-- absolute timestamps
-
-If there are no chains yet, the file falls back to rendering loose steps as a flat tree.
-
-This rendering surface is important because `loop.py` reuses the same shape when resolving step hashes and gap hashes back into context.
+These renders matter because they are the readable semantic surface the model actually reasons over. The trajectory is the store; the renders are the live working view.
 
 ## Persistence
 
-The runtime persistence format is intentionally simple:
+The persistence layer remains intentionally simple:
 
 - `trajectory.json` stores ordered step dictionaries
 - `chains.json` stores the chain index
 - `chains/<hash>.json` stores extracted long resolved chains
 
-There is no separate database layer. The trajectory is JSON and Git remains the external content store.
+There is no separate database. The trajectory lives as JSON. Git remains the external content store for blobs, trees, and commits.
 
-## Current Limits
+## Limits
 
-The step runtime is strong, but it is not yet a fully lossless planning IR.
-
-The main limitation is that several planning fields discussed elsewhere in the repo are not first-class on `Step` or `SkillStep`. That is why deterministic extraction and `.st` loading still involve heuristics or field loss in parts of the system.
+`step.py` is a strong runtime graph, but it is not a full lossless planning IR. Richer planning and manifestation fields still live outside `Step` and `Gap`, which is why skeleton compilation, `.st` loading, and chain extraction still involve separate schemas or some amount of heuristic reconstruction.

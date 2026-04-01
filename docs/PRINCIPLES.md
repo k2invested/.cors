@@ -44,9 +44,9 @@ The trajectory is a closed hash graph. Raw data never touches it. Only hash refe
 
 ### The single persistent session
 
-One persistent LLM session per turn. The same model does perception, gap scoring, and command composition — all in one continuous stream. No separate mini-models for classification. No hand-off between specialists. Coherence comes from the persistent context window. The trajectory provides structural grounding. The context window holds only new content — everything previously observed exists as hash references on the trajectory, resolvable on demand.
+One persistent LLM session per turn. The same model does perception, gap scoring, and command composition — all in one continuous stream. No separate mini-models for classification. No hand-off between specialists. Coherence comes from the persistent context window. The trajectory provides structural grounding. The context window does not preload all of `trajectory.json` raw; it carries a salient semantic render of prior trajectory state, and deeper structure remains hash-resolvable on demand.
 
-The trajectory is rendered as a traversable hash tree (same shape as git commit trees) via `render_recent()`. Known skill hashes render with named prefixes — `kenny:72b1d5ffc964`, `research:a72c3c4dec0c`. When a skill evolves, the hash changes but the name stays. Steps referencing the old hash trace to what was. Steps referencing the new hash trace to what is.
+The trajectory is rendered as a traversable hash tree (same shape as git commit trees) via `render_recent()`. Known skill hashes render with named prefixes — `kenny:72b1d5ffc964`, `research:a72c3c4dec0c`. When a skill evolves, the hash changes but the name stays. Steps referencing the old hash trace to what was. Steps referencing the new hash trace to what is. During iteration, the currently addressed ledger chain is also rendered as its own semantic tree (`Active Chain Tree`), so the model sees the live causal branch it is inside while working the current gap.
 
 ### Code mechanisms
 
@@ -753,6 +753,7 @@ The manifestation engine should be understood as an mRNA model with the compiler
 - **The compiler** is the sequencer or ribosome: it does not invent meaning, it translates lawful structure into executable order.
 - **The ledger** is the translation surface: one active branch, deepest child first, return to branch root before next sibling.
 - **The trajectory** is expressed structure: the realized chain, mutation record, and resolved semantic tree.
+- **The session cache** is the salient semantic preload plus the current turn's accumulated renders.
 
 In this model, the compiler does not sit outside manifestation. It is part of manifestation. A skeleton is not valid merely because it is well-formed JSON. It is only valid if it can be sequenced under the compiler's laws.
 
@@ -984,11 +985,11 @@ The old commitment system tracked promises as registry entries. In cors, reasoni
 
 `reason.st` is the system's most versatile codon. It serves three distinct roles through the same mechanism:
 
-**Role 1: Planning primitive** — For complex tasks, the main agent emits `reason_needed` to decompose and structure work as executable manifestation. The reason agent has semantic tree visibility and can build lawful step flow bottom-up: leaf chains first, then composed parents, then top-level orchestration. Its natural authoring surface is the workflow skeleton: a structural description the system can deterministically derive, compile, inspect, and execute.
+**Role 1: Planning primitive** — For complex tasks, the main agent emits `reason_needed` to decompose and structure work as executable manifestation. The reason agent has semantic tree visibility and can build lawful step flow bottom-up: leaf chains first, then composed parents, then top-level orchestration. Its natural authoring surface is the workflow skeleton: a structural description the system can deterministically derive, compile, inspect, and execute. In the current runtime, `reason_needed` can either emit the native `reason.st` codon, submit a `skeleton.v1` for deterministic compilation, or activate an existing `.st` / compiled `.json` chain package by hash.
 
 **Role 2: Reorientation checkpoint** — When the compiler rejects a chain (missing await, OMO violation, codon immutability), the fallback is `reason_needed`. The agent re-renders its semantic trees, sees what went wrong, and reconstructs its approach. This is the same role `reclassify` played in v4.5 but through an existing primitive rather than a separate mechanism. Any rejection resolves to reason.
 
-**Role 3: Heartbeat trigger** — When background work is in progress without a manual await, the kernel persists an automatic `reason_needed` after synthesis. Next turn, this heartbeat fires — the agent renders the sub-agent's semantic tree and the entity/state space it depends on, inspects results, and routes: close, revisit, or refine+reactivate. The heartbeat recurs until all background chains resolve.
+**Role 3: Heartbeat trigger** — When background work is in progress without a manual await, the kernel persists an automatic `reason_needed` after synthesis. Next turn, this heartbeat fires — the agent renders the sub-agent's semantic tree, the active chain it is re-entering, and the package/entity network it depends on, then routes: close, revisit, or refine+reactivate. The heartbeat recurs until all background chains resolve.
 
 ### Six outcomes
 
@@ -1011,9 +1012,9 @@ The LLM's post-diff after viewing the rendered trees determines the path:
 ```
 reason_needed surfaces
   → step 1: render reasoning trees (observe, rel=1.0, post_diff=false)
-      all naturally formed chains rendered as semantic trees
-      reasoning commitments shown as potential agency targets
-      existing .st files shown as embeddable components
+      salient prior trajectory window rendered as semantic trees
+      current ledger chain rendered as Active Chain Tree
+      step network rendered as current package ecology
   → step 2: assess and route (flex, rel=0.9, post_diff=true)
       LLM studies trees, picks one of six outcomes:
         - no gaps → observe only, done
@@ -1031,6 +1032,7 @@ reason_needed surfaces
         - embed await_needed after any background trigger
         - build back-to-front: leaf chains first, parents adopt them
         - resulting structure is deterministically compilable by the system
+        - lawful compiled action packages crystallize into hash-addressable `.st` or `.json` artifacts
       if refining: hash_edit updates the reasoning chain
       if manifesting: compose agent trigger + inject commitment gaps + trailing commit_needed
       if heartbeat: render sub-agent tree → accept/revisit/refine
@@ -1095,7 +1097,7 @@ Turn N+2: heartbeat fires → sub-agent done → assess tree → close / revisit
 Turn N+3: (if refined) → heartbeat fires → check refinement → close
 ```
 
-Each heartbeat is a full reason cycle: render tree → assess → act. The agent is autonomously managing long-running workflows across turns. The heartbeat IS the autonomy mechanism — the system monitors its own background work, course-corrects, and reports when done.
+Each heartbeat is a full reason cycle: render active branch + sub-agent/package context → assess → act. The agent is autonomously managing long-running workflows across turns. The heartbeat IS the autonomy mechanism — the system monitors its own background work, course-corrects, and reports when done.
 
 ### Deterministic package derivation from semantic trees
 
@@ -1114,7 +1116,7 @@ action package / entity package                ← reusable manifestation
 same structural laws re-enter the ledger       ← re-instantiated manifestation
 ```
 
-This is the discovery → crystallization pipeline. Reason owns executable structural derivation. Reprogramme owns semantic persistence and state continuity. They are different manifestations of the same OS-level machinery, not competing systems.
+This is the discovery → crystallization pipeline. Reason owns executable structural derivation. Reprogramme owns semantic persistence and state continuity. They are different manifestations of the same OS-level machinery, not competing systems. New executable action structure should originate through reason → skeleton → compile. Reprogramme may update existing executable packages, but those updates must re-pass compilation before the package is treated as lawful action structure again.
 
 ### What this replaces
 
@@ -1286,7 +1288,7 @@ loop.py
 │   │   └─ _find_dangling_gaps(trajectory) → surface unresolved gaps from prior turns
 │   │
 │   ├─ 2. FIRST STEP (origin)
-│   │   ├─ render trajectory tree + HEAD + user message
+│   │   ├─ render salient trajectory tree + HEAD + user message
 │   │   ├─ LLM call → pre-diff reasoning + gap articulations
 │   │   └─ _parse_step_output() → Step + [Gap]
 │   │
@@ -1303,6 +1305,8 @@ loop.py
 │   │
 │   ├─ 5. ITERATION LOOP (max MAX_ITERATIONS = 30)
 │   │   ├─ compiler.next() → (entry, GovernorSignal)
+│   │   ├─ trajectory.render_chain(entry.chain_id, highlight_gap=gap.hash)
+│   │   │   └─ inject Active Chain Tree for the currently addressed gap
 │   │   ├─ HALT/None → break
 │   │   ├─ REVERT → git revert last commit
 │   │   ├─ Route by vocab:
@@ -1311,8 +1315,9 @@ loop.py
 │   │   │   ├─ is_observe → tool executes, LLM reasons
 │   │   │   ├─ is_mutate → compose → execute → auto_commit → postcondition
 │   │   │   ├─ clarify_needed → halt, gap persists
-│   │   │   ├─ reprogramme_needed → PRINCIPLES.md + registry → compose
-│   │   │   └─ bridge codons → .st activation
+│   │   │   ├─ reason_needed → reason.st OR skeleton submission OR existing package activation
+│   │   │   ├─ reprogramme_needed → PRINCIPLES.md + registry + Step Network → compose
+│   │   │   └─ bridge codons → .st activation / package manifestation
 │   │   └─ Policy auto-route check before each execution
 │   │
 │   ├─ 6. REPROGRAMME PASS

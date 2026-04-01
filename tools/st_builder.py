@@ -1,50 +1,16 @@
 #!/usr/bin/env python3
-"""st_builder — build .st step files from semantic intent.
+"""st_builder — curate semantic `.st` files for reprogramme.
 
-The agent describes what it wants in natural language.
-The builder handles structure, format, and validation.
+This tool is no longer a general workflow builder. It is the semantic
+curation path for:
+  - new or updated entity `.st` files
+  - updates to existing executable `.st` packages
 
-This tool is for semantic intent and persistence-oriented `.st` writing,
-primarily the reprogramme path. It is NOT the deterministic compiler for
-`skeleton.v1`. That path belongs to `tools/skeleton_compile.py`.
+It is NOT the deterministic compiler for `skeleton.v1`. New action
+structure belongs to `tools/skeleton_compile.py`.
 
-Input (stdin JSON):
-{
-  "name": "task name",
-  "desc": "what this task/skill does",
-  "trigger": "manual | on_contact:X | on_vocab:X | every_turn | on_mention",
-  "author": "agent | developer",
-  "refs": {
-    "target_file": "blob_abc123",
-    "prior_work": "chain_def456"
-  },
-  "actions": [
-    {
-      "do": "read the current config file",
-      "refs": ["blob_abc123"],
-      "observe": true
-    },
-    {
-      "do": "update model_id to claude-sonnet-4-6",
-      "refs": ["blob_abc123"],
-      "mutate": true
-    },
-    {
-      "do": "verify the edit landed correctly",
-      "refs": [],
-      "observe": true
-    }
-  ]
-}
-
-The builder:
-  - Generates action names from descriptions
-  - Maps observe/mutate to post_diff and infers vocab
-  - Preserves hash refs on each step
-  - Validates schema
-  - Writes the .st file
-
-Output: path to the written .st file, or error message.
+The builder preserves explicit semantic structure and explicit step
+configuration. It does not infer workflow vocab from natural language.
 """
 
 import json
@@ -53,39 +19,17 @@ import re
 import sys
 from pathlib import Path
 
-SKILLS_DIR = str(Path(__file__).resolve().parent.parent / "skills")
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-# ── Vocab inference from action description ──────────────────────────────
+from compile import OBSERVE_VOCAB, MUTATE_VOCAB, BRIDGE_VOCAB
+from skills.loader import compute_skill_hash
 
-OBSERVE_PATTERNS = {
-    r"read|scan|check|look|inspect|verify|view|see|resolve": "scan_needed",
-    r"search|research|find|discover|investigate|look.?up": "research_needed",
-    r"trace|follow|recall|remember|history|prior": "hash_resolve_needed",
-    r"grep|pattern|find.?in|search.?for|locate": "pattern_needed",
-    r"email|inbox|mail": "email_needed",
-    r"url|fetch|download|http": "url_needed",
-}
+SKILLS_DIR = str(ROOT / "skills")
 
-MUTATE_PATTERNS = {
-    r"write|create|produce|generate|new.?file": "content_needed",
-    r"edit|update|change|modify|fix|patch|replace": "script_edit_needed",
-    r"run|execute|command|build|test|deploy|install": "command_needed",
-    r"send|email|notify|message|alert": "message_needed",
-    r"revert|undo|rollback|restore": "git_revert_needed",
-}
-
-
-def infer_vocab(desc: str, is_mutate: bool) -> str | None:
-    """Infer vocab from action description."""
-    desc_lower = desc.lower()
-    patterns = MUTATE_PATTERNS if is_mutate else OBSERVE_PATTERNS
-    for pattern, vocab in patterns.items():
-        if re.search(pattern, desc_lower):
-            return vocab
-    # Fallback
-    if is_mutate:
-        return "command_needed"
-    return "scan_needed"
+VALID_RUNTIME_VOCAB = set(OBSERVE_VOCAB) | set(MUTATE_VOCAB) | set(BRIDGE_VOCAB)
+VALID_ARTIFACT_KINDS = {"entity", "action_update", "hybrid_update"}
 
 
 def slugify(text: str) -> str:
@@ -102,7 +46,10 @@ VALID_TRIGGER_PREFIXES = {"on_contact:", "on_vocab:", "scheduled:", "command:"}
 REQUIRED_STEP_FIELDS = {"action", "desc"}
 
 
-def validate_st(data: dict) -> list[str]:
+def validate_st(data: dict,
+                artifact_kind: str = "entity",
+                existing_ref: str | None = None,
+                output_dir: str | None = None) -> list[str]:
     """Validate a .st structure. Returns list of errors (empty = valid)."""
     errors = []
 
@@ -119,11 +66,27 @@ def validate_st(data: dict) -> list[str]:
             for field in REQUIRED_STEP_FIELDS:
                 if field not in step:
                     errors.append(f"step {i}: missing '{field}'")
+            vocab = step.get("vocab")
+            if vocab is not None and vocab not in VALID_RUNTIME_VOCAB:
+                errors.append(f"step {i}: invalid runtime vocab '{vocab}'")
+            if "post_diff" in step and not isinstance(step["post_diff"], bool):
+                errors.append(f"step {i}: 'post_diff' must be true or false")
+            if "resolve" in step and not isinstance(step["resolve"], list):
+                errors.append(f"step {i}: 'resolve' must be a list")
 
     trigger = data.get("trigger", "manual")
     if trigger not in VALID_TRIGGERS:
         if not any(trigger.startswith(p) for p in VALID_TRIGGER_PREFIXES):
             errors.append(f"invalid trigger: {trigger}")
+
+    if artifact_kind not in VALID_ARTIFACT_KINDS:
+        errors.append(f"invalid artifact_kind: {artifact_kind}")
+
+    if artifact_kind in {"action_update", "hybrid_update"} and not existing_ref:
+        errors.append(f"{artifact_kind} requires 'existing_ref' or 'existing_action_ref'")
+
+    if output_dir and existing_ref and not find_existing_skill_path(existing_ref, output_dir):
+        errors.append(f"existing_ref not found: {existing_ref}")
 
     return errors
 
@@ -135,40 +98,77 @@ def looks_like_skeleton(data: dict) -> bool:
     return {"root", "phases", "closure"}.issubset(set(data))
 
 
+def looks_like_new_action_request(data: dict) -> bool:
+    artifact_kind = data.get("artifact_kind")
+    if artifact_kind in {"action", "hybrid"}:
+        return True
+    return False
+
+
+def normalize_step(raw_step: dict) -> dict:
+    """Normalize one step without inventing workflow semantics."""
+    desc = raw_step.get("desc") or raw_step.get("do", "")
+    step = {
+        "action": raw_step.get("action") or slugify(desc or "step"),
+        "desc": desc,
+    }
+
+    if "vocab" in raw_step:
+        step["vocab"] = raw_step["vocab"]
+
+    if "post_diff" in raw_step:
+        step["post_diff"] = raw_step["post_diff"]
+    elif raw_step.get("mutate", False):
+        step["post_diff"] = False
+    elif raw_step.get("observe", False):
+        step["post_diff"] = True
+
+    refs = raw_step.get("resolve")
+    if refs is None:
+        refs = raw_step.get("refs")
+    if refs:
+        step["resolve"] = refs
+
+    if "condition" in raw_step:
+        step["condition"] = raw_step["condition"]
+
+    if "inject" in raw_step:
+        step["inject"] = raw_step["inject"]
+
+    return step
+
+
+def normalize_steps(intent: dict) -> list[dict]:
+    if "steps" in intent:
+        return [normalize_step(step) for step in intent.get("steps", [])]
+    return [normalize_step(action) for action in intent.get("actions", [])]
+
+
+def find_existing_skill_path(existing_ref: str, output_dir: str) -> str | None:
+    output_root = Path(output_dir)
+    if not output_root.exists():
+        return None
+    for path in output_root.rglob("*.st"):
+        try:
+            raw = path.read_text()
+        except OSError:
+            continue
+        if compute_skill_hash(raw) == existing_ref:
+            return str(path)
+    return None
+
+
 # ── Builder ──────────────────────────────────────────────────────────────
 
 def build_st(intent: dict) -> dict:
-    """Build a valid .st structure from semantic intent."""
+    """Build a valid `.st` structure from semantic intent."""
 
     name = intent.get("name", "untitled")
     desc = intent.get("desc", "")
     trigger = intent.get("trigger", "manual")
     author = intent.get("author", "agent")
     refs = intent.get("refs", {})
-    actions = intent.get("actions", [])
-
-    steps = []
-    for action in actions:
-        do_desc = action.get("do", "")
-        is_mutate = action.get("mutate", False)
-        is_observe = action.get("observe", not is_mutate)
-        action_refs = action.get("refs", [])
-        condition = action.get("condition", None)
-
-        step = {
-            "action": slugify(do_desc),
-            "desc": do_desc,
-            "vocab": infer_vocab(do_desc, is_mutate),
-            "post_diff": is_observe,
-        }
-
-        if action_refs:
-            step["resolve"] = action_refs
-
-        if condition:
-            step["condition"] = condition
-
-        steps.append(step)
+    steps = normalize_steps(intent)
 
     st = {
         "name": name,
@@ -186,7 +186,10 @@ def build_st(intent: dict) -> dict:
     #   schema + access_rules → business database
     #   principles + boundaries → domain expertise
     # The fields don't explain — they distinguish.
-    BASE_FIELDS = {"name", "desc", "trigger", "author", "refs", "actions"}
+    BASE_FIELDS = {
+        "name", "desc", "trigger", "author", "refs",
+        "actions", "steps", "artifact_kind", "existing_ref", "existing_action_ref",
+    }
     for key, value in intent.items():
         if key not in BASE_FIELDS:
             st[key] = value
@@ -194,14 +197,21 @@ def build_st(intent: dict) -> dict:
     return st
 
 
-def write_st(st: dict, output_dir: str = None) -> str:
+def write_st(st: dict, output_dir: str = None, existing_ref: str | None = None) -> str:
     """Write a .st file and return its path."""
     output_dir = output_dir or SKILLS_DIR
     os.makedirs(output_dir, exist_ok=True)
 
-    name = st.get("name", "untitled")
-    filename = re.sub(r'[^a-z0-9_]', '_', name.lower()) + ".st"
-    path = os.path.join(output_dir, filename)
+    existing_path = find_existing_skill_path(existing_ref, output_dir) if existing_ref else None
+    if existing_ref and not existing_path:
+        raise FileNotFoundError(f"existing_ref not found: {existing_ref}")
+
+    if existing_path:
+        path = existing_path
+    else:
+        name = st.get("name", "untitled")
+        filename = re.sub(r'[^a-z0-9_]', '_', name.lower()) + ".st"
+        path = os.path.join(output_dir, filename)
 
     with open(path, "w") as f:
         json.dump(st, f, indent=2)
@@ -226,26 +236,37 @@ def main():
         )
         raise SystemExit(1)
 
+    if looks_like_new_action_request(intent):
+        print(
+            "Error: new action or hybrid workflow origination belongs to skeleton.v1 "
+            "compilation, not st_builder."
+        )
+        raise SystemExit(1)
+
+    artifact_kind = intent.get("artifact_kind", "entity")
+    existing_ref = intent.get("existing_ref") or intent.get("existing_action_ref")
+
     # Build .st from intent
     st = build_st(intent)
 
     # Validate
-    errors = validate_st(st)
+    errors = validate_st(st, artifact_kind=artifact_kind, existing_ref=existing_ref, output_dir=SKILLS_DIR)
     if errors:
         print(f"Validation errors:\n" + "\n".join(f"  - {e}" for e in errors))
         print(f"\nGenerated (invalid):\n{json.dumps(st, indent=2)}")
         return
 
     # Write
-    path = write_st(st)
+    path = write_st(st, existing_ref=existing_ref)
 
     # Report
     print(f"Written: {path}")
     print(f"Name: {st['name']}")
+    print(f"Artifact kind: {artifact_kind}")
     print(f"Steps: {len(st['steps'])}")
     print(f"Trigger: {st['trigger']}")
     for i, step in enumerate(st["steps"]):
-        mode = "observe" if step.get("post_diff", True) else "execute"
+        mode = "flexible" if step.get("post_diff", True) else "deterministic"
         vocab = step.get("vocab", "—")
         refs = step.get("resolve", [])
         ref_tag = f" refs:{refs}" if refs else ""

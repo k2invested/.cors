@@ -297,6 +297,49 @@ def test_st_builder_cli_rejects_skeleton_input():
     assert "skeleton.v1 input should be compiled with tools/skeleton_compile.py" in result.stdout
 
 
+def test_st_builder_cli_rejects_new_action_origination():
+    payload = json.dumps({
+        "artifact_kind": "action",
+        "name": "new_workflow",
+        "desc": "should be compiled from skeleton",
+        "steps": [{"action": "inspect", "desc": "inspect", "vocab": "hash_resolve_needed"}],
+    })
+    result = subprocess.run(
+        ["python3", str(ROOT / "tools" / "st_builder.py")],
+        input=payload,
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+    assert result.returncode == 1
+    assert "new action or hybrid workflow origination belongs to skeleton.v1" in result.stdout
+
+
+def test_st_builder_writes_existing_ref_in_place(tmp_path):
+    original = {
+        "name": "entity_a",
+        "desc": "old",
+        "trigger": "manual",
+        "steps": [],
+        "identity": {"name": "Ada"},
+    }
+    original_path = tmp_path / "entity_a.st"
+    original_path.write_text(json.dumps(original, indent=2))
+    existing_ref = st_builder_module.compute_skill_hash(original_path.read_text())
+
+    updated = {
+        "name": "entity_a",
+        "desc": "new",
+        "trigger": "manual",
+        "steps": [],
+        "identity": {"name": "Ada"},
+    }
+    path = st_builder_module.write_st(updated, output_dir=str(tmp_path), existing_ref=existing_ref)
+    assert path == str(original_path)
+    written = json.loads(original_path.read_text())
+    assert written["desc"] == "new"
+
+
 def test_skeleton_compile_cli_outputs_json():
     payload = json.dumps(example_skeleton())
     result = subprocess.run(

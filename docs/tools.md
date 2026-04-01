@@ -1,20 +1,20 @@
 # tools
 
-The `tools/` directory is the kernel’s execution surface. The loop does not import these as internal modules. It spawns them as subprocesses and treats them as bounded operators.
+The [tools/](/Users/k2invested/Desktop/cors/tools) directory is the kernel’s subprocess execution surface. The loop does not treat these files as in-process kernel modules. It spawns them and treats them as bounded operators.
 
 ## Contract
 
 The common pattern is:
 
 - JSON goes in on stdin
-- output comes back on stdout
+- result comes back on stdout
 - exit code communicates success or failure
 
-That separation matters because it keeps the execution layer outside the core runtime object model.
+That boundary matters because it keeps execution outside the core runtime graph. The kernel can reason about tool outputs without turning tools themselves into kernel primitives.
 
-## Tools The Loop Actually Routes To
+## Tools The Loop Routes To Directly
 
-The current `TOOL_MAP` in `loop.py` routes directly to:
+The current `TOOL_MAP` in [loop.py](/Users/k2invested/Desktop/cors/loop.py) routes directly to:
 
 - `tools/file_grep.py`
 - `tools/email_check.py`
@@ -27,38 +27,39 @@ The current `TOOL_MAP` in `loop.py` routes directly to:
 - `tools/json_patch.py`
 - `tools/git_ops.py`
 
-`hash_resolve_needed` and `external_context` are handled inline by the kernel rather than by a subprocess.
+`hash_resolve_needed` and `external_context` are handled inline by the kernel rather than by a subprocess tool.
 
-## Important Core Tools
+## Architecturally Important Tools
 
-`hash_manifest.py`
-The main mutation operator behind `hash_edit_needed`.
+[tools/hash_manifest.py](/Users/k2invested/Desktop/cors/tools/hash_manifest.py) is the main mutation operator behind `hash_edit_needed`.
 
-`st_builder.py`
-The `.st` persistence builder used by `reprogramme_needed`.
+[tools/st_builder.py](/Users/k2invested/Desktop/cors/tools/st_builder.py) is the semantic `.st` curator used by `reprogramme_needed`. It handles entity creation and update, plus explicit updates to existing executable packages. It is not the deterministic workflow compiler.
 
-`chain_to_st.py`
-The chain extraction path for crystallizing resolved runtime structure into `.st`.
+[tools/chain_to_st.py](/Users/k2invested/Desktop/cors/tools/chain_to_st.py) crystallizes resolved runtime chains into `.st`, but it still derives parts of the output heuristically from chain shape.
 
-Those three are more architecturally important than most of the domain tools because they sit on the boundary between runtime reasoning and persisted structure.
+[tools/skeleton_compile.py](/Users/k2invested/Desktop/cors/tools/skeleton_compile.py) is now the deterministic workflow compiler. It validates `skeleton.v1`, preserves manifestation and generation structure, and performs graph-level coherence checks such as reachability, terminal closure, mutate-to-observe closure, commit consumption, and await/background reintegration.
 
-## Domain And Utility Tools In The Repo
+[tools/semantic_skeleton_compile.py](/Users/k2invested/Desktop/cors/tools/semantic_skeleton_compile.py) compiles the semantic envelope and lowers any action-bearing slice through `skeleton_compile.py`.
 
-Beyond the directly routed tools, the repo contains a wider bench of utilities and domain operators, including:
+These files matter more than most other tools because they sit directly on the boundary between runtime reasoning and persisted structure.
+
+## Broader Tool Surface
+
+Beyond the directly routed tools, the repo contains a wider bench of operators and utilities, including:
 
 - document tools such as `doc_read.py`, `doc_edit.py`, `pdf_read.py`, and `pdf_fill.py`
 - web and research tools such as `web_search.py`, `research_web.py`, `url_fetch.py`, and `youtube_research.py`
 - registry and property tools such as `land_registry.py`, `epc_lookup.py`, `flood_risk.py`, and `postcodes_io.py`
-- context and indexing tools such as `repo_index.py`, `context_pack.py`, `recall.py`, and `scan_tree.py`
+- indexing and context tools such as `repo_index.py`, `context_pack.py`, `recall.py`, and `scan_tree.py`
 - media tools such as `runway_gen.py`, `video_generator.py`, and `generate_narration.py`
 
-Not all of these are currently first-class vocab-routed tools in `loop.py`, but they are part of the repo’s operator surface.
+Not all of these are currently vocab-routed from `loop.py`, but they are part of the repo’s operator bench.
 
 ## Routing And Policy
 
 Two routing rules matter more than the individual tools.
 
-First, `.st`-targeted mutation is not treated like ordinary file editing. The loop checks tree policy and reroutes `.st` mutation toward `reprogramme_needed`.
+First, `.st`-targeted mutation is not treated like ordinary file editing. The loop applies tree policy and reroutes `.st` mutation toward `reprogramme_needed`.
 
 Second, codon mutation is not allowed. If a mutation touches `skills/codons/`, the commit is reverted and the system rejects into `reason_needed`.
 
@@ -66,10 +67,10 @@ So the tool layer is not a free-for-all. The kernel imposes architectural law ov
 
 ## Current Drift
 
-There are two important mismatches to keep in mind.
+Two mismatches still matter.
 
-`st_builder.py` still infers legacy vocab terms that are not part of the compiler’s live runtime algebra.
+[tools/st_builder.py](/Users/k2invested/Desktop/cors/tools/st_builder.py) now refuses new action origination and only accepts explicit runtime vocab on steps. That keeps it aligned with the compiler, but it also means workflow origination must happen through the skeleton compiler path.
 
-`chain_to_st.py` presents itself as deterministic extraction, but its current implementation is only partially direct. It still derives some step properties heuristically from resolved chain shape.
+[tools/chain_to_st.py](/Users/k2invested/Desktop/cors/tools/chain_to_st.py) calls itself deterministic extraction, but the current implementation is still partly heuristic rather than lossless.
 
 That means both tools are useful, but neither should be treated as a perfect reflection of the current runtime semantics.

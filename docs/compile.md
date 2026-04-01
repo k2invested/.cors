@@ -1,22 +1,27 @@
 # compile.py
 
-`compile.py` is the lawful sequencer of the kernel. It does not invent plans. It decides which emitted gaps are admissible, how they are ordered, when a chain should be redirected or force-closed, and how OMO is enforced.
+[compile.py](/Users/k2invested/Desktop/cors/compile.py) is the lawful sequencer of the kernel. It does not plan and it does not author structure. It receives emitted gaps, decides which ones are admissible, places them on the ledger, tracks chain lifecycle, enforces the runtime OMO grammar, and carries the small amount of bookkeeping needed for heartbeat closure.
+
+## What The Compiler Owns
+
+The compiler owns six things:
+
+- the ledger
+- admission thresholds and grounded recomputation
+- chain creation, suspension, and closure
+- governor decisions over the active branch
+- OMO state
+- background-trigger bookkeeping
+
+It does not own prompt composition, tool execution, codon expansion, package persistence, skeleton compilation, or semantic rendering.
 
 ## The Ledger
 
 The ledger is the active unresolved frontier. It is not history.
 
-The current implementation is explicitly stack-shaped:
-
-- origin gaps are pushed as chain roots
-- child gaps are pushed on top
-- the compiler pops from the top
-
-That gives you depth-first execution within a lawful ordered frontier.
-
 `LedgerEntry` stores:
 
-- the gap itself
+- `gap`
 - `chain_id`
 - `depth`
 - `parent_gap`
@@ -29,84 +34,19 @@ That gives you depth-first execution within a lawful ordered frontier.
 - `resolved`
 - `history`
 
-Only origin gaps are re-sorted by priority. Child gaps stay on top so depth-first behavior is preserved.
+The mechanics are explicit:
 
-## Chain Lifecycle
+- origin gaps enter as chain roots
+- child gaps are pushed on top
+- `pop()` returns the next gap to address
+- only origin gaps are re-sorted by priority
+- children remain on top so depth-first behavior is preserved
 
-The compiler tracks four chain states:
+That is the implemented LIFO surface the loop works over.
 
-- `OPEN`
-- `ACTIVE`
-- `SUSPENDED`
-- `CLOSED`
+## Vocab Algebra
 
-This is more than bookkeeping. `skip_chain()` suspends a chain when the governor redirects, and background tracking later uses chain identity when deciding whether a heartbeat is needed.
-
-## Admission
-
-Gap admission is deterministic once the model has emitted `relevance` and `confidence`.
-
-Constants:
-
-- `ADMISSION_THRESHOLD = 0.4`
-- `CROSS_TURN_THRESHOLD = 0.6`
-- `DORMANT_PROMOTE_THRESHOLD = 0.7`
-- `CONFIDENCE_THRESHOLD = 0.8`
-- `DORMANT_THRESHOLD = 0.2`
-- `MAX_CHAIN_DEPTH = 15`
-- `SATURATION_THRESHOLD = 0.05`
-- `STAGNATION_WINDOW = 3`
-- `CHAIN_EXTRACT_LENGTH = 8`
-
-Admission score is:
-
-`0.8 * relevance + 0.2 * grounded`
-
-Grounded is recomputed from trajectory co-occurrence. The LLM does not control it.
-
-Thresholds are tiered:
-
-- fresh gaps use `ADMISSION_THRESHOLD`
-- dangling cross-turn gaps use `CROSS_TURN_THRESHOLD`
-- dormant promotions use `DORMANT_PROMOTE_THRESHOLD`
-
-Anything below `DORMANT_THRESHOLD` is stored as dormant and never enters the ledger.
-
-## Governor
-
-The governor is deterministic and intentionally simple. It operates on epistemic vectors and emits one of:
-
-- `ALLOW`
-- `CONSTRAIN`
-- `REDIRECT`
-- `REVERT`
-- `ACT`
-- `HALT`
-
-The logic currently does four main things:
-
-- force-closes chains that exceed max depth
-- reverts on divergence
-- redirects on oscillation or stagnation
-- upgrades mutate gaps to `ACT` when grounded and confidence are both at least `0.5`
-
-This is not a search controller. It is closer to a structural gate over chain health.
-
-## OMO
-
-The compiler still enforces observe-mutate-observe rhythm.
-
-In code that means:
-
-- consecutive mutations are blocked by `validate_omo()`
-- `record_execution()` tracks whether the last step produced a commit
-- `needs_postcondition()` marks the requirement for observation after mutation
-
-The actual postcondition injection is done in `loop.py`, but the grammar belongs to the compiler.
-
-## Runtime Vocab Algebra
-
-The executable vocab surface in the compiler is:
+The compiler’s live vocab sets are still the authoritative execution algebra.
 
 Observe:
 
@@ -129,45 +69,164 @@ Mutate:
 
 Bridge:
 
-- `reprogramme_needed`
 - `reason_needed`
-- `commit_needed`
 - `await_needed`
+- `commit_needed`
+- `reprogramme_needed`
 
-Priority ordering is currently:
+`vocab_priority()` is the runtime sort key:
 
-- observe: `20`
-- mutate: `40`
-- unknown: `50`
-- `reason_needed`: `90`
-- `await_needed`: `95`
-- `commit_needed`: `98`
-- `reprogramme_needed`: `99`
+- observe -> `20`
+- mutate -> `40`
+- unknown -> `50`
+- `reason_needed` -> `90`
+- `await_needed` -> `95`
+- `commit_needed` -> `98`
+- `reprogramme_needed` -> `99`
 
-That ordering matters because the stack is LIFO. Higher priority numbers sink lower and therefore fire later.
+Because the ledger is LIFO, larger numbers sink lower and therefore fire later.
+
+## Admission
+
+Admission becomes deterministic once the model has supplied `relevance` and `confidence`.
+
+Important constants:
+
+- `ADMISSION_THRESHOLD = 0.4`
+- `CROSS_TURN_THRESHOLD = 0.6`
+- `DORMANT_PROMOTE_THRESHOLD = 0.7`
+- `DORMANT_THRESHOLD = 0.2`
+- `MAX_CHAIN_DEPTH = 15`
+- `CHAIN_EXTRACT_LENGTH = 8`
+- `SATURATION_THRESHOLD = 0.05`
+- `STAGNATION_WINDOW = 3`
+- `CONFIDENCE_THRESHOLD = 0.8`
+
+Grounded is recomputed in the compiler from trajectory co-occurrence. The model’s self-assessed grounded value is not trusted.
+
+Admission score is:
+
+`0.8 * relevance + 0.2 * grounded`
+
+Thresholds are tiered:
+
+- fresh gaps use `ADMISSION_THRESHOLD`
+- cross-turn dangling gaps use `CROSS_TURN_THRESHOLD`
+- dormant re-promotions use `DORMANT_PROMOTE_THRESHOLD`
+
+Anything below `DORMANT_THRESHOLD` is stored as dormant and never reaches the ledger.
+
+The main admission paths are:
+
+- `emit(step)` for child-gap admission
+- `emit_origin_gaps(step)` for origin-gap admission
+- `readmit_cross_turn(gaps, step_hash)` for dangling-gap resumption
+
+One important accuracy note: cross-turn readmission creates fresh chain roots from the old gap. It does not restore exact previous ledger placement.
+
+## Chains
+
+The compiler’s chain lifecycle is represented by `ChainState`:
+
+- `OPEN`
+- `ACTIVE`
+- `SUSPENDED`
+- `CLOSED`
+
+The active chain matters operationally. `emit()` pushes child gaps into the current chain, `next()` updates `self.active_chain` when a ledger entry is popped, `resolve_current_gap()` closes a chain when its remaining stack entries are gone, and `skip_chain()` or `force_close_chain()` provide structural escape hatches when the governor decides the branch should not continue normally.
+
+This is the mechanical backbone for depth-first branch progression.
+
+## Governor
+
+The governor is intentionally narrow. It operates on epistemic vectors and emits:
+
+- `ALLOW`
+- `CONSTRAIN`
+- `REDIRECT`
+- `REVERT`
+- `ACT`
+- `HALT`
+
+In the current implementation it mainly does four things:
+
+- force-closes chains that exceed `MAX_CHAIN_DEPTH`
+- reverts on divergence
+- redirects on oscillation or stagnation
+- upgrades mutate gaps to `ACT` when grounded and confidence are both at least `0.5`
+
+It is not a planner. It is a structural health gate over the active branch.
+
+## OMO
+
+The compiler owns the runtime OMO grammar.
+
+The relevant methods are:
+
+- `validate_omo(vocab)`
+- `record_execution(vocab, produced_commit)`
+- `needs_postcondition()`
+
+What it actually enforces:
+
+- no consecutive mutations without an intervening observation
+- mutation state persists through `last_was_mutation`
+- the loop can ask whether a postcondition observation is required
+
+What it does not do:
+
+- inject the postcondition gap
+- resolve the postcondition
+
+Those still happen in [loop.py](/Users/k2invested/Desktop/cors/loop.py).
+
+One current drift remains important to document honestly: the OMO violation path in the loop still records `"scan_needed"` as a legacy fallback even though `scan_needed` is not part of the live compiler vocab algebra.
 
 ## Background Tracking
 
-The current compiler also has a small but important background mechanism.
+The compiler now has a more explicit background surface than older docs described.
 
 It tracks:
 
 - `_background_triggers`
 - `_awaited_chains`
+- `_background_trigger_refs`
 
-From that it derives `needs_heartbeat()`, which is how `loop.py` decides whether to persist an automatic `reason_needed` dangling gap after synthesis.
+And exposes:
 
-This is one of the places where the actual architecture is richer than the older docs suggested. The system already has a structural notion of background work and reintegration.
+- `record_background_trigger(chain_id, refs=None)`
+- `record_await(chain_id)`
+- `needs_heartbeat()`
+- `background_refs()`
 
-## Where The Code Still Drifts
+This lets the loop persist a heartbeat `reason_needed` gap after synthesis and attach unresolved background package refs that should be revisited next turn.
 
-There are a few mismatches worth documenting plainly.
+## What It Does Not Do
 
-The compiler’s vocab algebra is stricter than parts of the surrounding system.
-Some tools and `.st` files still reference legacy terms such as `scan_needed`, `research_needed`, and `url_needed`, but those are not part of `OBSERVE_VOCAB`, `MUTATE_VOCAB`, or `BRIDGE_VOCAB`.
+It is important not to overstate `compile.py`.
 
-`CONFIDENCE_THRESHOLD` exists but is not currently the main resolution path.
-Most gap resolution in practice happens through chain handling in `loop.py`, not through a direct “confidence crossed threshold” transition.
+It does not:
 
-The governor is intentionally lightweight.
-If you read the principles as implying a more expressive planning calculus, that richer structure does not live here yet. `compile.py` is still the sequencing law, not the author-time planner.
+- understand skeletons or semantic skeletons
+- validate `skeleton.v1`
+- compile packages
+- resolve hashes
+- render trees
+- know `.st` file schemas
+
+Those jobs live in:
+
+- [tools/skeleton_compile.py](/Users/k2invested/Desktop/cors/tools/skeleton_compile.py)
+- [tools/semantic_skeleton_compile.py](/Users/k2invested/Desktop/cors/tools/semantic_skeleton_compile.py)
+- [manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py)
+- [loop.py](/Users/k2invested/Desktop/cors/loop.py)
+
+So `compile.py` is exactly what its name suggests: runtime sequencing law, not author-time planning.
+
+Three limits are worth recording explicitly.
+
+`CONFIDENCE_THRESHOLD` exists but is not the main resolution path. Actual gap closure happens through chain handling and loop routing, not a simple confidence-triggered resolution.
+
+The vocab algebra is stricter than some of the repo’s surrounding tools and older `.st` files. Legacy terms such as `scan_needed`, `research_needed`, and `url_needed` are outside the live compiler surface.
+
+The governor is deliberately lightweight. If you want richer planning calculus or whole-workflow validation, that lives in the skeleton compilers, not here.
