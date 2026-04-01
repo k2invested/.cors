@@ -68,6 +68,8 @@ During the turn it can inject:
 
 The `Active Chain Tree` is especially important. On each iteration the loop renders the chain identified by the current ledger entry’s `chain_id`, and marks the current gap with `[focus]`. That means the model sees the live causal branch it is currently inside, not just isolated nearby hashes.
 
+The loop also injects a one-line tree-language legend before the initial trajectory render. That keeps the render itself thin while still making richer gap dimensions legible. The render surface stays mostly hashes, descriptions, and refs; the extra structure is compressed into fixed signatures on steps and gaps.
+
 ## Hash Resolution
 
 `resolve_hash()` currently resolves in this order:

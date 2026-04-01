@@ -123,6 +123,20 @@ That passive-chain behavior matters. The runtime is not limited to purely local 
 
 `Trajectory.render_recent()` is the main salient trajectory renderer injected into the session. It renders chains, origin gaps, steps, gaps, refs, commits, and timestamps in a semantic-tree style.
 
+The render now carries a compact tree language rather than spelling every structural dimension out in prose:
+
+- `step{kindflowN}` means:
+  `kind=o` observe or `m` mutate,
+  `flow=+` open active child gaps, `~` dormant-only children, `=` closed,
+  and `N` is the number of active child gaps when present.
+- `gap{statusclassrcg/s:c}` means:
+  `status=?` active, `=` resolved, `~` dormant;
+  `class=o` observe, `m` mutate, `b` bridge, `c` clarify, `_` unknown;
+  `rcg` are relevance/confidence/grounded score bands compressed to `0-9`;
+  `s:c` are `step_refs:content_refs` counts.
+
+So a line like `{?m781/1:1} gap:...` means “active mutate-class gap, relevance band 7, confidence band 8, grounded band 1, one step ref, one content ref”.
+
 `Trajectory.render_chain()` is now the active-branch renderer. Given a `chain_id`, it renders the chain the current ledger entry belongs to and can mark the currently addressed gap with `[focus]`. This is what `loop.py` now injects as `## Active Chain Tree` while the system is working a gap.
 
 These renders matter because they are the readable semantic surface the model actually reasons over. The trajectory is the store; the renders are the live working view.

@@ -33,6 +33,26 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
+TREE_LANGUAGE_KEY = (
+    "tree_sig: step{kindflowN}=kind:o observe,m mutate; flow:+ open,~ dormant,= closed. "
+    "gap{statusclassrcg/s:c}=status:? active,= resolved,~ dormant; "
+    "class:o observe,m mutate,b bridge,c clarify,_ unknown; "
+    "rcg are rel/conf/gr bands 0-9; s:c are step_refs:content_refs counts."
+)
+
+OBSERVE_VOCABS = {
+    "hash_resolve_needed", "external_context", "pattern_needed",
+    "scan_needed", "research_needed", "url_needed",
+}
+MUTATE_VOCABS = {
+    "hash_edit_needed", "content_needed", "script_edit_needed", "command_needed",
+}
+BRIDGE_VOCABS = {
+    "reason_needed", "await_needed", "commit_needed", "reprogramme_needed", "stitch_needed",
+}
+CLARIFY_VOCABS = {"clarify_needed"}
+
+
 # ── Time formatting ──────────────────────────────────────────────────────
 
 def relative_time(t: float) -> str:
@@ -76,6 +96,28 @@ def chain_hash(step_hashes: list[str]) -> str:
     """Hash a sequence of step hashes into a chain hash."""
     combined = ":".join(step_hashes)
     return hashlib.sha256(combined.encode()).hexdigest()[:12]
+
+
+def score_band(value: float) -> str:
+    """Compress a 0-1 score into a single 0-9 band for tree rendering."""
+    if value is None:
+        value = 0.0
+    return str(max(0, min(9, round(value * 9))))
+
+
+def vocab_class(vocab: Optional[str]) -> str:
+    """Compress runtime vocab into a one-character manifestation class."""
+    if not vocab:
+        return "_"
+    if vocab in OBSERVE_VOCABS:
+        return "o"
+    if vocab in MUTATE_VOCABS:
+        return "m"
+    if vocab in BRIDGE_VOCABS:
+        return "b"
+    if vocab in CLARIFY_VOCABS:
+        return "c"
+    return "_"
 
 
 # ── Epistemic ─────────────────────────────────────────────────────────────
@@ -560,6 +602,41 @@ class Trajectory:
             refs.append(self._tag_ref(r, "content", registry))
         return f" → refs:[{', '.join(refs)}]" if refs else ""
 
+    def tree_language_key(self) -> str:
+        """Compact legend for the semantic tree notation."""
+        return TREE_LANGUAGE_KEY
+
+    def _step_signature(self, step: "Step") -> str:
+        """Compact step signature for tree rendering.
+
+        Format: {kindflowN}
+          kind: o observe, m mutate
+          flow: + active child gaps, ~ dormant-only, = closed/no open child gaps
+          N: number of active child gaps (only when > 0)
+        """
+        active = len(step.active_gaps())
+        dormant = len(step.dormant_gaps())
+        kind = "m" if step.is_mutation() else "o"
+        flow = "+" if active else "~" if dormant else "="
+        count = str(active) if active else ""
+        return f"{{{kind}{flow}{count}}}"
+
+    def _gap_signature(self, gap: "Gap") -> str:
+        """Compact gap signature for tree rendering.
+
+        Format: {statusclassrcg/s:c}
+          status: ? active, = resolved, ~ dormant
+          class:  o observe, m mutate, b bridge, c clarify, _ unknown
+          rcg:    relevance/confidence/grounded compressed to 0-9 bands
+          s:c:    step_refs:content_refs counts
+        """
+        status = "~" if gap.dormant else "=" if gap.resolved else "?"
+        klass = vocab_class(gap.vocab)
+        rel = score_band(gap.scores.relevance)
+        conf = score_band(gap.scores.confidence)
+        gr = score_band(gap.scores.grounded)
+        return f"{{{status}{klass}{rel}{conf}{gr}/{len(gap.step_refs)}:{len(gap.content_refs)}}}"
+
     def render_recent(self, n: int = 5, registry=None) -> str:
         """Render trajectory as a traversable hash tree.
 
@@ -575,12 +652,12 @@ class Trajectory:
 
         Structure:
           chain:<hash>  "summary" (status)
-            origin: <gap_hash> "gap description"
-            ├─ step:<hash> "desc" → refs:[admin:<hash>, commit:<sha>]
-            │   ├─ gap:<hash> "what needs doing" [vocab] → refs:[<hash>]
-            │   └─ gap:<hash> (dormant, score:0.15)
-            ├─ step:<hash> "desc" → commit:<sha>
-            │   └─ (resolved)
+            origin: <gap_hash>
+            ├─ {o+2} step:<hash> "desc" → refs:[admin:<hash>, commit:<sha>]
+            │   ├─ {?o862/1:2} gap:<hash> "what needs doing" [hash_resolve_needed]
+            │   └─ {~_210/0:1} gap:<hash> "low-value branch"
+            ├─ {m=} step:<hash> "desc" → commit:<sha>
+            │   └─ {=o764/1:1} gap:<hash> "closed postcondition"
             └─ ...
         """
         chains = self.recent_chains(n)
@@ -635,7 +712,10 @@ class Trajectory:
             ref_str = self._render_refs(step.step_refs, step.content_refs, registry)
             commit_str = f" → commit:{step.commit}" if step.commit else ""
             time_tag = f" ({absolute_time(step.t)})" if step.t > 0 else ""
-            lines.append(f"  {branch}─ step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}{time_tag}")
+            lines.append(
+                f"  {branch}─ {self._step_signature(step)} step:{step.hash} "
+                f"\"{step.desc}\"{ref_str}{commit_str}{time_tag}"
+            )
 
             active = [g for g in step.gaps if not g.dormant and not g.resolved]
             resolved = [g for g in step.gaps if g.resolved]
@@ -649,13 +729,22 @@ class Trajectory:
 
                 if gap.dormant:
                     score = gap.scores.magnitude()
-                    lines.append(f"  {cont}   {gbranch}─ gap:{gap.hash} (dormant, score:{score:.2f}){focus}")
+                    lines.append(
+                        f"  {cont}   {gbranch}─ {self._gap_signature(gap)} "
+                        f"gap:{gap.hash} \"{gap.desc}\" (dormant, score:{score:.2f}){focus}"
+                    )
                 elif gap.resolved:
-                    lines.append(f"  {cont}   {gbranch}─ gap:{gap.hash} (resolved){focus}")
+                    lines.append(
+                        f"  {cont}   {gbranch}─ {self._gap_signature(gap)} "
+                        f"gap:{gap.hash} \"{gap.desc}\" (resolved){focus}"
+                    )
                 else:
                     gref_str = self._render_refs(gap.step_refs, gap.content_refs, registry)
                     vocab_str = f" [{gap.vocab}]" if gap.vocab else ""
-                    lines.append(f"  {cont}   {gbranch}─ gap:{gap.hash} \"{gap.desc}\"{vocab_str}{gref_str}{focus}")
+                    lines.append(
+                        f"  {cont}   {gbranch}─ {self._gap_signature(gap)} "
+                        f"gap:{gap.hash} \"{gap.desc}\"{vocab_str}{gref_str}{focus}"
+                    )
 
         return lines
 
@@ -670,19 +759,31 @@ class Trajectory:
             ref_str = self._render_refs(step.step_refs, step.content_refs, registry)
             commit_str = f" → commit:{step.commit}" if step.commit else ""
             time_tag = f" ({absolute_time(step.t)})" if step.t > 0 else ""
-            lines.append(f"{branch}─ step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}{time_tag}")
+            lines.append(
+                f"{branch}─ {self._step_signature(step)} step:{step.hash} "
+                f"\"{step.desc}\"{ref_str}{commit_str}{time_tag}"
+            )
 
             for j, gap in enumerate(step.gaps):
                 is_last_gap = (j == len(step.gaps) - 1)
                 gbranch = "└" if is_last_gap else "├"
 
                 if gap.dormant:
-                    lines.append(f"{cont}   {gbranch}─ gap:{gap.hash} (dormant)")
+                    lines.append(
+                        f"{cont}   {gbranch}─ {self._gap_signature(gap)} "
+                        f"gap:{gap.hash} \"{gap.desc}\" (dormant)"
+                    )
                 elif gap.resolved:
-                    lines.append(f"{cont}   {gbranch}─ gap:{gap.hash} (resolved)")
+                    lines.append(
+                        f"{cont}   {gbranch}─ {self._gap_signature(gap)} "
+                        f"gap:{gap.hash} \"{gap.desc}\" (resolved)"
+                    )
                 else:
                     gref_str = self._render_refs(gap.step_refs, gap.content_refs, registry)
                     vocab_str = f" [{gap.vocab}]" if gap.vocab else ""
-                    lines.append(f"{cont}   {gbranch}─ gap:{gap.hash} \"{gap.desc}\"{vocab_str}{gref_str}")
+                    lines.append(
+                        f"{cont}   {gbranch}─ {self._gap_signature(gap)} "
+                        f"gap:{gap.hash} \"{gap.desc}\"{vocab_str}{gref_str}"
+                    )
 
         return "\n".join(lines)

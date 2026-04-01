@@ -36,7 +36,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from step import Step, Gap, Epistemic, Trajectory
+from step import Step, Gap, Epistemic, Trajectory, TREE_LANGUAGE_KEY
 from compile import (
     Compiler, GovernorSignal,
     is_observe, is_mutate, is_bridge,
@@ -270,14 +270,21 @@ def _render_step_tree(step, trajectory: Trajectory, depth: int = 0,
     ref_str = f" → refs:[{', '.join(refs)}]" if refs else ""
     commit_str = f" → commit:{step.commit}" if step.commit else ""
     time_tag = f" ({absolute_time(step.t)})" if step.t > 0 else ""
-    lines = [f"{indent}step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}{time_tag}"]
+    step_sig = trajectory._step_signature(step) if hasattr(trajectory, "_step_signature") else ""
+    sig_prefix = f"{step_sig} " if step_sig else ""
+    lines = [f"{indent}{sig_prefix}step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}{time_tag}"]
 
     # Gaps as child branches
     for gap in step.gaps:
+        gap_sig = trajectory._gap_signature(gap) if hasattr(trajectory, "_gap_signature") else ""
+        gap_prefix = f"{gap_sig} " if gap_sig else ""
         if gap.dormant:
-            lines.append(f"{indent}  └─ gap:{gap.hash} (dormant, score:{gap.scores.magnitude():.2f})")
+            lines.append(
+                f"{indent}  └─ {gap_prefix}gap:{gap.hash} \"{gap.desc}\" "
+                f"(dormant, score:{gap.scores.magnitude():.2f})"
+            )
         elif gap.resolved:
-            lines.append(f"{indent}  └─ gap:{gap.hash} (resolved)")
+            lines.append(f"{indent}  └─ {gap_prefix}gap:{gap.hash} \"{gap.desc}\" (resolved)")
         else:
             grefs = []
             for r in gap.step_refs:
@@ -286,7 +293,7 @@ def _render_step_tree(step, trajectory: Trajectory, depth: int = 0,
                 grefs.append(r)
             gref_str = f" → refs:[{', '.join(grefs)}]" if grefs else ""
             vocab_str = f" [{gap.vocab}]" if gap.vocab else ""
-            lines.append(f"{indent}  └─ gap:{gap.hash} \"{gap.desc}\"{vocab_str}{gref_str}")
+            lines.append(f"{indent}  └─ {gap_prefix}gap:{gap.hash} \"{gap.desc}\"{vocab_str}{gref_str}")
 
     # Follow step_refs backward (causal ancestry)
     if depth < max_depth:
@@ -301,11 +308,13 @@ def _render_step_tree(step, trajectory: Trajectory, depth: int = 0,
 
 def _render_gap_tree(gap, _trajectory: Trajectory = None) -> str:
     """Render a gap with its full context."""
-    lines = [f"gap:{gap.hash} \"{gap.desc}\""]
+    gap_sig = _trajectory._gap_signature(gap) if _trajectory and hasattr(_trajectory, "_gap_signature") else ""
+    sig_suffix = f" {gap_sig}" if gap_sig else ""
+    lines = [f"gap:{gap.hash}{sig_suffix} \"{gap.desc}\""]
     if gap.content_refs:
-        lines.append(f"  content_refs: {gap.content_refs}")
+        lines.append(f"  content_refs[{len(gap.content_refs)}]: {gap.content_refs}")
     if gap.step_refs:
-        lines.append(f"  step_refs: {gap.step_refs}")
+        lines.append(f"  step_refs[{len(gap.step_refs)}]: {gap.step_refs}")
     lines.append(f"  scores: rel={gap.scores.relevance:.2f} conf={gap.scores.confidence:.2f} gr={gap.scores.grounded:.2f}")
     if gap.vocab:
         lines.append(f"  vocab: {gap.vocab}")
@@ -563,15 +572,19 @@ You receive:
 
 The trajectory is rendered as a tree you can explore — the same shape as a git commit tree. Every node is a hash. Every branch is traversable.
 
+It also carries a compact tree language so structural dimensions stay visible without blowing up the render:
+- step{kindflowN}: kind=o observe, m mutate; flow=+ open, ~ dormant-only, = closed; N is active child-gap count when present
+- gap{statusclassrcg/s:c}: status=? active, = resolved, ~ dormant; class=o observe, m mutate, b bridge, c clarify, _ unknown; rcg are relevance/confidence/grounded bands (0-9); s:c are step_refs:content_refs counts
+
 ```
 chain:0d71abb30b86  "resolved missing config" (active, 3 steps)
   origin: fdd2834ace0b
-  ├─ step:7146246b7b7b "observed workspace" → refs:[commit:aa8b921]
-  │   ├─ gap:fdd2834ace0b "config missing" [scan_needed] → refs:[aa8b921:config.json]
-  │   └─ gap:00342afc4b05 (dormant, score:0.17)
-  ├─ step:f13bf0dc5db0 "resolved config" → refs:[step:7146246b7b7b, blob:e4f1...]
-  │   └─ gap:61ad761e524e "needs database section" [content_needed] → refs:[blob:e4f1...]
-  └─ step:53a20c80cf58 "wrote config" → refs:[step:f13bf0dc5db0] → commit:bb9c032
+  ├─ {o+2} step:7146246b7b7b "observed workspace" → refs:[commit:aa8b921]
+  │   ├─ {?o862/1:2} gap:fdd2834ace0b "config missing" [hash_resolve_needed] → refs:[aa8b921:config.json]
+  │   └─ {~_110/0:1} gap:00342afc4b05 "weak side-branch" (dormant, score:0.17)
+  ├─ {o+1} step:f13bf0dc5db0 "resolved config" → refs:[step:7146246b7b7b, blob:e4f1...]
+  │   └─ {?m781/1:1} gap:61ad761e524e "needs database section" [content_needed] → refs:[blob:e4f1...]
+  └─ {m=} step:53a20c80cf58 "wrote config" → refs:[step:f13bf0dc5db0] → commit:bb9c032
 ```
 
 How to navigate it:
@@ -745,7 +758,10 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
 
     traj_tree = trajectory.render_recent(TRAJECTORY_WINDOW, registry=registry)
 
-    first_input = f"""## Trajectory
+    first_input = f"""## Tree Language
+{TREE_LANGUAGE_KEY}
+
+## Trajectory
 {traj_tree}
 
 ## HEAD: commit:{head}

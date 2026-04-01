@@ -1,0 +1,360 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cors.local/schemas/security_compile.v1.json",
+  "title": "cors security_compile.v1",
+  "description": "Unified security-compile contract for step-shaped artifacts. The security compiler normalizes any candidate artifact, checks structural law, manifestation law, protected surfaces, recursive execution risk, and semantic integrity, then emits acceptance plus execution projection.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "input",
+    "result"
+  ],
+  "properties": {
+    "version": {
+      "const": "security_compile.v1"
+    },
+    "input": {
+      "$ref": "#/$defs/input"
+    },
+    "result": {
+      "$ref": "#/$defs/result"
+    }
+  },
+  "$defs": {
+    "artifactType": {
+      "enum": [
+        "atomic_step",
+        "gap",
+        "st_package",
+        "skeleton",
+        "semantic_skeleton",
+        "stepchain",
+        "realized_chain"
+      ]
+    },
+    "status": {
+      "enum": [
+        "accepted",
+        "accepted_with_warnings",
+        "rejected"
+      ]
+    },
+    "severity": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "verdict": {
+      "enum": [
+        "pass",
+        "warn",
+        "fail"
+      ]
+    },
+    "checkDomain": {
+      "enum": [
+        "structural_law",
+        "manifestation_law",
+        "protected_surfaces",
+        "recursive_execution_risk",
+        "semantic_integrity"
+      ]
+    },
+    "checkCode": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "artifactRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pathRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_type",
+        "candidate"
+      ],
+      "properties": {
+        "artifact_type": {
+          "$ref": "#/$defs/artifactType"
+        },
+        "candidate_ref": {
+          "$ref": "#/$defs/artifactRef"
+        },
+        "candidate_path": {
+          "$ref": "#/$defs/pathRef"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "runtime",
+            "authoring",
+            "registry",
+            "manual"
+          ]
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "validate_only",
+            "pre_admission",
+            "pre_persist",
+            "pre_activation",
+            "retrospective_audit"
+          ]
+        },
+        "candidate": {
+          "type": "object"
+        },
+        "context": {
+          "$ref": "#/$defs/context"
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "parent_gap": {
+          "$ref": "#/$defs/artifactRef"
+        },
+        "parent_chain": {
+          "$ref": "#/$defs/artifactRef"
+        },
+        "workspace_ref": {
+          "$ref": "#/$defs/artifactRef"
+        },
+        "activation_ref": {
+          "$ref": "#/$defs/artifactRef"
+        },
+        "existing_action_ref": {
+          "$ref": "#/$defs/artifactRef"
+        },
+        "registry_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactRef"
+          }
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "artifact_type",
+        "checks",
+        "violations",
+        "risks",
+        "projection"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "artifact_type": {
+          "$ref": "#/$defs/artifactType"
+        },
+        "normalized": {
+          "$ref": "#/$defs/normalized"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          }
+        },
+        "violations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        },
+        "risks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        },
+        "projection": {
+          "$ref": "#/$defs/projection"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "normalized": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "artifact_kind": {
+          "type": "string",
+          "enum": [
+            "entity",
+            "action",
+            "hybrid",
+            "codon",
+            "unknown"
+          ]
+        },
+        "root_kind": {
+          "type": "string",
+          "enum": [
+            "observe",
+            "reason",
+            "mutate",
+            "verify",
+            "higher_order",
+            "clarify",
+            "await",
+            "embed",
+            "terminal",
+            "unknown"
+          ]
+        },
+        "node_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "edge_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hash_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactRef"
+          }
+        },
+        "protected_surface_targets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "domain",
+        "verdict"
+      ],
+      "properties": {
+        "domain": {
+          "$ref": "#/$defs/checkDomain"
+        },
+        "verdict": {
+          "$ref": "#/$defs/verdict"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "domain",
+        "code",
+        "severity",
+        "message"
+      ],
+      "properties": {
+        "domain": {
+          "$ref": "#/$defs/checkDomain"
+        },
+        "code": {
+          "$ref": "#/$defs/checkCode"
+        },
+        "severity": {
+          "$ref": "#/$defs/severity"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactRef"
+          }
+        }
+      }
+    },
+    "projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "spawn_depth",
+        "branch_points",
+        "bridge_count",
+        "mutation_count",
+        "post_diff_reentry_points",
+        "background_reintegration_required",
+        "protected_surface_touches"
+      ],
+      "properties": {
+        "spawn_depth": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "branch_points": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bridge_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mutation_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "post_diff_reentry_points": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "background_reintegration_required": {
+          "type": "boolean"
+        },
+        "await_required": {
+          "type": "boolean"
+        },
+        "commit_consumption_required": {
+          "type": "boolean"
+        },
+        "protected_surface_touches": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

@@ -267,3 +267,33 @@ def test_render_active_chain_highlights_current_gap():
     assert "apply review" in rendered
     assert f"gap:{work_gap.hash}" in rendered
     assert "[focus]" in rendered
+
+
+def test_render_active_chain_includes_compact_tree_signatures():
+    traj = Trajectory()
+    origin_gap = Gap.create(desc="review target", content_refs=["blob:abc123"])
+    origin_gap.vocab = "reason_needed"
+    origin_gap.scores.relevance = 0.9
+    origin_gap.scores.confidence = 0.8
+    origin_gap.scores.grounded = 0.2
+
+    origin_step = Step.create(desc="origin", gaps=[origin_gap])
+    traj.append(origin_step)
+    rendered = traj.render_recent(5)
+
+    assert "{o+1}" in rendered
+    assert "{?b872/0:1}" in rendered
+
+
+def test_render_gap_tree_includes_signature_and_ref_counts():
+    traj = Trajectory()
+    gap = Gap.create(desc="inspect config", content_refs=["blob:abc123"], step_refs=["prev123"])
+    gap.vocab = "hash_resolve_needed"
+    gap.scores.relevance = 0.8
+    gap.scores.confidence = 0.6
+    gap.scores.grounded = 0.4
+
+    rendered = loop._render_gap_tree(gap, traj)
+    assert "{?o754/1:1}" in rendered
+    assert "content_refs[1]" in rendered
+    assert "step_refs[1]" in rendered
