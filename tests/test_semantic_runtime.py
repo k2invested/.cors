@@ -10,7 +10,7 @@ import loop
 import manifest_engine as me
 from compile import Compiler
 from step import Gap, Step, Trajectory
-from skills.loader import load_all
+from skills.loader import load_all, load_skill
 
 
 def registry():
@@ -183,6 +183,61 @@ def test_background_trigger_refs_round_trip():
     compiler.record_background_trigger("chain_b", refs=["abc123"])
     assert compiler.needs_heartbeat() is True
     assert compiler.background_refs() == ["abc123", "def456"]
+
+
+def test_loader_preserves_rich_step_manifestation_fields(tmp_path):
+    path = tmp_path / "rich_entity.st"
+    path.write_text(json.dumps({
+        "name": "rich_entity",
+        "desc": "entity with rich structure",
+        "trigger": "manual",
+        "refs": {"admin": "72b1d5ffc964"},
+        "identity": {"name": "Ada"},
+        "steps": [
+            {
+                "action": "load_context",
+                "desc": "load context",
+                "vocab": "hash_resolve_needed",
+                "relevance": 0.95,
+                "post_diff": False,
+                "resolve": ["admin"],
+                "condition": {"if": "known"},
+                "inject": {"system": "use this context"},
+                "content_refs": ["blob:abc123"],
+                "step_refs": ["$prev"],
+                "manifestation": {"kernel_class": "observe"},
+                "generation": {"spawn_mode": "none"},
+                "transitions": {"on_done": "next"},
+                "custom_field": "preserved"
+            }
+        ]
+    }, indent=2))
+
+    skill = load_skill(str(path))
+    assert skill is not None
+    assert skill.artifact_kind == "hybrid"
+    assert skill.refs == {"admin": "72b1d5ffc964"}
+    assert "identity" in skill.semantics
+    assert skill.payload["name"] == "rich_entity"
+
+    step = skill.steps[0]
+    assert step.relevance == 0.95
+    assert step.resolve == ["admin"]
+    assert step.condition == {"if": "known"}
+    assert step.inject == {"system": "use this context"}
+    assert step.content_refs == ["blob:abc123"]
+    assert step.step_refs == ["$prev"]
+    assert step.manifestation == {"kernel_class": "observe"}
+    assert step.generation == {"spawn_mode": "none"}
+    assert step.transitions == {"on_done": "next"}
+    assert step.extra["custom_field"] == "preserved"
+
+
+def test_loader_resolves_command_hashes_through_main_registry():
+    reg = registry()
+    command = reg.resolve_command("architect")
+    assert command is not None
+    assert reg.resolve(command.hash) == command
 
 
 def test_render_active_chain_highlights_current_gap():

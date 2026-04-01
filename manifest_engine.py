@@ -261,12 +261,14 @@ def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
         chain_id=entry_chain_id,
     )
     for st_step in skill.steps:
+        child_refs = [package_ref] + gap.content_refs + list(st_step.resolve) + list(st_step.content_refs)
         child_gap = Gap.create(
             desc=st_step.desc,
-            content_refs=[package_ref] + gap.content_refs,
+            content_refs=child_refs,
+            step_refs=list(st_step.step_refs),
         )
         child_gap.scores = Epistemic(
-            relevance=st_step.__dict__.get("relevance", 0.8),
+            relevance=st_step.relevance if st_step.relevance is not None else 0.8,
             confidence=0.8,
             grounded=0.0,
         )

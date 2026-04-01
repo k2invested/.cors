@@ -1768,21 +1768,15 @@ def _resolve_entity(content_refs: list[str], registry: SkillRegistry,
 
 
 def _skill_payload(skill: Skill) -> dict | None:
-    try:
-        with open(skill.source) as f:
-            return json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
-        return None
+    return skill.payload or None
 
 
 def _is_entity_skill(skill: Skill) -> bool:
-    if "codons" in skill.source:
+    if skill.artifact_kind == "codon":
         return False
-    payload = _skill_payload(skill)
-    if not payload:
-        return False
-    if any(field in payload for field in ENTITY_MANIFEST_FIELDS):
+    if skill.artifact_kind in {"entity", "hybrid"}:
         return True
+    payload = _skill_payload(skill) or {}
     return len(payload.get("steps", [])) == 0
 
 
@@ -1827,10 +1821,8 @@ def _render_step_network(registry: SkillRegistry) -> str:
 
 def _render_entity(skill: Skill) -> str:
     """Render a .st entity's full data for session injection."""
-    try:
-        with open(skill.source) as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
+    data = skill.payload
+    if not data:
         return f"## {skill.display_name}:{skill.hash}\n(unreadable)"
 
     lines = [f"## Entity: {skill.display_name}:{skill.hash}"]
