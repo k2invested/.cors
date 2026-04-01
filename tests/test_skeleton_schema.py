@@ -47,6 +47,24 @@ def validate_skeleton_contract(doc: dict) -> list[str]:
             terminal_ids.add(pid)
             continue
 
+        manifestation = phase.get("manifestation")
+        if manifestation is None:
+            errors.append(f"phase {pid} missing manifestation")
+        else:
+            required_manifest = {"kernel_class", "dispersal", "execution_mode"}
+            missing_manifest = required_manifest - set(manifestation)
+            if missing_manifest:
+                errors.append(
+                    f"phase {pid} manifestation missing fields: {sorted(missing_manifest)}"
+                )
+            mode = manifestation.get("execution_mode")
+            if mode == "runtime_vocab" and "runtime_vocab" not in manifestation:
+                errors.append(f"phase {pid} runtime_vocab manifestation requires runtime_vocab")
+            if mode == "curated_step_hash" and "activation_ref" not in manifestation:
+                errors.append(f"phase {pid} curated_step_hash manifestation requires activation_ref")
+            if manifestation.get("kernel_class") == "clarify" and manifestation.get("runtime_vocab") not in (None, "clarify_needed"):
+                errors.append(f"phase {pid} clarify manifestation must use clarify_needed")
+
         if "allowed_vocab" not in phase:
             errors.append(f"phase {pid} missing allowed_vocab")
         if "post_diff" not in phase:
@@ -117,6 +135,10 @@ def test_skeleton_schema_has_phase_variants():
         "embed",
         "terminal",
     ]
+    manifestation = schema["$defs"]["manifestation"]
+    assert manifestation["required"] == ["kernel_class", "dispersal", "execution_mode"]
+    assert schema["$defs"]["executionMode"]["enum"] == ["runtime_vocab", "curated_step_hash", "inline"]
+    assert schema["$defs"]["dispersalMode"]["enum"] == ["context", "action", "mixed", "embed"]
 
 
 def test_skeleton_schema_restricts_vocab_to_runtime_surface():
@@ -152,6 +174,13 @@ def test_skeleton_schema_valid_example_contract():
                     "content_refs": ["@target", "@context"],
                     "step_refs": []
                 },
+                "manifestation": {
+                    "kernel_class": "observe",
+                    "dispersal": "context",
+                    "execution_mode": "runtime_vocab",
+                    "runtime_vocab": "hash_resolve_needed",
+                    "protected_kind": "generic"
+                },
                 "allowed_vocab": ["hash_resolve_needed", "pattern_needed"],
                 "post_diff": False,
                 "resolve": ["target", "context"],
@@ -168,6 +197,13 @@ def test_skeleton_schema_valid_example_contract():
                     "desc": "target must be assessed against referred context",
                     "content_refs": ["@target"],
                     "step_refs": ["$prev"]
+                },
+                "manifestation": {
+                    "kernel_class": "bridge",
+                    "dispersal": "mixed",
+                    "execution_mode": "runtime_vocab",
+                    "runtime_vocab": "reason_needed",
+                    "await_policy": "none"
                 },
                 "allowed_vocab": ["reason_needed", "hash_edit_needed", "clarify_needed"],
                 "post_diff": True,
@@ -187,6 +223,15 @@ def test_skeleton_schema_valid_example_contract():
                     "content_refs": ["@target"],
                     "step_refs": ["$prev"]
                 },
+                "manifestation": {
+                    "kernel_class": "mutate",
+                    "dispersal": "action",
+                    "execution_mode": "curated_step_hash",
+                    "activation_ref": "@target",
+                    "activation_alias": "config_mutator",
+                    "protected_kind": "action",
+                    "emits_commit": True
+                },
                 "allowed_vocab": ["hash_edit_needed"],
                 "post_diff": True,
                 "requires_postcondition": True,
@@ -204,6 +249,12 @@ def test_skeleton_schema_valid_example_contract():
                     "content_refs": ["$commit"],
                     "step_refs": ["$prev"]
                 },
+                "manifestation": {
+                    "kernel_class": "observe",
+                    "dispersal": "mixed",
+                    "execution_mode": "runtime_vocab",
+                    "runtime_vocab": "hash_resolve_needed"
+                },
                 "allowed_vocab": ["hash_resolve_needed", "reason_needed"],
                 "post_diff": True,
                 "transitions": {
@@ -220,6 +271,12 @@ def test_skeleton_schema_valid_example_contract():
                     "desc": "required information is missing",
                     "content_refs": [],
                     "step_refs": ["$prev"]
+                },
+                "manifestation": {
+                    "kernel_class": "clarify",
+                    "dispersal": "context",
+                    "execution_mode": "runtime_vocab",
+                    "runtime_vocab": "clarify_needed"
                 },
                 "allowed_vocab": ["clarify_needed"],
                 "post_diff": False,
@@ -266,6 +323,11 @@ def test_skeleton_schema_invalid_example_contract():
                 "kind": "reason",
                 "goal": "assess mismatch",
                 "action": "assess_and_route",
+                "manifestation": {
+                    "kernel_class": "bridge",
+                    "dispersal": "mixed",
+                    "execution_mode": "curated_step_hash"
+                },
                 "allowed_vocab": ["reason_needed"]
             },
             {
@@ -294,6 +356,7 @@ def test_skeleton_schema_invalid_example_contract():
     errors = validate_skeleton_contract(doc)
 
     assert "root must reference an existing phase id" in errors
+    assert "phase phase_reason curated_step_hash manifestation requires activation_ref" in errors
     assert "phase phase_reason missing transitions" in errors
     assert "phase phase_reason missing gap_template" in errors
     assert "terminal phase phase_done must set terminal=true" in errors

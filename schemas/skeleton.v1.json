@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://cors.local/schemas/skeleton.v1.json",
   "title": "cors skeleton.v1",
-  "description": "Author-time planning skeleton for deterministic compilation into stepchain.v1 and optional lowering into .st or workflow JSON.",
+  "description": "Author-time planning skeleton for deterministic compilation into stepchain.v1 and optional lowering into .st or workflow JSON. Structural law lives in the skeleton. Exact curated package activation can be carried separately via symbolic hash refs.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -117,6 +117,144 @@
         }
       }
     },
+    "kernelClass": {
+      "enum": [
+        "observe",
+        "mutate",
+        "bridge",
+        "clarify"
+      ]
+    },
+    "dispersalMode": {
+      "enum": [
+        "context",
+        "action",
+        "mixed",
+        "embed"
+      ]
+    },
+    "executionMode": {
+      "enum": [
+        "runtime_vocab",
+        "curated_step_hash",
+        "inline"
+      ]
+    },
+    "awaitPolicy": {
+      "enum": [
+        "none",
+        "manual",
+        "heartbeat"
+      ]
+    },
+    "protectedKind": {
+      "enum": [
+        "generic",
+        "entity",
+        "action",
+        "codon"
+      ]
+    },
+    "manifestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kernel_class",
+        "dispersal",
+        "execution_mode"
+      ],
+      "properties": {
+        "kernel_class": {
+          "$ref": "#/$defs/kernelClass"
+        },
+        "dispersal": {
+          "$ref": "#/$defs/dispersalMode"
+        },
+        "execution_mode": {
+          "$ref": "#/$defs/executionMode"
+        },
+        "runtime_vocab": {
+          "$ref": "#/$defs/anyRuntimeVocab"
+        },
+        "activation_ref": {
+          "$ref": "#/$defs/symbolicRef"
+        },
+        "activation_alias": {
+          "$ref": "#/$defs/identifier"
+        },
+        "background": {
+          "type": "boolean"
+        },
+        "await_policy": {
+          "$ref": "#/$defs/awaitPolicy"
+        },
+        "protected_kind": {
+          "$ref": "#/$defs/protectedKind"
+        },
+        "emits_commit": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "execution_mode": {
+                "const": "runtime_vocab"
+              }
+            },
+            "required": [
+              "execution_mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "runtime_vocab"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "execution_mode": {
+                "const": "curated_step_hash"
+              }
+            },
+            "required": [
+              "execution_mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "activation_ref"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kernel_class": {
+                "const": "clarify"
+              }
+            },
+            "required": [
+              "kernel_class"
+            ]
+          },
+          "then": {
+            "properties": {
+              "runtime_vocab": {
+                "const": "clarify_needed"
+              }
+            }
+          }
+        }
+      ]
+    },
     "observeVocab": {
       "enum": [
         "hash_resolve_needed",
@@ -203,6 +341,9 @@
         "gap_template": {
           "$ref": "#/$defs/gapTemplate"
         },
+        "manifestation": {
+          "$ref": "#/$defs/manifestation"
+        },
         "allowed_vocab": {
           "type": "array",
           "minItems": 1,
@@ -276,6 +417,7 @@
           },
           "required": [
             "gap_template",
+            "manifestation",
             "allowed_vocab",
             "post_diff",
             "transitions"
@@ -314,6 +456,7 @@
           },
           "required": [
             "gap_template",
+            "manifestation",
             "allowed_vocab",
             "post_diff",
             "transitions"
@@ -349,6 +492,7 @@
           },
           "required": [
             "gap_template",
+            "manifestation",
             "allowed_vocab",
             "post_diff",
             "transitions"
@@ -384,6 +528,7 @@
           },
           "required": [
             "gap_template",
+            "manifestation",
             "allowed_vocab",
             "post_diff",
             "transitions"
@@ -412,6 +557,7 @@
           },
           "required": [
             "gap_template",
+            "manifestation",
             "allowed_vocab",
             "post_diff",
             "transitions"
@@ -443,6 +589,7 @@
           },
           "required": [
             "gap_template",
+            "manifestation",
             "allowed_vocab",
             "post_diff",
             "terminal"
@@ -475,6 +622,7 @@
           },
           "required": [
             "gap_template",
+            "manifestation",
             "allowed_vocab",
             "post_diff",
             "transitions"
@@ -495,6 +643,7 @@
           },
           "required": [
             "gap_template",
+            "manifestation",
             "allowed_vocab",
             "post_diff",
             "transitions",

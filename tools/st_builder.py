@@ -4,6 +4,10 @@
 The agent describes what it wants in natural language.
 The builder handles structure, format, and validation.
 
+This tool is for semantic intent and persistence-oriented `.st` writing,
+primarily the reprogramme path. It is NOT the deterministic compiler for
+`skeleton.v1`. That path belongs to `tools/skeleton_compile.py`.
+
 Input (stdin JSON):
 {
   "name": "task name",
@@ -124,6 +128,13 @@ def validate_st(data: dict) -> list[str]:
     return errors
 
 
+def looks_like_skeleton(data: dict) -> bool:
+    """Detect skeleton.v1/compiler-style input so it can be routed elsewhere."""
+    if data.get("version") == "skeleton.v1":
+        return True
+    return {"root", "phases", "closure"}.issubset(set(data))
+
+
 # ── Builder ──────────────────────────────────────────────────────────────
 
 def build_st(intent: dict) -> dict:
@@ -207,6 +218,13 @@ def main():
     except json.JSONDecodeError as e:
         print(f"Error: invalid JSON input — {e}")
         return
+
+    if looks_like_skeleton(intent):
+        print(
+            "Error: skeleton.v1 input should be compiled with tools/skeleton_compile.py, "
+            "not built through st_builder."
+        )
+        raise SystemExit(1)
 
     # Build .st from intent
     st = build_st(intent)

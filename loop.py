@@ -202,6 +202,10 @@ def auto_commit(message: str) -> tuple[str | None, str | None]:
 # ── Hash resolution ──────────────────────────────────────────────────────
 
 _skill_registry: SkillRegistry | None = None  # set by run_turn for resolve_hash access
+ENTITY_MANIFEST_FIELDS = {
+    "identity", "preferences", "constraints", "sources", "scope",
+    "schema", "access_rules", "principles", "boundaries", "domain_knowledge",
+}
 
 
 def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
@@ -1211,6 +1215,7 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
                 session.inject(f"## Reasoning activation: {gap.desc}")
                 if resolved_data:
                     session.inject(f"## Existing context\n{resolved_data}")
+                session.inject(f"## Entity Tree\n{_render_entity_tree(registry)}")
 
                 # Create a step that carries reason.st's gaps
                 reason_step = Step.create(
@@ -1667,6 +1672,60 @@ def _resolve_entity(content_refs: list[str], registry: SkillRegistry,
         if data:
             blocks.append(f"── {ref} ──\n{data}")
     return "\n\n".join(blocks) if blocks else None
+
+
+def _skill_payload(skill: Skill) -> dict | None:
+    try:
+        with open(skill.source) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return None
+
+
+def _is_entity_skill(skill: Skill) -> bool:
+    if "codons" in skill.source:
+        return False
+    payload = _skill_payload(skill)
+    if not payload:
+        return False
+    if any(field in payload for field in ENTITY_MANIFEST_FIELDS):
+        return True
+    return len(payload.get("steps", [])) == 0
+
+
+def _render_entity_tree(registry: SkillRegistry) -> str:
+    """Render entity-like .st files as a compact semantic tree."""
+    entity_skills = [skill for skill in registry.all_skills() if _is_entity_skill(skill)]
+    if not entity_skills:
+        return "(no entity .st files)"
+
+    lines = ["entity_tree"]
+    sorted_skills = sorted(entity_skills, key=lambda skill: skill.display_name)
+    for i, skill in enumerate(sorted_skills):
+        payload = _skill_payload(skill) or {}
+        branch = "└" if i == len(sorted_skills) - 1 else "├"
+        cont = " " if i == len(sorted_skills) - 1 else "│"
+        lines.append(
+            f"{branch}─ {skill.display_name}:{skill.hash} ({Path(skill.source).name}, trigger:{skill.trigger})"
+        )
+
+        fields = [field for field in ENTITY_MANIFEST_FIELDS if field in payload]
+        if fields:
+            lines.append(f"{cont}  ├─ semantics: {', '.join(sorted(fields))}")
+
+        refs = payload.get("refs", {})
+        if refs:
+            lines.append(f"{cont}  ├─ refs: {', '.join(sorted(refs.keys()))}")
+
+        steps = payload.get("steps", [])
+        if steps:
+            step_names = " → ".join(step.get("action", "?") for step in steps[:4])
+            more = " ..." if len(steps) > 4 else ""
+            lines.append(f"{cont}  └─ steps: {step_names}{more}")
+        else:
+            lines.append(f"{cont}  └─ steps: (pure entity)")
+
+    return "\n".join(lines)
 
 
 def _render_entity(skill: Skill) -> str:
