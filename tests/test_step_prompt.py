@@ -8,9 +8,17 @@ We check if it produces a step with correct hash references and gaps.
 
 import json
 import os
+import pytest
 from openai import OpenAI
 
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("OPENAI_API_KEY"),
+    reason="requires OPENAI_API_KEY",
+)
+
+
+def get_client():
+    return OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 SYSTEM = """You are a perception engine. You observe the current state and produce structured steps.
 
@@ -67,7 +75,7 @@ def test_first_step():
     print(f"\nContext:\n{CONTEXT}")
     print("-" * 60)
 
-    response = client.chat.completions.create(
+    response = get_client().chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
             {"role": "system", "content": SYSTEM},
@@ -163,7 +171,7 @@ Contents:
     print(f"\nContext:\n{context_2}")
     print("-" * 60)
 
-    response = client.chat.completions.create(
+    response = get_client().chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
             {"role": "system", "content": SYSTEM},

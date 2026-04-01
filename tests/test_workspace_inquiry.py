@@ -9,9 +9,17 @@ reading any files. The answer is already in the commit.
 
 import json
 import os
+import pytest
 from openai import OpenAI
 
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("OPENAI_API_KEY"),
+    reason="requires OPENAI_API_KEY",
+)
+
+
+def get_client():
+    return OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 SYSTEM = """You are a perception engine. You observe the current state and produce structured steps.
 
@@ -81,7 +89,7 @@ Workspace tree:
     print(f"User: \"{message}\"")
     print(f"{'=' * 60}")
 
-    response = client.chat.completions.create(
+    response = get_client().chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
             {"role": "system", "content": SYSTEM},

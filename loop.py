@@ -169,16 +169,16 @@ def _check_protected(commit_sha: str, pre_commit_sha: str) -> tuple[list[str], s
     return violations, on_reject
 
 
-def auto_commit(message: str) -> str | None:
-    """Stage all changes and commit. Returns SHA or None if nothing to commit.
+def auto_commit(message: str) -> tuple[str | None, str | None]:
+    """Stage all changes and commit. Returns (SHA, on_reject_vocab).
 
     After committing, checks for protected path violations. If the LLM
     mutated a protected file, auto-reverts to the previous commit and
-    returns None (the mutation is rejected).
+    returns (None, on_reject_vocab) (the mutation is rejected).
     """
     status = git(["status", "--porcelain"])
     if not status:
-        return None
+        return None, None
 
     pre_sha = git_head()
     git(["add", "-A"])
@@ -1759,7 +1759,7 @@ def _reprogramme_pass(session: Session, registry: SkillRegistry,
     output, code = execute_tool("tools/st_builder.py", intent)
     print(f"  st_builder: {output[:150]}")
 
-    commit_sha = auto_commit(f"reprogramme: {intent.get('name', 'unknown')}")
+    commit_sha, _on_reject = auto_commit(f"reprogramme: {intent.get('name', 'unknown')}")
     if commit_sha:
         print(f"  → committed: {commit_sha}")
         step = Step.create(

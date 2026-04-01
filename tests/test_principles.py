@@ -1,624 +1,774 @@
-"""Tests for all 20 v5 principles.
+"""Structural principle suite for cors.
 
-Each test validates a structural property of the system.
-No LLM calls — pure structure and logic tests.
+This replaces the old print-driven script with a real pytest suite.
+The goal is broad coverage of the mechanisms described in PRINCIPLES.md:
+hash layers, gap admission, vocab routing, chain lifecycle, codons,
+temporal rendering, and supporting infrastructure.
 """
 
+from __future__ import annotations
+
 import json
-import os
+import re
 import sys
-import tempfile
+import time
+from functools import lru_cache
 from pathlib import Path
+from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+import pytest
 
-from step import *
-from compile import *
-from skills.loader import load_all, load_skill
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+import loop
+from compile import (
+    ADMISSION_THRESHOLD,
+    BRIDGE_VOCAB,
+    CHAIN_EXTRACT_LENGTH,
+    CONFIDENCE_THRESHOLD,
+    CROSS_TURN_THRESHOLD,
+    DORMANT_PROMOTE_THRESHOLD,
+    DORMANT_THRESHOLD,
+    MAX_CHAIN_DEPTH,
+    MUTATE_VOCAB,
+    OBSERVE_VOCAB,
+    SATURATION_THRESHOLD,
+    STAGNATION_WINDOW,
+    ChainState,
+    Compiler,
+    GovernorSignal,
+    GovernorState,
+    Ledger,
+    LedgerEntry,
+    govern,
+    is_bridge,
+    is_mutate,
+    is_observe,
+    vocab_priority,
+)
+from skills.loader import Skill, SkillRegistry, load_all, load_skill
+from step import Chain, Epistemic, Gap, Step, Trajectory, absolute_time, blob_hash, chain_hash, relative_time
+from tools import chain_to_st as chain_to_st_module
+from tools import st_builder as st_builder_module
+
+SKILLS_DIR = ROOT / "skills"
+TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────
+def make_gap(
+    desc: str = "gap",
+    *,
+    content_refs: list[str] | None = None,
+    step_refs: list[str] | None = None,
+    relevance: float = 0.5,
+    confidence: float = 0.5,
+    grounded: float = 0.0,
+    vocab: str | None = None,
+    turn_id: int | None = None,
+    resolved: bool = False,
+    dormant: bool = False,
+) -> Gap:
+    gap = Gap.create(desc, content_refs=content_refs or [], step_refs=step_refs or [])
+    gap.scores = Epistemic(relevance, confidence, grounded)
+    gap.vocab = vocab
+    gap.vocab_score = 0.9 if vocab else 0.0
+    gap.turn_id = turn_id
+    gap.resolved = resolved
+    gap.dormant = dormant
+    return gap
 
-def make_gap(desc, content_refs=None, step_refs=None, rel=0.5, conf=0.5, gr=0.5, vocab=None):
-    g = Gap.create(desc, content_refs=content_refs or [], step_refs=step_refs or [])
-    g.scores = Epistemic(rel, conf, gr)
-    if vocab:
-        g.vocab = vocab
-        g.vocab_score = 0.9
-    return g
 
-
-def make_step(desc, gaps=None, step_refs=None, content_refs=None, commit=None):
+def make_step(
+    desc: str = "step",
+    *,
+    step_refs: list[str] | None = None,
+    content_refs: list[str] | None = None,
+    gaps: list[Gap] | None = None,
+    commit: str | None = None,
+    chain_id: str | None = None,
+    parent: str | None = None,
+) -> Step:
     return Step.create(
         desc=desc,
-        gaps=gaps or [],
         step_refs=step_refs or [],
         content_refs=content_refs or [],
+        gaps=gaps or [],
         commit=commit,
+        chain_id=chain_id,
+        parent=parent,
     )
 
 
-passed = 0
-failed = 0
-sections = 0
-
-
-def test(name, condition):
-    global passed, failed
-    if condition:
-        passed += 1
-        print(f"  ✓ {name}")
-    else:
-        failed += 1
-        print(f"  ✗ {name}")
-
-
-def section(name):
-    global sections
-    sections += 1
-    print(f"\n{name}")
-
-
-# ── §1: Step Primitive (two-phase, two hash layers) ──────────────────────
-
-print("\n§1: Step Primitive")
-
-s = make_step("test step", content_refs=["blob_a"], step_refs=["step_b"])
-test("step has hash", len(s.hash) == 12)
-test("step has timestamp", s.t > 0)
-test("content_refs = layer 2", s.content_refs == ["blob_a"])
-test("step_refs = layer 1", s.step_refs == ["step_b"])
-test("two layers separated on step", s.content_refs != s.step_refs)
-
-g = make_gap("test gap", content_refs=["blob_c"], step_refs=["step_d"])
-test("gap has hash", len(g.hash) == 12)
-test("gap content_refs = layer 2", g.content_refs == ["blob_c"])
-test("gap step_refs = layer 1", g.step_refs == ["step_d"])
-
-# ── §2: LLM as Attention (pre-diff emergent from hash refs) ─────────────
-
-print("\n§2: LLM as Attention")
-
-s1 = make_step("observed config", step_refs=["step_prev"], content_refs=["blob_cfg"])
-test("pre-diff = step_refs + content_refs", s1.all_refs() == ["step_prev", "blob_cfg"])
-test("desc carries semantic articulation", s1.desc == "observed config")
-
-# ── §3: Commits and Reverts ──────────────────────────────────────────────
-
-print("\n§3: Commits and Reverts")
-
-obs = make_step("just looked")
-mut = make_step("edited file", commit="abc123")
-test("observation has no commit", not obs.is_mutation())
-test("mutation has commit", mut.is_mutation())
-test("commit SHA stored", mut.commit == "abc123")
-
-# ── §4: Reasoning Chains ─────────────────────────────────────────────────
-
-print("\n§4: Reasoning Chains")
-
-chain = Chain.create(origin_gap="gap_hash", first_step="step_1")
-test("chain has hash", len(chain.hash) == 12)
-test("chain has origin", chain.origin_gap == "gap_hash")
-test("chain starts with 1 step", chain.length() == 1)
-
-chain.add_step("step_2")
-chain.add_step("step_3")
-test("chain grows", chain.length() == 3)
-test("chain hash changes on add", chain.hash != Chain.create("gap_hash", "step_1").hash)
-
-# ── §5: Navigation (trajectory traversal) ────────────────────────────────
-
-print("\n§5: Navigation")
-
-traj = Trajectory()
-s1 = make_step("first", content_refs=["blob_a"])
-s2 = make_step("second", step_refs=[s1.hash], content_refs=["blob_b"])
-traj.append(s1)
-traj.append(s2)
-
-test("resolve by hash", traj.resolve(s1.hash) == s1)
-test("resolve returns None for bad hash", traj.resolve("nonexistent") is None)
-test("step_refs link to prior step", s2.step_refs == [s1.hash])
-test("co_occurrence counts refs", traj.co_occurrence(s1.hash) >= 1)
-test("recent returns ordered steps", len(traj.recent(10)) == 2)
-
-# ── §6: One LLM One Governor (governor in compile.py) ───────────────────
-
-print("\n§6: One LLM One Governor")
-
-test("GovernorSignal exists", hasattr(GovernorSignal, 'ALLOW'))
-test("GovernorSignal.HALT exists", hasattr(GovernorSignal, 'HALT'))
-test("GovernorState tracks vectors", hasattr(GovernorState(), 'vectors'))
-
-# ── §7: Governor as Linear Algebra ──────────────────────────────────────
-
-print("\n§7: Governor Linear Algebra")
-
-e1 = Epistemic(0.9, 0.8, 0.7)
-e2 = Epistemic(0.5, 0.5, 0.5)
-test("epistemic has vector", e1.as_vector() == [0.9, 0.8, 0.7])
-test("distance computes", e1.distance_to(e2) > 0)
-test("magnitude computes", e1.magnitude() > 0)
-test("same vector = zero distance", e1.distance_to(e1) == 0.0)
-
-gs = GovernorState()
-gs.record(Epistemic(0.5, 0.5, 0.5))
-gs.record(Epistemic(0.5, 0.5, 0.5))
-gs.record(Epistemic(0.5, 0.5, 0.5))
-test("stagnation detected", gs.is_stagnating())
-
-gs2 = GovernorState()
-gs2.record(Epistemic(0.5, 0.8, 0.5))
-gs2.record(Epistemic(0.5, 0.4, 0.5))
-test("divergence detected", gs2.is_diverging())
-
-# ── §8: Predefined Step Hashes (.st files) ──────────────────────────────
-
-print("\n§8: Predefined Step Hashes")
-
-skills_dir = str(Path(__file__).parent.parent / "skills")
-registry = load_all(skills_dir)
-test("skills loaded", len(registry.all_skills()) > 0)
-
-admin = registry.resolve_by_name("admin")
-test("admin.st loaded", admin is not None)
-test("admin has hash", len(admin.hash) == 12)
-test("admin has steps", admin.step_count() > 0)
-test("skill render works", len(registry.render_for_prompt()) > 0)
-
-research = registry.resolve_by_name("research")
-test("research.st loaded", research is not None)
-test("research has mixed post_diff", any(s.post_diff for s in research.steps) and any(not s.post_diff for s in research.steps))
-
-# ── §9: Ledger as Stack ──────────────────────────────────────────────────
-
-print("\n§9: Ledger as Stack")
-
-ledger = Ledger()
-g1 = make_gap("gap A", rel=0.9, conf=0.3, gr=0.9, vocab="pattern_needed")
-g2 = make_gap("gap B", rel=0.5, conf=0.2, gr=0.8, vocab="pattern_needed")
-
-ledger.push_origin(g1, "chain_1")
-ledger.push_origin(g2, "chain_2")
-test("ledger has 2 entries", ledger.size() == 2)
-
-popped = ledger.pop()
-test("LIFO: last pushed popped first", popped.gap.hash == g2.hash)
-
-# Push child on current chain
-g3 = make_gap("child of A", rel=0.8, conf=0.5, gr=0.9)
-ledger.push_child(g3, "chain_1", parent_gap=g1.hash, depth=1)
-popped2 = ledger.pop()
-test("child pushed on top", popped2.gap.hash == g3.hash)
-test("child has depth > 0", popped2.depth == 1)
-
-# ── §10: OMO Rhythm ─────────────────────────────────────────────────────
-
-print("\n§10: OMO Rhythm")
-
-compiler = Compiler(Trajectory())
-test("observe vocab identified", is_observe("pattern_needed"))
-test("mutate vocab identified", is_mutate("script_edit_needed"))
-test("OMO: mutation valid after observation", compiler.validate_omo("script_edit_needed"))
-compiler.record_execution("script_edit_needed", True)
-test("OMO: mutation invalid after mutation", not compiler.validate_omo("script_edit_needed"))
-test("postcondition needed after mutation", compiler.needs_postcondition())
-compiler.record_execution("pattern_needed", False)
-test("OMO: observation valid after mutation", compiler.validate_omo("pattern_needed"))
-test("no postcondition after observation", not compiler.needs_postcondition())
-
-# ── §11: Dormant Gaps ────────────────────────────────────────────────────
-
-print("\n§11: Dormant Gaps")
-
-dormant_gap = make_gap("stale imports in utils.py", rel=0.1, conf=0.1, gr=0.1)
-dormant_step = make_step("noticed stale imports", gaps=[dormant_gap])
-traj2 = Trajectory()
-traj2.append(dormant_step)
-
-compiler2 = Compiler(traj2)
-compiler2.emit(dormant_step)
-test("low-score gap becomes dormant", dormant_gap.dormant)
-test("dormant gap not on ledger", compiler2.ledger.is_empty())
-test("dormant gap on trajectory", traj2.resolve_gap(dormant_gap.hash) is not None)
-
-# ── §12: Recursive Convergence ───────────────────────────────────────────
-
-print("\n§12: Recursive Convergence")
-
-s1 = make_step("atomic 1")
-s2 = make_step("atomic 2", step_refs=[s1.hash])
-s3 = make_step("atomic 3", step_refs=[s2.hash])
-chain = Chain.create(origin_gap="g1", first_step=s1.hash)
-chain.add_step(s2.hash)
-chain.add_step(s3.hash)
-test("chain compresses 3 steps into 1 hash", len(chain.hash) == 12)
-test("chain is traversable", chain.steps == [s1.hash, s2.hash, s3.hash])
-
-# ── §13: Closed Hash Graph ──────────────────────────────────────────────
-
-print("\n§13: Closed Hash Graph")
-
-test("step hash = 12 chars", len(make_step("test").hash) == 12)
-test("gap hash = 12 chars", len(make_gap("test").hash) == 12)
-test("same content = same hash", blob_hash("hello") == blob_hash("hello"))
-test("different content = different hash", blob_hash("hello") != blob_hash("world"))
-
-traj3 = Trajectory()
-s = make_step("test step")
-traj3.append(s)
-test("trajectory indexes by hash", traj3.resolve(s.hash) == s)
-test("nonexistent hash returns None", traj3.resolve("fake_hash") is None)
-
-# ── §14: Vocab as Deterministic Bridge ───────────────────────────────────
-
-print("\n§14: Vocab as Deterministic Bridge")
-
-test("OBSERVE_VOCAB is a set", isinstance(OBSERVE_VOCAB, set))
-test("MUTATE_VOCAB is a set", isinstance(MUTATE_VOCAB, set))
-test("pattern_needed in observe", "pattern_needed" in OBSERVE_VOCAB)
-test("script_edit_needed in mutate", "script_edit_needed" in MUTATE_VOCAB)
-test("no overlap", len(OBSERVE_VOCAB & MUTATE_VOCAB) == 0)
-test("hash_resolve_needed in observe", "hash_resolve_needed" in OBSERVE_VOCAB)
-
-# ── §15: No Micro Loop ──────────────────────────────────────────────────
-
-print("\n§15: No Micro Loop")
-
-# Chain depth is unbounded (up to MAX_CHAIN_DEPTH)
-test("MAX_CHAIN_DEPTH exists", MAX_CHAIN_DEPTH > 0)
-test("chain can grow", Chain.create("g", "s").length() == 1)
-c = Chain.create("g", "s")
-for i in range(10):
-    c.add_step(f"step_{i}")
-test("chain grows to 11", c.length() == 11)
-
-# ── §16: post_diff as Universal Configuration ───────────────────────────
-
-print("\n§16: post_diff Configuration")
-
-g_flex = make_gap("flexible gap")
-g_flex.dormant = False
-test("gap default not dormant", not g_flex.dormant)
-
-# post_diff on .st steps
-research = registry.resolve_by_name("research")
-if research:
-    flex_steps = [s for s in research.steps if s.post_diff]
-    det_steps = [s for s in research.steps if not s.post_diff]
-    test("research has flexible steps", len(flex_steps) > 0)
-    test("research has deterministic steps", len(det_steps) > 0)
-
-# ── §17: .st as Manifestation ───────────────────────────────────────────
-
-print("\n§17: .st as Manifestation")
-
-test("skills have trigger field", True)  # schema allows it
-admin = registry.resolve_by_name("admin")
-if admin:
-    test("admin.st is loaded", admin is not None)
-    test("admin.st has steps", admin.step_count() >= 4)
-
-# ── §18: Identity as .st ─────────────────────────────────────────────────
-
-print("\n§18: Identity as .st")
-
-admin_path = str(Path(__file__).parent.parent / "skills" / "admin.st")
-test("admin.st file exists", os.path.exists(admin_path))
-with open(admin_path) as f:
-    admin_data = json.load(f)
-test("admin has trigger on_contact", admin_data.get("trigger", "").startswith("on_contact"))
-test("admin has identity field", "identity" in admin_data)
-test("admin has preferences", "preferences" in admin_data)
-
-# ── §19: HEAD as Workspace State ─────────────────────────────────────────
-
-print("\n§19: HEAD as Workspace State")
-
-import subprocess
-result = subprocess.run(
-    ["git", "rev-parse", "--short", "HEAD"],
-    cwd=str(Path(__file__).parent.parent),
-    capture_output=True, text=True,
-)
-test("git HEAD resolvable", result.returncode == 0 and len(result.stdout.strip()) > 0)
-
-result2 = subprocess.run(
-    ["git", "ls-tree", "--name-only", "HEAD"],
-    cwd=str(Path(__file__).parent.parent),
-    capture_output=True, text=True,
-)
-test("HEAD tree has files", len(result2.stdout.strip()) > 0)
-
-# ── §20: No Modules ─────────────────────────────────────────────────────
-
-print("\n§20: No Modules")
-
-cors_dir = Path(__file__).parent.parent
-test("step.py exists", (cors_dir / "step.py").exists())
-test("compile.py exists", (cors_dir / "compile.py").exists())
-test("loop.py exists", (cors_dir / "loop.py").exists())
-test("skills/ exists", (cors_dir / "skills").is_dir())
-test("tools/ exists", (cors_dir / "tools").is_dir())
-test(".git/ exists", (cors_dir / ".git").is_dir())
-test("no governor.py (merged into compile)", not (cors_dir / "governor.py").exists())
-test("no Rust crate", not (cors_dir / "kernel_step").exists())
-
-# ── Trajectory round-trip ────────────────────────────────────────────────
-
-print("\n§ Round-trip Persistence")
-
-with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-    tmp = f.name
-
-traj_rt = Trajectory()
-s1 = make_step("step 1", content_refs=["blob_a"], gaps=[make_gap("gap 1")])
-s2 = make_step("step 2", step_refs=[s1.hash], commit="abc123")
-traj_rt.append(s1)
-traj_rt.append(s2)
-traj_rt.save(tmp)
-
-loaded = Trajectory.load(tmp)
-test("round-trip preserves step count", len(loaded.order) == 2)
-test("round-trip preserves hash", loaded.resolve(s1.hash).hash == s1.hash)
-test("round-trip preserves commit", loaded.resolve(s2.hash).commit == "abc123")
-test("round-trip preserves gaps", len(loaded.resolve(s1.hash).gaps) == 1)
-test("round-trip preserves content_refs", loaded.resolve(s1.hash).content_refs == ["blob_a"])
-os.unlink(tmp)
-
-# ── §9b: Priority Ordering ────────────────────────────────────────────────
-
-section("§9b: Priority Ordering")
-
-test("vocab_priority: bridge (reprogramme) = 99", vocab_priority("reprogramme_needed") == 99)
-test("vocab_priority: observe = 20", vocab_priority("pattern_needed") == 20)
-test("vocab_priority: mutate = 40", vocab_priority("hash_edit_needed") == 40)
-test("vocab_priority: reprogramme = 99", vocab_priority("reprogramme_needed") == 99)
-test("vocab_priority: unknown = 50", vocab_priority("something_random") == 50)
-test("vocab_priority: None = 50", vocab_priority(None) == 50)
-
-# Priority sorting on ledger
-ledger_p = Ledger()
-g_observe = make_gap("observe gap", vocab="pattern_needed")
-g_mutate = make_gap("mutate gap", vocab="hash_edit_needed")
-g_reprog = make_gap("reprogramme", vocab="reprogramme_needed")
-
-ledger_p.push_origin(g_observe, "c1")
-ledger_p.push_origin(g_mutate, "c2")
-ledger_p.push_origin(g_reprog, "c3")
-ledger_p.sort_by_priority()
-
-# After sort: reprogramme(99) at bottom, observe(20) at top → pops first
-popped_first = ledger_p.pop()
-test("priority: observe pops first", popped_first.gap.vocab == "pattern_needed")
-popped_second = ledger_p.pop()
-test("priority: mutate pops second", popped_second.gap.vocab == "hash_edit_needed")
-popped_last = ledger_p.pop()
-test("priority: reprogramme pops last", popped_last.gap.vocab == "reprogramme_needed")
-
-test("LedgerEntry has priority field", hasattr(LedgerEntry(gap=g_observe, chain_id="x"), 'priority'))
-
-# ── §9c: Admission Score (deterministic grounded) ────────────────────────
-
-section("§9c: Admission Score (deterministic grounded)")
-
-traj_adm = Trajectory()
-s_ref = make_step("referenced step", content_refs=["blob_x"])
-traj_adm.append(s_ref)
-traj_adm.append(make_step("also refs blob_x", content_refs=["blob_x"]))
-traj_adm.append(make_step("refs step", step_refs=[s_ref.hash]))
-
-compiler_adm = Compiler(traj_adm)
-
-# Gap referencing frequently seen hashes → high grounded
-g_grounded = make_gap("well-grounded gap", content_refs=["blob_x"], rel=0.5)
-score_grounded = compiler_adm._admission_score(g_grounded)
-test("grounded computed from co-occurrence", g_grounded.scores.grounded > 0)
-test("admission formula: 0.8*rel + 0.2*gr", score_grounded > 0.4 * 0.8)  # rel=0.5 → at least 0.4
-
-# Gap referencing unknown hashes → zero grounded
-g_ungrounded = make_gap("ungrounded gap", content_refs=["never_seen_hash"], rel=0.5)
-score_ungrounded = compiler_adm._admission_score(g_ungrounded)
-test("unknown hash → grounded ≈ 0", g_ungrounded.scores.grounded == 0.0)
-test("admission with zero grounded = 0.8 * rel", abs(score_ungrounded - 0.4) < 0.01)
-
-# High relevance alone can enter (0.8 * 0.9 = 0.72 > 0.4 threshold)
-g_high_rel = make_gap("high relevance, no grounding", content_refs=["new_hash"], rel=0.9)
-score_high = compiler_adm._admission_score(g_high_rel)
-test("high relevance enters despite zero grounding", score_high >= ADMISSION_THRESHOLD)
-
-# Low relevance cannot enter even with grounding
-g_low_rel = make_gap("low relevance", content_refs=["blob_x"], rel=0.1)
-score_low = compiler_adm._admission_score(g_low_rel)
-test("low relevance rejected despite grounding", score_low < ADMISSION_THRESHOLD)
-
-# ── §14b: Dynamic Bridge Vocab ───────────────────────────────────────────
-
-section("§14b: Bridge Vocab")
-
-test("BRIDGE_VOCAB is a set", isinstance(BRIDGE_VOCAB, set))
-test("three bridge codons", BRIDGE_VOCAB == {"reprogramme_needed", "reason_needed", "commit_needed"})
-test("is_bridge detects reprogramme", is_bridge("reprogramme_needed"))
-test("is_bridge detects reason", is_bridge("reason_needed"))
-test("is_bridge detects commit", is_bridge("commit_needed"))
-test("entity resolution has no vocab (just hash_resolve)", not is_bridge("admin_needed"))
-
-# No overlap between observe/mutate/bridge
-test("observe ∩ mutate = ∅", len(OBSERVE_VOCAB & MUTATE_VOCAB) == 0)
-test("observe ∩ bridge = ∅", len(OBSERVE_VOCAB & BRIDGE_VOCAB) == 0)
-
-# ── §14c: Current Vocab Integrity ────────────────────────────────────────
-
-section("§14c: Current Vocab Integrity")
-
-# Observe: exactly 4 terms
-test("OBSERVE has 5 terms", len(OBSERVE_VOCAB) == 5)
-test("clarify_needed in observe", "clarify_needed" in OBSERVE_VOCAB)
-test("pattern_needed in observe", "pattern_needed" in OBSERVE_VOCAB)
-test("hash_resolve_needed in observe", "hash_resolve_needed" in OBSERVE_VOCAB)
-test("email_needed in observe", "email_needed" in OBSERVE_VOCAB)
-test("external_context in observe", "external_context" in OBSERVE_VOCAB)
-test("scan_needed NOT in observe (removed)", "scan_needed" not in OBSERVE_VOCAB)
-test("url_needed NOT in observe (removed)", "url_needed" not in OBSERVE_VOCAB)
-test("registry_needed NOT in observe (removed)", "registry_needed" not in OBSERVE_VOCAB)
-test("research_needed NOT in observe (bridge now)", "research_needed" not in OBSERVE_VOCAB)
-
-# Mutate: exactly 7 terms
-test("MUTATE has 8 terms", len(MUTATE_VOCAB) == 8)
-test("stitch_needed in mutate", "stitch_needed" in MUTATE_VOCAB)
-test("hash_edit_needed in mutate", "hash_edit_needed" in MUTATE_VOCAB)
-test("command_needed in mutate", "command_needed" in MUTATE_VOCAB)
-test("content_needed in mutate", "content_needed" in MUTATE_VOCAB)
-test("message_needed in mutate", "message_needed" in MUTATE_VOCAB)
-
-# ── §8b: hash_edit.st ────────────────────────────────────────────────────
-
-section("§8b: hash_edit.st")
-
-hash_edit_path = str(Path(__file__).parent.parent / "skills" / "hash_edit.st")
-test("hash_edit.st exists", os.path.exists(hash_edit_path))
-
-with open(hash_edit_path) as f:
-    he_data = json.load(f)
-test("hash_edit has 3 steps", len(he_data.get("steps", [])) == 3)
-test("hash_edit triggers on vocab", he_data.get("trigger", "").startswith("on_vocab"))
-test("first step is observe", he_data["steps"][0].get("vocab") == "hash_resolve_needed")
-test("first step is deterministic", he_data["steps"][0].get("post_diff") == False)
-test("second step is flexible", he_data["steps"][1].get("post_diff") == True)
-
-# ── §8c: Skill Loader (trigger, is_command, display_name) ────────────────
-
-section("§8c: Skill Loader Features")
-
-admin_skill = registry.resolve_by_name("admin")
-test("admin has trigger field", admin_skill.trigger == "on_contact:admin")
-test("admin is not command", not admin_skill.is_command)
-test("admin has display_name", admin_skill.display_name == "kenny")
-
-# resolve_name returns display name
-test("resolve_name returns display", registry.resolve_name(admin_skill.hash) == "kenny")
-test("resolve_name returns None for unknown", registry.resolve_name("bad_hash") is None)
-
-# Command skills: registry has commands dict
-test("registry has commands dict", hasattr(registry, 'commands'))
-test("resolve_command returns None for non-command", registry.resolve_command("nonexistent") is None)
-
-# ── §17b: Stepless .st (pure entities) ───────────────────────────────────
-
-section("§17b: Stepless .st (pure entities)")
-
-# st_builder should accept stepless entities
-import subprocess as sp
-result = sp.run(
-    ["python3", str(Path(__file__).parent.parent / "tools" / "st_builder.py")],
-    input=json.dumps({"name": "test_entity", "desc": "test", "trigger": "manual",
-                       "identity": {"role": "tester"}}),
-    capture_output=True, text=True,
-    cwd=str(Path(__file__).parent.parent),
-)
-test("st_builder accepts stepless entity", result.returncode == 0)
-test("st_builder writes file", "Written:" in result.stdout)
-
-# Clean up
-test_st_path = Path(__file__).parent.parent / "skills" / "test_entity.st"
-if test_st_path.exists():
-    with open(test_st_path) as f:
-        test_data = json.load(f)
-    test("stepless .st has identity field", "identity" in test_data)
-    test("stepless .st has empty or minimal steps", len(test_data.get("steps", [])) == 0)
-    os.unlink(test_st_path)
-
-# ── §17c: Manifestation fields forwarded ─────────────────────────────────
-
-section("§17c: Manifestation Fields")
-
-result2 = sp.run(
-    ["python3", str(Path(__file__).parent.parent / "tools" / "st_builder.py")],
-    input=json.dumps({"name": "compliance_test", "desc": "test domain", "trigger": "manual",
-                       "constraints": {"must_ref": "act_1990"}, "sources": ["gov.uk"],
-                       "scope": "planning", "actions": [{"do": "check", "observe": True}]}),
-    capture_output=True, text=True,
-    cwd=str(Path(__file__).parent.parent),
-)
-test("st_builder forwards domain fields", result2.returncode == 0)
-
-comp_path = Path(__file__).parent.parent / "skills" / "compliance_test.st"
-if comp_path.exists():
-    with open(comp_path) as f:
-        comp_data = json.load(f)
-    test("constraints field forwarded", "constraints" in comp_data)
-    test("sources field forwarded", "sources" in comp_data)
-    test("scope field forwarded", "scope" in comp_data)
-    os.unlink(comp_path)
-
-# ── §10b: Universal Postcondition ─────────────────────────────────────────
-
-section("§10b: Universal Postcondition")
-
-# Every mutation should produce a postcondition gap (hash_resolve_needed)
-postcond_gap = Gap.create(desc="observe commit:abc", content_refs=["abc"], step_refs=["step_x"])
-postcond_gap.scores = Epistemic(relevance=1.0, confidence=1.0, grounded=0.0)
-postcond_gap.vocab = "hash_resolve_needed"
-test("postcondition gap has hash_resolve vocab", postcond_gap.vocab == "hash_resolve_needed")
-test("postcondition gap targets commit ref", "abc" in postcond_gap.content_refs)
-test("postcondition gap is observe", is_observe(postcond_gap.vocab))
-test("postcondition gap is not mutate", not is_mutate(postcond_gap.vocab))
-
-# ── §2b: Trajectory renders as hash tree ──────────────────────────────────
-
-section("§2b: Hash Tree Render")
-
-traj_render = Trajectory()
-s_r1 = make_step("observed workspace", content_refs=["commit_abc"])
-s_r2 = make_step("resolved config", step_refs=[s_r1.hash], content_refs=["blob_xyz"],
-                  gaps=[make_gap("needs edit", content_refs=["blob_xyz"], vocab="hash_edit_needed")])
-traj_render.append(s_r1)
-traj_render.append(s_r2)
-chain_r = Chain.create(origin_gap=s_r2.gaps[0].hash, first_step=s_r1.hash)
-chain_r.add_step(s_r2.hash)
-traj_render.add_chain(chain_r)
-
-rendered = traj_render.render_recent(5, registry=registry)
-test("render produces tree structure", "├─" in rendered or "└─" in rendered)
-test("render shows step hashes", "step:" in rendered)
-test("render shows gap hashes", "gap:" in rendered)
-test("render shows chain hash", "chain:" in rendered)
-test("render shows vocab tag", "hash_edit_needed" in rendered)
-
-# Named hash resolution in render
-s_named = make_step("loaded identity", content_refs=[admin_skill.hash])
-traj_named = Trajectory()
-traj_named.append(s_named)
-rendered_named = traj_named.render_recent(5, registry=registry)
-test("render shows named skill ref (kenny:hash)", "kenny:" in rendered_named)
-
-# ── §18b: Identity fires after first step ─────────────────────────────────
-
-section("§18b: Identity .st structure")
-
-test("admin.st has identity.name", admin_data.get("identity", {}).get("name") == "Kenny")
-test("admin.st has identity.role", "role" in admin_data.get("identity", {}))
-test("admin.st has communication prefs", "communication" in admin_data.get("preferences", {}))
-test("admin.st has architecture prefs", "architecture" in admin_data.get("preferences", {}))
-test("admin.st has workflow prefs", "workflow" in admin_data.get("preferences", {}))
-
-# ── §20b: No stale modules ───────────────────────────────────────────────
-
-section("§20b: No Stale Modules")
-
-cors_dir = Path(__file__).parent.parent
-test("no config_edit.st (deleted)", not (cors_dir / "skills" / "config_edit.st").exists())
-test("no DESIGN_NOTES.md (deleted)", not (cors_dir / "docs" / "DESIGN_NOTES.md").exists())
-test("hash_edit.st exists", (cors_dir / "skills" / "hash_edit.st").exists())
-test("hash_manifest.py exists", (cors_dir / "tools" / "hash_manifest.py").exists())
-test("st_builder.py exists", (cors_dir / "tools" / "st_builder.py").exists())
-
-# ── Summary ──────────────────────────────────────────────────────────────
-
-print(f"\n{'='*50}")
-print(f"Results: {passed} passed, {failed} failed")
-if failed == 0:
-    print("All principles validated.")
-else:
-    print(f"ISSUES: {failed} test(s) failed")
+@lru_cache(maxsize=1)
+def registry() -> SkillRegistry:
+    return load_all(str(SKILLS_DIR))
+
+
+@lru_cache(maxsize=1)
+def skill_data(name: str) -> dict:
+    skill = registry().resolve_by_name(name)
+    assert skill is not None, f"missing skill: {name}"
+    return json.loads(Path(skill.source).read_text())
+
+
+def skill(name: str) -> Skill:
+    resolved = registry().resolve_by_name(name)
+    assert resolved is not None, f"missing skill: {name}"
+    return resolved
+
+
+def seed_trajectory(*refs: str, count: int = 3) -> Trajectory:
+    traj = Trajectory()
+    for i in range(count):
+        traj.append(make_step(f"seed-{i}", content_refs=list(refs)))
+    return traj
+
+
+def build_origin_context(
+    *,
+    vocab: str = "pattern_needed",
+    relevance: float = 0.8,
+    confidence: float = 0.7,
+    refs: list[str] | None = None,
+    current_turn: int = 0,
+    gap_turn_id: int | None = None,
+    dormant: bool = False,
+    seed_count: int = 3,
+) -> SimpleNamespace:
+    refs = ["blob_alpha"] if refs is None else refs
+    traj = seed_trajectory(*refs, count=seed_count) if refs else Trajectory()
+    compiler = Compiler(traj, current_turn=current_turn)
+    gap = make_gap(
+        "origin gap",
+        content_refs=refs,
+        relevance=relevance,
+        confidence=confidence,
+        vocab=vocab,
+        turn_id=gap_turn_id,
+        dormant=dormant,
+    )
+    step = make_step("origin step", content_refs=refs, gaps=[gap])
+    traj.append(step)
+    compiler.emit_origin_gaps(step)
+    return SimpleNamespace(traj=traj, compiler=compiler, gap=gap, step=step)
+
+
+def build_chain_context() -> SimpleNamespace:
+    traj = Trajectory()
+    origin_gap = make_gap(
+        "inspect config",
+        content_refs=[skill("admin").hash, "blob_cfg"],
+        step_refs=["prior_step"],
+        relevance=0.9,
+        confidence=0.7,
+        vocab="pattern_needed",
+    )
+    step1 = make_step("observed workspace", content_refs=[skill("admin").hash], gaps=[origin_gap])
+    traj.append(step1)
+    chain = Chain.create(origin_gap.hash, step1.hash)
+    traj.add_chain(chain)
+    step2 = make_step(
+        "updated config",
+        step_refs=[step1.hash],
+        content_refs=["blob_cfg"],
+        commit="abc123",
+    )
+    traj.append(step2)
+    chain.add_step(step2.hash)
+    chain.desc = "resolved config"
+    chain.resolved = True
+    return SimpleNamespace(traj=traj, chain=chain, step1=step1, step2=step2, gap=origin_gap)
+
+
+def serialized_chain_files(tmp_path: Path) -> tuple[dict, dict]:
+    chain_hash = "chain12345678"
+    step_hash = "step12345678"
+    chain_doc = {
+        "hash": chain_hash,
+        "origin_gap": "gap123456789",
+        "steps": [step_hash],
+        "desc": "curated workflow",
+        "resolved": True,
+    }
+    traj_doc = [
+        {
+            "hash": step_hash,
+            "step_refs": [],
+            "content_refs": ["admin_hash"],
+            "desc": "observe target file",
+            "gaps": [
+                {
+                    "hash": "gap111111111",
+                    "desc": "need to resolve target",
+                    "content_refs": ["admin_hash"],
+                    "step_refs": [],
+                    "scores": {"relevance": 1.0, "confidence": 0.8, "grounded": 0.6},
+                    "vocab": "hash_resolve_needed",
+                    "vocab_score": 0.9,
+                }
+            ],
+            "t": time.time(),
+        }
+    ]
+    (tmp_path / "chains.json").write_text(json.dumps([chain_doc], indent=2))
+    (tmp_path / "trajectory.json").write_text(json.dumps(traj_doc, indent=2))
+    return chain_doc, traj_doc[0]
+
+
+P1_CASES = [
+    ("blob_hash_deterministic", lambda: blob_hash("alpha") == blob_hash("alpha")),
+    ("blob_hash_changes_with_content", lambda: blob_hash("alpha") != blob_hash("beta")),
+    ("chain_hash_deterministic", lambda: chain_hash(["a", "b"]) == chain_hash(["a", "b"])),
+    ("chain_hash_order_sensitive", lambda: chain_hash(["a", "b"]) != chain_hash(["b", "a"])),
+    ("step_hash_length", lambda: len(make_step("demo").hash) == 12),
+    ("gap_hash_length", lambda: len(make_gap("demo").hash) == 12),
+    ("step_timestamp_set", lambda: make_step("timed").t > 0),
+    ("gap_content_refs_preserved", lambda: make_gap("g", content_refs=["blob_a"]).content_refs == ["blob_a"]),
+    ("gap_step_refs_preserved", lambda: make_gap("g", step_refs=["step_a"]).step_refs == ["step_a"]),
+    ("step_content_refs_preserved", lambda: make_step("s", content_refs=["blob_a"]).content_refs == ["blob_a"]),
+    ("step_step_refs_preserved", lambda: make_step("s", step_refs=["step_a"]).step_refs == ["step_a"]),
+    ("observation_detected", lambda: make_step("obs").is_observation()),
+    ("mutation_detected", lambda: make_step("mut", commit="abc123").is_mutation()),
+    ("active_gaps_exclude_dormant_and_resolved", lambda: len(make_step("x", gaps=[
+        make_gap("active"),
+        make_gap("dormant", dormant=True),
+        make_gap("resolved", resolved=True),
+    ]).active_gaps()) == 1),
+    ("dormant_gaps_only_dormant", lambda: len(make_step("x", gaps=[
+        make_gap("active"),
+        make_gap("dormant", dormant=True),
+    ]).dormant_gaps()) == 1),
+    ("all_refs_include_step_and_content_and_gap_refs", lambda: set(make_step(
+        "refs",
+        step_refs=["step_parent"],
+        content_refs=["blob_parent"],
+        gaps=[make_gap("child", step_refs=["step_child"], content_refs=["blob_child"])],
+    ).all_refs()) == {"step_parent", "blob_parent", "step_child", "blob_child"}),
+    ("step_roundtrip_desc", lambda: Step.from_dict(make_step("roundtrip").to_dict()).desc == "roundtrip"),
+    ("step_roundtrip_commit", lambda: Step.from_dict(make_step("roundtrip", commit="abc").to_dict()).commit == "abc"),
+    ("chain_rehashes_on_add", lambda: (lambda c: (c.add_step("b"), c.hash)[1] != chain_hash(["gap", "a"]))(Chain.create("gap", "a"))),
+    ("trajectory_resolves_step_and_gap", lambda: (lambda t, s, g: t.resolve(s.hash) == s and t.resolve_gap(g.hash) == g)(
+        *(lambda gap: (lambda step, traj: (traj.append(step), traj, step, gap)[1:])(make_step("origin", gaps=[gap]), Trajectory()))(make_gap("g"))
+    )),
+]
+
+
+P2_CASES = [
+    ("fresh_gap_admitted", lambda: build_origin_context().compiler.gap_count() == 1),
+    ("weak_gap_becomes_dormant", lambda: build_origin_context(relevance=0.1, confidence=0.1).gap.dormant),
+    ("weak_gap_not_on_ledger", lambda: build_origin_context(relevance=0.1, confidence=0.1).compiler.gap_count() == 0),
+    ("cross_turn_gap_needs_higher_bar", lambda: build_origin_context(relevance=0.5, confidence=0.6, current_turn=2, gap_turn_id=1, seed_count=0).compiler.gap_count() == 0),
+    ("cross_turn_gap_can_reenter", lambda: build_origin_context(relevance=0.8, confidence=0.6, current_turn=2, gap_turn_id=1).compiler.gap_count() == 1),
+    ("dormant_promotion_uses_strongest_threshold", lambda: build_origin_context(relevance=0.6, confidence=0.6, dormant=True, seed_count=0).compiler.gap_count() == 0),
+    ("emit_origin_creates_chain", lambda: len(build_origin_context().traj.chains) == 1),
+    ("origin_chain_tracks_gap_hash", lambda: next(iter(build_origin_context().traj.chains.values())).origin_gap == build_origin_context().gap.hash),
+    ("origin_observe_pops_before_mutate", lambda: (lambda ctx: ctx.compiler.ledger.peek().gap.vocab == "pattern_needed")(
+        (lambda traj, comp, step: (traj.append(step), comp.emit_origin_gaps(step), SimpleNamespace(traj=traj, compiler=comp))[2])(
+            Trajectory(),
+            Compiler(Trajectory()),
+            make_step("origin", gaps=[
+                make_gap("mutate", vocab="content_needed", content_refs=["blob_a"], relevance=0.8, confidence=0.8),
+                make_gap("observe", vocab="pattern_needed", content_refs=["blob_a"], relevance=0.8, confidence=0.8),
+            ]),
+        )
+    )),
+    ("reprogramme_sits_at_bottom", lambda: (lambda comp, step: (
+        comp.emit_origin_gaps(step),
+        comp.ledger.stack[0].gap.vocab == "reprogramme_needed",
+    )[1])(
+        Compiler(Trajectory()),
+        make_step("origin", gaps=[
+            make_gap("observe", vocab="pattern_needed", content_refs=["blob_a"], relevance=0.8, confidence=0.8),
+            make_gap("persist", vocab="reprogramme_needed", content_refs=["blob_a"], relevance=0.8, confidence=0.8),
+        ]),
+    )),
+    ("child_gap_pushes_depth_first", lambda: (lambda ctx: (
+        setattr(ctx.compiler, "active_chain", next(iter(ctx.traj.chains.values()))),
+        ctx.compiler.emit(make_step("child step", gaps=[
+            make_gap("child", vocab="pattern_needed", content_refs=["blob_alpha"], relevance=0.8, confidence=0.7)
+        ])),
+        ctx.compiler.ledger.peek().depth == ctx.compiler.active_chain.length(),
+    )[2])(build_origin_context())),
+    ("child_gap_keeps_chain_id", lambda: (lambda ctx: (
+        setattr(ctx.compiler, "active_chain", next(iter(ctx.traj.chains.values()))),
+        ctx.compiler.emit(make_step("child step", gaps=[
+            make_gap("child", vocab="pattern_needed", content_refs=["blob_alpha"], relevance=0.8, confidence=0.7)
+        ])),
+        ctx.compiler.ledger.peek().chain_id == ctx.compiler.active_chain.hash,
+    )[2])(build_origin_context())),
+    ("grounded_uses_cooccurrence", lambda: Compiler(seed_trajectory("blob_a"))._compute_grounded(make_gap("g", content_refs=["blob_a"])) > 0),
+    ("grounded_zero_without_refs", lambda: Compiler(Trajectory())._compute_grounded(make_gap("g")) == 0.0),
+    ("readmit_cross_turn_returns_zero_when_dropped", lambda: (lambda comp, gap: comp.readmit_cross_turn([gap], "origin") == 0)(
+        Compiler(Trajectory(), current_turn=2),
+        make_gap("weak", relevance=0.2, confidence=0.2, vocab="pattern_needed", turn_id=1),
+    )),
+    ("readmit_cross_turn_returns_one_when_admitted", lambda: (lambda comp, gap: comp.readmit_cross_turn([gap], "origin") == 1)(
+        Compiler(seed_trajectory("blob_a"), current_turn=2),
+        make_gap("strong", relevance=0.9, confidence=0.7, vocab="pattern_needed", content_refs=["blob_a"], turn_id=1),
+    )),
+    ("ledger_size_tracks_admitted_gap", lambda: build_origin_context().compiler.ledger.size() == 1),
+    ("empty_ledger_halts", lambda: Compiler(Trajectory()).next()[1] == GovernorSignal.HALT),
+    ("next_pops_entry", lambda: build_origin_context().compiler.next()[0] is not None),
+    ("chain_summary_reports_origin", lambda: build_origin_context().compiler.chain_summary()[0]["origin"] == build_origin_context().gap.hash),
+]
+
+
+P3_CASES = [
+    ("observe_pattern_needed", lambda: is_observe("pattern_needed")),
+    ("observe_hash_resolve_needed", lambda: is_observe("hash_resolve_needed")),
+    ("observe_email_needed", lambda: is_observe("email_needed")),
+    ("observe_external_context", lambda: is_observe("external_context")),
+    ("observe_clarify_needed", lambda: is_observe("clarify_needed")),
+    ("mutate_hash_edit_needed", lambda: is_mutate("hash_edit_needed")),
+    ("mutate_stitch_needed", lambda: is_mutate("stitch_needed")),
+    ("mutate_content_needed", lambda: is_mutate("content_needed")),
+    ("mutate_script_edit_needed", lambda: is_mutate("script_edit_needed")),
+    ("mutate_command_needed", lambda: is_mutate("command_needed")),
+    ("mutate_message_needed", lambda: is_mutate("message_needed")),
+    ("mutate_json_patch_needed", lambda: is_mutate("json_patch_needed")),
+    ("mutate_git_revert_needed", lambda: is_mutate("git_revert_needed")),
+    ("bridge_reason_needed", lambda: is_bridge("reason_needed")),
+    ("bridge_await_needed", lambda: is_bridge("await_needed")),
+    ("bridge_commit_needed", lambda: is_bridge("commit_needed")),
+    ("bridge_reprogramme_needed", lambda: is_bridge("reprogramme_needed")),
+    ("deterministic_vocab_is_hash_resolve", lambda: loop.DETERMINISTIC_VOCAB == {"hash_resolve_needed"}),
+    ("observation_only_contains_external_context", lambda: "external_context" in loop.OBSERVATION_ONLY_VOCAB),
+    ("tool_map_hash_edit_routes_hash_manifest", lambda: loop.TOOL_MAP["hash_edit_needed"]["tool"] == "tools/hash_manifest.py"),
+    ("tool_map_stitch_has_post_observe", lambda: loop.TOOL_MAP["stitch_needed"]["post_observe"] == "ui_output/"),
+    ("priority_observe_before_mutate", lambda: vocab_priority("pattern_needed") < vocab_priority("content_needed")),
+    ("priority_mutate_before_reason", lambda: vocab_priority("content_needed") < vocab_priority("reason_needed")),
+    ("priority_reason_before_await", lambda: vocab_priority("reason_needed") < vocab_priority("await_needed")),
+    ("priority_await_before_commit", lambda: vocab_priority("await_needed") < vocab_priority("commit_needed")),
+    ("priority_commit_before_reprogramme", lambda: vocab_priority("commit_needed") < vocab_priority("reprogramme_needed")),
+    ("tree_policy_skills_reroutes_reprogramme", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
+    ("tree_policy_exact_match_compile_immutable", lambda: loop._match_policy("compile.py", loop._load_tree_policy())["immutable"] is True),
+    ("tree_policy_longest_prefix_wins", lambda: loop._match_policy("skills/codons/reason.st", loop._load_tree_policy())["on_reject"] == "reason_needed"),
+]
+
+
+P4_CASES = [
+    ("gap_axis_desc", lambda: hasattr(make_gap("x"), "desc")),
+    ("gap_axis_content_refs", lambda: hasattr(make_gap("x"), "content_refs")),
+    ("gap_axis_step_refs", lambda: hasattr(make_gap("x"), "step_refs")),
+    ("gap_axis_vocab", lambda: hasattr(make_gap("x"), "vocab")),
+    ("gap_axis_relevance", lambda: hasattr(make_gap("x").scores, "relevance")),
+    ("gap_axis_confidence", lambda: hasattr(make_gap("x").scores, "confidence")),
+    ("gap_axis_grounded", lambda: hasattr(make_gap("x").scores, "grounded")),
+    ("admission_score_overwrites_grounded", lambda: (lambda comp, gap: (comp._admission_score(gap), gap.scores.grounded > 0)[1])(
+        Compiler(seed_trajectory("blob_a")), make_gap("g", relevance=0.9, grounded=1.0, content_refs=["blob_a"])
+    )),
+    ("admission_formula_matches_weights", lambda: (lambda comp, gap: round(comp._admission_score(gap), 2) == round(0.8 * 0.5 + 0.2 * gap.scores.grounded, 2))(
+        Compiler(seed_trajectory("blob_a")), make_gap("g", relevance=0.5, content_refs=["blob_a"])
+    )),
+    ("fresh_threshold_constant", lambda: ADMISSION_THRESHOLD == 0.4),
+    ("cross_turn_threshold_constant", lambda: CROSS_TURN_THRESHOLD == 0.6),
+    ("dormant_promotion_threshold_constant", lambda: DORMANT_PROMOTE_THRESHOLD == 0.7),
+    ("dormant_threshold_constant", lambda: DORMANT_THRESHOLD == 0.2),
+    ("confidence_threshold_constant", lambda: CONFIDENCE_THRESHOLD == 0.8),
+    ("unsourced_gap_can_admit_if_relevant", lambda: build_origin_context(relevance=0.6, refs=[]).compiler.gap_count() == 1),
+    ("unsourced_gap_drops_if_not_relevant_enough", lambda: build_origin_context(relevance=0.4, refs=[]).compiler.gap_count() == 0),
+    ("gap_hash_changes_with_desc", lambda: make_gap("a").hash != make_gap("b").hash),
+    ("gap_hash_changes_with_refs", lambda: make_gap("a", content_refs=["x"]).hash != make_gap("a", content_refs=["y"]).hash),
+    ("gap_to_dict_carries_vocab", lambda: make_gap("a", vocab="pattern_needed").to_dict()["vocab"] == "pattern_needed"),
+    ("gap_to_dict_carries_status_flags", lambda: (lambda d: d["resolved"] and d["dormant"])(
+        make_gap("a", resolved=True, dormant=True).to_dict()
+    )),
+    ("step_from_dict_preserves_scores", lambda: (lambda restored: restored.gaps[0].scores.relevance == 0.7 and restored.gaps[0].scores.confidence == 0.6)(
+        Step.from_dict(make_step("s", gaps=[make_gap("g", relevance=0.7, confidence=0.6)]).to_dict())
+    )),
+]
+
+
+P5_CASES = [
+    ("registry_loads_admin", lambda: registry().resolve_by_name("admin") is not None),
+    ("registry_loads_research", lambda: registry().resolve_by_name("research") is not None),
+    ("admin_display_name_is_identity_name", lambda: skill("admin").display_name == "kenny"),
+    ("resolve_by_hash_returns_skill", lambda: registry().resolve(skill("admin").hash) == skill("admin")),
+    ("hash_edit_skill_exists", lambda: skill("hash_edit").name == "hash_edit"),
+    ("render_for_prompt_has_header", lambda: registry().render_for_prompt().startswith("## Available Skills")),
+    ("build_st_forwards_identity", lambda: "identity" in st_builder_module.build_st({"name": "person", "desc": "d", "identity": {"name": "Ada"}})),
+    ("build_st_allows_empty_actions", lambda: st_builder_module.build_st({"name": "entity", "desc": "d", "actions": []})["steps"] == []),
+    ("validate_st_accepts_pure_entity", lambda: st_builder_module.validate_st({"name": "entity", "desc": "d", "steps": []}) == []),
+    ("validate_st_rejects_invalid_trigger", lambda: any("invalid trigger" in e for e in st_builder_module.validate_st({"name": "x", "desc": "d", "trigger": "bad", "steps": []}))),
+    ("infer_vocab_mutation_edit", lambda: st_builder_module.infer_vocab("edit the config", True) == "script_edit_needed"),
+    ("infer_vocab_observe_grep", lambda: st_builder_module.infer_vocab("grep the file", False) == "pattern_needed"),
+    ("slugify_trims_to_four_words", lambda: st_builder_module.slugify("Update the very important config file") == "update_the_very_important"),
+    ("resolve_entity_renders_known_skill", lambda: skill("admin").hash in loop._resolve_entity([skill("admin").hash], registry(), Trajectory())),
+    ("render_entity_has_identity_block", lambda: "identity:" in loop._render_entity(skill("admin"))),
+    ("render_entity_has_steps_summary", lambda: "steps:" in loop._render_entity(skill("admin"))),
+    ("find_identity_skill_returns_admin", lambda: loop._find_identity_skill("admin", registry()) == skill("admin")),
+    ("render_identity_has_preferences", lambda: "## Preferences" in loop._render_identity(skill("admin"))),
+    ("reprogramme_skill_trigger_is_vocab", lambda: skill("reprogramme").trigger == "on_vocab:reprogramme_needed"),
+    ("reprogramme_skill_all_steps_loaded", lambda: skill("reprogramme").step_count() == 3),
+]
+
+
+P6_CASES = [
+    ("grounded_zero_without_refs", lambda: Compiler(Trajectory())._compute_grounded(make_gap("g")) == 0.0),
+    ("grounded_positive_with_refs", lambda: Compiler(seed_trajectory("blob_a"))._compute_grounded(make_gap("g", content_refs=["blob_a"])) > 0.0),
+    ("unsourced_gap_penalty_keeps_low_relevance_out", lambda: build_origin_context(relevance=0.49, refs=[]).compiler.gap_count() == 0),
+    ("unsourced_gap_at_threshold_can_enter", lambda: build_origin_context(relevance=0.5, refs=[]).compiler.gap_count() == 1),
+    ("tag_ref_prefixes_step_layer", lambda: Trajectory()._tag_ref("abc123", "step") == "step:abc123"),
+    ("tag_ref_leaves_content_bare", lambda: Trajectory()._tag_ref("abc123", "content") == "abc123"),
+    ("tag_ref_uses_registry_name", lambda: build_chain_context().traj._tag_ref(skill("admin").hash, "content", registry()).startswith("kenny:")),
+    ("render_refs_combines_layers", lambda: "step:parent" in Trajectory()._render_refs(["parent"], ["blob"], None) and "blob" in Trajectory()._render_refs(["parent"], ["blob"], None)),
+    ("render_recent_names_skill_hashes", lambda: "kenny:" in build_chain_context().traj.render_recent(5, registry())),
+    ("resolve_hash_renders_step_branch", lambda: (lambda ctx: "step:" in loop.resolve_hash(ctx.step1.hash, ctx.traj))(build_chain_context())),
+    ("resolve_hash_renders_gap_tree", lambda: (lambda ctx: "gap:" in loop.resolve_hash(ctx.gap.hash, ctx.traj))(build_chain_context())),
+    ("resolve_hash_returns_none_for_unknown", lambda: loop.resolve_hash("not_a_real_hash", Trajectory()) is None),
+    ("render_gap_tree_active_status", lambda: "status: active" in loop._render_gap_tree(make_gap("g"))),
+    ("render_gap_tree_dormant_status", lambda: "status: dormant" in loop._render_gap_tree(make_gap("g", dormant=True))),
+    ("render_gap_tree_resolved_status", lambda: "status: resolved" in loop._render_gap_tree(make_gap("g", resolved=True))),
+    ("step_refs_and_content_refs_render_separately", lambda: "step:prior_step" in build_chain_context().traj.render_recent(5, registry()) and "blob_cfg" in build_chain_context().traj.render_recent(5, registry())),
+    ("gap_hash_encodes_content_citation", lambda: make_gap("g", content_refs=["blob_a"]).hash != make_gap("g", content_refs=["blob_b"]).hash),
+    ("gap_hash_encodes_step_citation", lambda: make_gap("g", step_refs=["step_a"]).hash != make_gap("g", step_refs=["step_b"]).hash),
+    ("co_occurrence_counts_reference_usage", lambda: seed_trajectory("blob_a", count=2).co_occurrence("blob_a") == 2),
+    ("resolve_entity_falls_back_to_trajectory", lambda: (lambda traj, step: "step:" in loop._resolve_entity([step.hash], registry(), traj))( *(lambda t, s: (t.append(s), (t, s))[1])(Trajectory(), make_step("fallback")) )),
+]
+
+
+P7_CASES = [
+    ("admin_steps_all_deterministic", lambda: all(not s.post_diff for s in skill("admin").steps)),
+    ("hash_edit_has_one_flexible_step", lambda: len(skill("hash_edit").flexible_steps()) == 1),
+    ("research_has_flexible_steps", lambda: any(s.post_diff for s in skill("research").steps)),
+    ("research_has_deterministic_steps", lambda: any(not s.post_diff for s in skill("research").steps)),
+    ("reason_first_step_deterministic", lambda: skill("reason").steps[0].post_diff is False),
+    ("reason_later_steps_flexible", lambda: all(s.post_diff for s in skill("reason").steps[1:])),
+    ("await_first_two_deterministic", lambda: all(not s.post_diff for s in skill("await").steps[:2])),
+    ("await_last_step_flexible", lambda: skill("await").steps[-1].post_diff is True),
+    ("commit_first_step_deterministic", lambda: skill("commit").steps[0].post_diff is False),
+    ("commit_later_steps_flexible", lambda: all(s.post_diff for s in skill("commit").steps[1:])),
+    ("reprogramme_steps_all_terminal", lambda: all(not s.post_diff for s in skill("reprogramme").steps)),
+    ("builder_observe_maps_to_post_diff_true", lambda: st_builder_module.build_st({"name": "x", "desc": "d", "actions": [{"do": "inspect file", "observe": True}]})["steps"][0]["post_diff"] is True),
+    ("builder_mutate_maps_to_post_diff_false", lambda: st_builder_module.build_st({"name": "x", "desc": "d", "actions": [{"do": "edit file", "mutate": True}]})["steps"][0]["post_diff"] is False),
+    ("render_for_prompt_marks_admin_deterministic", lambda: "(deterministic)" in registry().render_for_prompt()),
+    ("render_for_prompt_marks_mixed_skill", lambda: "hash_edit" in registry().render_for_prompt() and "(mixed)" in registry().render_for_prompt()),
+    ("extract_st_steps_blob_is_terminal", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "observe target", "content_refs": ["blob_a"], "gaps": []}]})[0]["post_diff"] is False),
+    ("extract_st_steps_gap_branch_is_flexible", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "branch", "gaps": [{"content_refs": ["blob_a"], "step_refs": ["step_a"], "scores": {"relevance": 0.8}, "vocab": "pattern_needed"}]}]})[0]["post_diff"] is True),
+    ("extract_st_steps_commit_implies_post_diff", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "mutate", "commit": "abc", "gaps": [{"content_refs": [], "step_refs": [], "scores": {"relevance": 0.8}, "vocab": "content_needed"}]}]})[0]["post_diff"] is True),
+    ("admin_deterministic_steps_helper", lambda: len(skill("admin").deterministic_steps()) == 4),
+    ("hash_edit_flexible_steps_helper", lambda: len(skill("hash_edit").flexible_steps()) == 1),
+]
+
+
+P8_CASES = [
+    ("omo_allows_first_mutation", lambda: Compiler(Trajectory()).validate_omo("content_needed")),
+    ("omo_blocks_consecutive_mutation", lambda: (lambda comp: (comp.record_execution("content_needed", True), comp.validate_omo("content_needed"))[1] is False)(Compiler(Trajectory()))),
+    ("omo_allows_observation_after_mutation", lambda: (lambda comp: (comp.record_execution("content_needed", True), comp.validate_omo("pattern_needed"))[1])(Compiler(Trajectory()))),
+    ("postcondition_needed_after_mutation", lambda: (lambda comp: (comp.record_execution("content_needed", True), comp.needs_postcondition())[1])(Compiler(Trajectory()))),
+    ("postcondition_clears_after_observation", lambda: (lambda comp: (comp.record_execution("content_needed", True), comp.record_execution("pattern_needed", False), comp.needs_postcondition())[2] is False)(Compiler(Trajectory()))),
+    ("govern_acts_on_grounded_mutation", lambda: govern(LedgerEntry(make_gap("g", vocab="content_needed", confidence=0.7, grounded=0.6), "c"), 1, GovernorState()) == GovernorSignal.ACT),
+    ("govern_allows_weak_mutation", lambda: govern(LedgerEntry(make_gap("g", vocab="content_needed", confidence=0.2, grounded=0.1), "c"), 1, GovernorState()) == GovernorSignal.ALLOW),
+    ("govern_reverts_on_divergence", lambda: (lambda state: (state.record(Epistemic(0.5, 0.8, 0.5)), state.record(Epistemic(0.5, 0.5, 0.5)), govern(LedgerEntry(make_gap("g"), "c"), 1, state))[2] == GovernorSignal.REVERT)(GovernorState())),
+    ("govern_redirects_on_oscillation", lambda: (lambda state: (state.record(Epistemic(0.5, 0.80, 0.5)), state.record(Epistemic(0.5, 0.70, 0.5)), state.record(Epistemic(0.5, 0.75, 0.5)), state.record(Epistemic(0.5, 0.68, 0.5)), govern(LedgerEntry(make_gap("g"), "c"), 1, state))[4] == GovernorSignal.REDIRECT)(GovernorState())),
+    ("govern_redirects_on_stagnation", lambda: (lambda state: (state.record(Epistemic(0.5, 0.5, 0.5)), state.record(Epistemic(0.5, 0.5, 0.5)), state.record(Epistemic(0.5, 0.5, 0.5)), govern(LedgerEntry(make_gap("g"), "c"), 1, state))[3] == GovernorSignal.REDIRECT)(GovernorState())),
+    ("govern_constrains_at_max_depth", lambda: govern(LedgerEntry(make_gap("g"), "c"), MAX_CHAIN_DEPTH + 1, GovernorState()) == GovernorSignal.CONSTRAIN),
+    ("ledger_lifo_pop", lambda: (lambda ledger, g1, g2: (ledger.push_origin(g1, "c1"), ledger.push_origin(g2, "c2"), ledger.pop().gap.hash == g2.hash)[2])(Ledger(), make_gap("g1"), make_gap("g2"))),
+    ("ledger_child_pops_first", lambda: (lambda ledger, g1, g2: (ledger.push_origin(g1, "c1"), ledger.push_child(g2, "c1", g1.hash, 1), ledger.pop().gap.hash == g2.hash)[2])(Ledger(), make_gap("g1"), make_gap("g2"))),
+    ("force_close_marks_chain_resolved", lambda: (lambda ctx: (ctx.compiler.force_close_chain(next(iter(ctx.traj.chains))), next(iter(ctx.traj.chains.values())).resolved)[1])(build_origin_context())),
+    ("skip_chain_suspends_chain", lambda: (lambda ctx, chain_id: (ctx.compiler.skip_chain(chain_id), ctx.compiler.ledger.chain_states[chain_id] == ChainState.SUSPENDED)[1])(build_origin_context(), next(iter(build_origin_context().traj.chains)))),
+    ("next_on_empty_halts", lambda: Compiler(Trajectory()).next()[1] == GovernorSignal.HALT),
+    ("next_sets_active_chain", lambda: build_origin_context().compiler.next()[0] is not None),
+    ("resolve_current_gap_closes_chain", lambda: (lambda ctx: (ctx.compiler.next(), ctx.compiler.resolve_current_gap(ctx.gap.hash), next(iter(ctx.traj.chains.values())).resolved)[2])(build_origin_context())),
+    ("render_ledger_empty_message", lambda: Compiler(Trajectory()).render_ledger() == "(ledger empty)"),
+    ("chain_summary_contains_state", lambda: "state" in build_origin_context().compiler.chain_summary()[0]),
+]
+
+
+P9_CASES = [
+    ("chain_starts_at_length_one", lambda: Chain.create("gap", "step").length() == 1),
+    ("chain_add_step_increments_length", lambda: (lambda c: (c.add_step("step2"), c.length())[1] == 2)(Chain.create("gap", "step1"))),
+    ("chain_roundtrip_preserves_hash", lambda: Chain.from_dict(Chain.create("gap", "step").to_dict()).hash == Chain.create("gap", "step").hash),
+    ("trajectory_add_chain_find_chain", lambda: (lambda traj, c: (traj.add_chain(c), traj.find_chain(c.origin_gap) == c)[1])(Trajectory(), Chain.create("gap", "step"))),
+    ("append_to_passive_chain_true_when_open", lambda: (lambda traj, c, s: (traj.add_chain(c), traj.append_to_passive_chain(c.hash, s))[1])(Trajectory(), Chain.create("gap", "step1"), make_step("step2"))),
+    ("append_to_passive_chain_false_when_resolved", lambda: (lambda traj, c, s: (setattr(c, "resolved", True), traj.add_chain(c), traj.append_to_passive_chain(c.hash, s))[2] is False)(Trajectory(), Chain.create("gap", "step1"), make_step("step2"))),
+    ("find_passive_chains_matches_origin_refs", lambda: (lambda traj, gap, chain: (traj.gap_index.__setitem__(gap.hash, gap), traj.add_chain(chain), len(traj.find_passive_chains("blob_a")) == 1)[2])(Trajectory(), make_gap("origin", content_refs=["blob_a"]), Chain.create(make_gap("origin", content_refs=["blob_a"]).hash, "step1"))),
+    ("recent_is_chronological", lambda: (lambda traj, s1, s2: (traj.append(s1), traj.append(s2), [s.desc for s in traj.recent(2)] == ["one", "two"])[2])(Trajectory(), make_step("one"), make_step("two"))),
+    ("render_recent_empty_trajectory", lambda: Trajectory().render_recent() == "(empty trajectory)"),
+    ("render_recent_flat_when_no_chains", lambda: "step:" in (lambda traj: (traj.append(make_step("loose")), traj.render_recent())[1])(Trajectory())),
+    ("render_recent_chain_header", lambda: "chain:" in build_chain_context().traj.render_recent(5, registry())),
+    ("render_recent_shows_commit", lambda: "commit:abc123" in build_chain_context().traj.render_recent(5, registry())),
+    ("render_recent_shows_resolved_status", lambda: "resolved" in build_chain_context().traj.render_recent(5, registry())),
+    ("recent_chains_returns_chain_objects", lambda: isinstance(build_chain_context().traj.recent_chains(1)[0], Chain)),
+    ("chain_summary_counts_steps", lambda: build_origin_context().compiler.chain_summary()[0]["steps"] >= 1),
+    ("extract_threshold_marks_chain", lambda: (lambda traj, comp, chain, gap: (
+        setattr(comp, "active_chain", chain),
+        [chain.add_step(f"s{i}") for i in range(CHAIN_EXTRACT_LENGTH - 1)],
+        comp.resolve_current_gap(gap.hash),
+        chain.extracted,
+    )[3])(
+        (lambda ctx: ctx.traj)(build_origin_context()),
+        (lambda ctx: ctx.compiler)(build_origin_context()),
+        next(iter(build_origin_context().traj.chains.values())),
+        build_origin_context().gap,
+    )),
+    ("chain_state_open_on_push_origin", lambda: list(build_origin_context().compiler.ledger.chain_states.values())[0] == ChainState.OPEN),
+    ("find_chain_returns_none_when_absent", lambda: Trajectory().find_chain("missing") is None),
+    ("co_occurrence_reads_gap_refs_via_all_refs", lambda: (lambda traj, gap, step: (traj.append(step), traj.co_occurrence("blob_gap") == 1)[1])(Trajectory(), make_gap("g", content_refs=["blob_gap"]), make_step("s", gaps=[make_gap("g", content_refs=["blob_gap"])]))),
+    ("render_recent_orders_recent_chain_first", lambda: build_chain_context().traj.render_recent(1, registry()).startswith("chain:")),
+]
+
+
+P10_CASES = [
+    ("reason_trigger", lambda: skill("reason").trigger == "on_vocab:reason_needed"),
+    ("reason_step1_observe", lambda: skill("reason").steps[0].vocab == "hash_resolve_needed"),
+    ("reason_step2_flexible", lambda: skill("reason").steps[1].post_diff is True),
+    ("reason_relevance_descends", lambda: [s["relevance"] for s in skill_data("reason")["steps"]] == [1.0, 0.9, 0.8, 0.7]),
+    ("await_trigger", lambda: skill("await").trigger == "on_vocab:await_needed"),
+    ("await_wait_step_observe", lambda: skill("await").steps[0].vocab == "hash_resolve_needed"),
+    ("await_last_step_flexible", lambda: skill("await").steps[-1].post_diff is True),
+    ("commit_trigger", lambda: skill("commit").trigger == "on_vocab:commit_needed"),
+    ("commit_first_step_observe", lambda: skill("commit").steps[0].vocab == "hash_resolve_needed"),
+    ("commit_relevance_descends", lambda: [s["relevance"] for s in skill_data("commit")["steps"]] == [1.0, 0.9, 0.8]),
+    ("reprogramme_trigger", lambda: skill("reprogramme").trigger == "on_vocab:reprogramme_needed"),
+    ("reprogramme_relevance_descends", lambda: [s["relevance"] for s in skill_data("reprogramme")["steps"]] == [1.0, 0.9, 0.8]),
+    ("background_trigger_needs_heartbeat", lambda: (lambda comp: (comp.record_background_trigger("c1"), comp.needs_heartbeat())[1])(Compiler(Trajectory()))),
+    ("await_suppresses_heartbeat", lambda: (lambda comp: (comp.record_background_trigger("c1"), comp.record_await("c1"), comp.needs_heartbeat())[2] is False)(Compiler(Trajectory()))),
+    ("dangling_gaps_find_active", lambda: len(loop._find_dangling_gaps((lambda traj: (traj.append(make_step("s", gaps=[make_gap("active")])), traj)[1])(Trajectory()))) == 1),
+    ("dangling_gaps_ignore_dormant", lambda: len(loop._find_dangling_gaps((lambda traj: (traj.append(make_step("s", gaps=[make_gap("d", dormant=True)])), traj)[1])(Trajectory()))) == 0),
+    ("dangling_gaps_ignore_resolved", lambda: len(loop._find_dangling_gaps((lambda traj: (traj.append(make_step("s", gaps=[make_gap("r", resolved=True)])), traj)[1])(Trajectory()))) == 0),
+    ("reason_steps_count", lambda: skill("reason").step_count() == 4),
+    ("await_steps_count", lambda: skill("await").step_count() == 3),
+    ("commit_steps_count", lambda: skill("commit").step_count() == 3),
+]
+
+
+P11_CASES = [
+    ("absolute_time_format_epoch", lambda: bool(TIMESTAMP_RE.fullmatch(absolute_time(0.1)))),
+    ("absolute_time_format_recent", lambda: bool(TIMESTAMP_RE.fullmatch(absolute_time(time.time())))),
+    ("absolute_time_format_fixed", lambda: absolute_time(1710000000.0).startswith("2024-")),
+    ("step_timestamp_is_absolute_renderable", lambda: bool(TIMESTAMP_RE.fullmatch(absolute_time(make_step("s").t)))),
+    ("relative_time_just_now", lambda: relative_time(time.time()) == "just now"),
+    ("relative_time_seconds", lambda: relative_time(time.time() - 10).endswith("s ago")),
+    ("relative_time_minutes", lambda: relative_time(time.time() - 120).endswith("m ago")),
+    ("relative_time_hours", lambda: relative_time(time.time() - 7200).endswith("h ago")),
+    ("relative_time_yesterday", lambda: relative_time(time.time() - 86400) == "yesterday"),
+    ("relative_time_days", lambda: relative_time(time.time() - (3 * 86400)).endswith("d ago")),
+    ("relative_time_months", lambda: relative_time(time.time() - (70 * 86400)).endswith("mo ago")),
+    ("render_recent_chain_header_has_absolute_time", lambda: bool(re.search(r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]", build_chain_context().traj.render_recent(5, registry())))),
+    ("render_recent_steps_have_absolute_time", lambda: bool(re.search(r"\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\)", build_chain_context().traj.render_recent(5, registry())))),
+    ("flat_tree_has_absolute_time", lambda: bool(re.search(r"\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\)", (lambda traj: (traj.append(make_step("loose")), traj.render_recent())[1])(Trajectory())))),
+    ("deep_render_has_absolute_time", lambda: (lambda ctx: bool(re.search(r"\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\)", loop._render_step_tree(ctx.step2, ctx.traj))))(build_chain_context())),
+    ("step_timestamps_increase_over_time", lambda: (lambda s1, s2: s2.t >= s1.t)(make_step("a"), make_step("b"))),
+    ("recent_returns_last_step_time", lambda: (lambda ctx: ctx.traj.recent(1)[0].t == ctx.step2.t)(build_chain_context())),
+    ("render_recent_preserves_step_order", lambda: (lambda ctx: (lambda rendered: rendered.find(ctx.step1.hash) < rendered.find(ctx.step2.hash))(ctx.traj.render_recent(5, registry())))(build_chain_context())),
+    ("relative_time_zero_or_negative_empty", lambda: relative_time(0) == ""),
+    ("absolute_time_zero_or_negative_empty", lambda: absolute_time(0) == ""),
+]
+
+
+P12_CASES = [
+    ("parse_step_output_extracts_gap", lambda: (lambda old: (setattr(loop, "_turn_counter", 7), loop._parse_step_output('Saw issue\\n{\"gaps\":[{\"desc\":\"need context\",\"content_refs\":[\"blob_a\"],\"step_refs\":[\"step_a\"],\"vocab\":\"pattern_needed\",\"relevance\":0.8,\"confidence\":0.6}]}', ["step_root"], ["blob_root"])[0:2], setattr(loop, "_turn_counter", old))[1][1][0].desc == "need context")(loop._turn_counter)),
+    ("parse_step_output_sets_turn_id", lambda: (lambda old: (setattr(loop, "_turn_counter", 9), loop._parse_step_output('x {\"gaps\":[{\"desc\":\"g\"}]}', [], [])[1][0].turn_id, setattr(loop, "_turn_counter", old))[1] == 9)(loop._turn_counter)),
+    ("parse_step_output_zeros_grounded", lambda: loop._parse_step_output('x {"gaps":[{"desc":"g","grounded":1.0}]}', [], [])[1][0].scores.grounded == 0.0),
+    ("parse_step_output_uses_prefix_desc", lambda: loop._parse_step_output('observed issue {"gaps":[]}', [], [])[0].desc == "observed issue"),
+    ("extract_json_parses_block", lambda: loop._extract_json('text {"a": 1}') == {"a": 1}),
+    ("extract_json_invalid_returns_none", lambda: loop._extract_json("not json") is None),
+    ("extract_command_reads_command_field", lambda: loop._extract_command('{"command": "echo hi"}') == "echo hi"),
+    ("extract_command_missing_returns_none", lambda: loop._extract_command('{"reasoning": "x"}') is None),
+    ("resolve_all_refs_formats_blocks", lambda: (lambda ctx: "resolved step" in loop.resolve_all_refs([ctx.step1.hash], [], ctx.traj))(build_chain_context())),
+    ("load_tree_policy_contains_skills_prefix", lambda: "skills/" in loop._load_tree_policy()),
+    ("match_policy_exact_path", lambda: loop._match_policy("loop.py", loop._load_tree_policy())["immutable"] is True),
+    ("match_policy_prefix_path", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
+    ("match_policy_longest_prefix", lambda: loop._match_policy("skills/codons/await.st", loop._load_tree_policy())["on_reject"] == "reason_needed"),
+    ("execute_tool_missing_file_nonzero", lambda: loop.execute_tool("tools/does_not_exist.py", {})[1] == 1),
+    ("find_identity_skill_admin", lambda: loop._find_identity_skill("admin", registry()) == skill("admin")),
+    ("render_identity_has_username", lambda: "username:" in loop._render_identity(skill("admin"))),
+    ("render_identity_has_communication_pref", lambda: "communication:" in loop._render_identity(skill("admin"))),
+    ("validate_st_accepts_command_trigger", lambda: st_builder_module.validate_st({"name": "cmd", "desc": "d", "trigger": "command:demo", "steps": []}) == []),
+    ("load_skill_detects_command_flag", lambda: (lambda path: load_skill(str(path)).is_command)(
+        (lambda p: (p.write_text(json.dumps({"name": "cmd", "desc": "d", "trigger": "command:test", "steps": []})), p)[1])(Path(ROOT / "tests" / "_tmp_command.st"))
+    )),
+    ("resolve_hash_unknown_returns_none", lambda: loop.resolve_hash("missing_hash", Trajectory()) is None),
+]
+
+
+P13_CASES = [
+    ("max_chain_depth_constant", lambda: MAX_CHAIN_DEPTH == 15),
+    ("chain_extract_length_constant", lambda: CHAIN_EXTRACT_LENGTH == 8),
+    ("ledger_entry_depth_defaults_zero", lambda: LedgerEntry(make_gap("g"), "c").depth == 0),
+    ("push_child_sets_depth", lambda: (lambda ledger: (ledger.push_child(make_gap("g"), "c", "p", 3), ledger.peek().depth == 3)[1])(Ledger())),
+    ("reason_relevance_descending", lambda: (lambda vals: vals == sorted(vals, reverse=True))([s["relevance"] for s in skill_data("reason")["steps"]])),
+    ("await_relevance_descending", lambda: (lambda vals: vals == sorted(vals, reverse=True))([s["relevance"] for s in skill_data("await")["steps"]])),
+    ("commit_relevance_descending", lambda: (lambda vals: vals == sorted(vals, reverse=True))([s["relevance"] for s in skill_data("commit")["steps"]])),
+    ("reprogramme_relevance_descending", lambda: (lambda vals: vals == sorted(vals, reverse=True))([s["relevance"] for s in skill_data("reprogramme")["steps"]])),
+    ("hash_edit_observe_then_flexible_then_mutate", lambda: [s.get("vocab") for s in skill_data("hash_edit")["steps"]] == ["hash_resolve_needed", None, "hash_edit_needed"]),
+    ("admin_refs_field_present", lambda: "refs" in skill_data("admin")),
+    ("complete_london_councils_refs_present", lambda: "refs" in skill_data("complete_london_councils")),
+    ("builder_preserves_refs", lambda: st_builder_module.build_st({"name": "wf", "desc": "d", "refs": {"admin": "abc"}, "actions": []})["refs"] == {"admin": "abc"}),
+    ("find_passive_chains_supports_embedding", lambda: (lambda traj, gap, chain: (traj.gap_index.__setitem__(gap.hash, gap), traj.add_chain(chain), bool(traj.find_passive_chains("entity_hash")))[2])(Trajectory(), make_gap("origin", content_refs=["entity_hash"]), Chain.create(make_gap("origin", content_refs=["entity_hash"]).hash, "step1"))),
+    ("force_close_marks_reason", lambda: (lambda ctx: (ctx.compiler.force_close_chain(next(iter(ctx.traj.chains))), "force-closed" in next(iter(ctx.traj.chains.values())).desc)[1])(build_origin_context())),
+    ("render_recent_reports_step_count", lambda: build_chain_context().chain.length() == 2),
+    ("recent_chains_returns_chain_units", lambda: build_chain_context().traj.recent_chains(1)[0].origin_gap == build_chain_context().chain.origin_gap),
+    ("extract_st_steps_preserves_content_refs", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "observe target", "gaps": [{"content_refs": ["entity_hash"], "step_refs": [], "scores": {"relevance": 0.9}, "vocab": "hash_resolve_needed"}]}]})[0]["content_refs"] == ["entity_hash"]),
+    ("extract_st_steps_derives_relevance_when_missing", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "observe", "gaps": [{}]}]})[0]["relevance"] == 1.0),
+    ("extract_st_steps_slugifies_action", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "Observe target file", "gaps": []}]})[0]["action"] == "observe_target_file"),
+    ("compose_over_construction_keeps_codon_steps_short", lambda: all(skill(name).step_count() <= 4 for name in ("reason", "await", "commit", "reprogramme"))),
+]
+
+
+@pytest.mark.parametrize("label,check", P1_CASES, ids=[case[0] for case in P1_CASES])
+def test_principle_1_step_primitive(label, check):
+    assert check()
+
+
+@pytest.mark.parametrize("label,check", P2_CASES, ids=[case[0] for case in P2_CASES])
+def test_principle_2_gap_emission(label, check):
+    assert check()
+
+
+@pytest.mark.parametrize("label,check", P3_CASES, ids=[case[0] for case in P3_CASES])
+def test_principle_3_vocab_manifestation(label, check):
+    assert check()
+
+
+@pytest.mark.parametrize("label,check", P4_CASES, ids=[case[0] for case in P4_CASES])
+def test_principle_4_formal_gap_configuration(label, check):
+    assert check()
+
+
+@pytest.mark.parametrize("label,check", P5_CASES, ids=[case[0] for case in P5_CASES])
+def test_principle_5_reprogramme_and_registry(label, check):
+    assert check()
+
+
+@pytest.mark.parametrize("label,check", P6_CASES, ids=[case[0] for case in P6_CASES])
+def test_principle_6_referred_context(label, check):
+    assert check()
+
+
+@pytest.mark.parametrize("label,check", P7_CASES, ids=[case[0] for case in P7_CASES])
+def test_principle_7_post_diff(label, check):
+    assert check()
+
+
+@pytest.mark.parametrize("label,check", P8_CASES, ids=[case[0] for case in P8_CASES])
+def test_principle_8_compiler_laws(label, check):
+    assert check()
+
+
+@pytest.mark.parametrize("label,check", P9_CASES, ids=[case[0] for case in P9_CASES])
+def test_principle_9_chains_and_steps(label, check):
+    assert check()
+
+
+@pytest.mark.parametrize("label,check", P10_CASES, ids=[case[0] for case in P10_CASES])
+def test_principle_10_activation_and_codons(label, check):
+    assert check()
+
+
+@pytest.mark.parametrize("label,check", P11_CASES, ids=[case[0] for case in P11_CASES])
+def test_principle_11_temporal_signatures(label, check):
+    assert check()
+
+
+@pytest.mark.parametrize("label,check", P12_CASES, ids=[case[0] for case in P12_CASES])
+def test_principle_12_supporting_infrastructure(label, check):
+    try:
+        assert check()
+    finally:
+        tmp = ROOT / "tests" / "_tmp_command.st"
+        if tmp.exists():
+            tmp.unlink()
+
+
+@pytest.mark.parametrize("label,check", P13_CASES, ids=[case[0] for case in P13_CASES])
+def test_principle_13_curation(label, check):
+    assert check()
+
+
+def test_p9_trajectory_save_and_load_roundtrip(tmp_path):
+    gap = make_gap("persisted", content_refs=["blob_a"], vocab="pattern_needed")
+    step = make_step("saved step", gaps=[gap], commit="abc123")
+    traj = Trajectory()
+    traj.append(step)
+
+    path = tmp_path / "trajectory.json"
+    traj.save(path)
+    loaded = Trajectory.load(path)
+
+    assert loaded.resolve(step.hash).desc == "saved step"
+    assert loaded.resolve_gap(gap.hash).desc == "persisted"
+
+
+def test_p9_chains_save_load_and_extract(tmp_path):
+    ctx = build_chain_context()
+    chains_path = tmp_path / "chains.json"
+    chains_dir = tmp_path / "chains"
+
+    ctx.traj.save_chains(chains_path)
+    loaded = Trajectory()
+    Trajectory.load_chains(chains_path, loaded)
+    loaded.steps = ctx.traj.steps
+    loaded.chains = ctx.traj.chains
+    next(iter(loaded.chains.values())).extracted = True
+    next(iter(loaded.chains.values())).resolved = True
+    loaded.extract_chains(chains_dir)
+
+    assert chains_path.exists()
+    assert any(chains_dir.iterdir())
+
+
+def test_p10_chain_to_st_roundtrip_writes_file(tmp_path, monkeypatch):
+    chain_doc, _step_doc = serialized_chain_files(tmp_path)
+    monkeypatch.setattr(chain_to_st_module, "CORS_ROOT", tmp_path)
+    monkeypatch.setattr(chain_to_st_module, "TRAJ_FILE", tmp_path / "trajectory.json")
+    monkeypatch.setattr(chain_to_st_module, "CHAINS_FILE", tmp_path / "chains.json")
+
+    output_path = tmp_path / "skills" / "curated.st"
+    result = chain_to_st_module.chain_to_st(
+        chain_hash=chain_doc["hash"],
+        name="curated",
+        desc="curated workflow",
+        refs={"admin": "admin_hash"},
+        output_path=str(output_path),
+    )
+
+    assert result["status"] == "ok"
+    assert result["st"]["source_chain"] == chain_doc["hash"]
+    assert result["st"]["refs"] == {"admin": "admin_hash"}
+    assert output_path.exists()
+
+
+def test_p12_auto_commit_contract_clean_tree(monkeypatch):
+    monkeypatch.setattr(loop, "git", lambda cmd, cwd=None: "")
+    assert loop.auto_commit("noop") == (None, None)
+
+
+def test_p12_auto_commit_contract_success(monkeypatch):
+    responses = {
+        ("status", "--porcelain"): " M loop.py",
+        ("rev-parse", "--short", "HEAD"): "abc123",
+        ("add", "-A"): "",
+        ("commit", "-m", "ok"): "",
+        ("diff", "--name-only", "abc123", "abc123"): "",
+    }
+
+    def fake_git(cmd, cwd=None):
+        return responses.get(tuple(cmd), "")
+
+    monkeypatch.setattr(loop, "git", fake_git)
+    monkeypatch.setattr(loop, "git_head", lambda: "abc123")
+    monkeypatch.setattr(loop, "_check_protected", lambda post, pre: ([], None))
+
+    assert loop.auto_commit("ok") == ("abc123", None)
+
+
+def test_p12_auto_commit_contract_rejection(monkeypatch):
+    calls: list[tuple[str, ...]] = []
+
+    def fake_git(cmd, cwd=None):
+        calls.append(tuple(cmd))
+        if cmd[:2] == ["status", "--porcelain"]:
+            return " M loop.py"
+        if cmd[:3] == ["rev-parse", "--short", "HEAD"]:
+            return "abc123"
+        return ""
+
+    monkeypatch.setattr(loop, "git", fake_git)
+    monkeypatch.setattr(loop, "git_head", lambda: "abc123")
+    monkeypatch.setattr(loop, "_check_protected", lambda post, pre: (["skills/codons/reason.st"], "reason_needed"))
+
+    assert loop.auto_commit("bad") == (None, "reason_needed")
+    assert ("revert", "--no-commit", "HEAD") in calls
