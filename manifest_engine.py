@@ -27,6 +27,32 @@ NODE_DEFAULT_RELEVANCE = {
     "clarify": 1.0,
 }
 
+NODE_KIND_CODES = {
+    "observe": "o",
+    "reason": "b",
+    "higher_order": "b",
+    "mutate": "m",
+    "verify": "v",
+    "embed": "e",
+    "await": "a",
+    "clarify": "c",
+    "terminal": "t",
+}
+
+SPAWN_CODES = {
+    "none": "0",
+    "context": "c",
+    "action": "a",
+    "mixed": "x",
+    "embed": "e",
+}
+
+EXECUTION_MODE_CODES = {
+    "runtime_vocab": "v",
+    "curated_step_hash": "h",
+    "inline": "i",
+}
+
 
 def stable_doc_hash(doc: dict) -> str:
     raw = json.dumps(doc, sort_keys=True, separators=(",", ":"))
@@ -74,6 +100,38 @@ def load_chain_package(chains_dir: Path, ref: str, trajectory: Trajectory | None
     return None
 
 
+def _node_kind_code(node: dict) -> str:
+    return NODE_KIND_CODES.get(node.get("kind"), "_")
+
+
+def _spawn_code(node: dict) -> str:
+    generation = node.get("generation", {})
+    return SPAWN_CODES.get(generation.get("spawn_mode"), "_")
+
+
+def _execution_mode_code(node: dict) -> str:
+    manifestation = node.get("manifestation", {})
+    return EXECUTION_MODE_CODES.get(manifestation.get("execution_mode"), "_")
+
+
+def _node_signature(node: dict) -> str:
+    """Compact package-node signature.
+
+    Format: {kindspawnflowmode/s:c}
+      kind: o observe, m mutate, b bridge/reason, v verify, a await, e embed, c clarify
+      spawn: 0 none, c context, a action, x mixed, e embed
+      flow: + post_diff/open re-entry, = closed/no re-entry
+      mode: v runtime_vocab, h curated_step_hash, i inline, _ unknown
+      s:c: gap_template step_refs:content_refs counts
+    """
+    gap_template = node.get("gap_template", {})
+    flow = "+" if node.get("post_diff") else "="
+    return (
+        f"{{{_node_kind_code(node)}{_spawn_code(node)}{flow}{_execution_mode_code(node)}/"
+        f"{len(gap_template.get('step_refs', []))}:{len(gap_template.get('content_refs', []))}}}"
+    )
+
+
 def render_chain_package(package: dict, ref: str) -> str:
     if package.get("version") == "stepchain.v1":
         lines = [f"stepchain:{ref} \"{package.get('name', '')}\""]
@@ -87,9 +145,11 @@ def render_chain_package(package: dict, ref: str) -> str:
             if node.get("terminal"):
                 continue
             activation = node.get("activation_key") or node.get("manifestation", {}).get("execution_mode")
+            next_targets = list((node.get("transitions") or {}).values())
+            next_str = f" -> {next_targets[0]}" if next_targets else ""
             lines.append(
-                f"  - {node['id']} [{node.get('kind')}] spawn:{node.get('generation', {}).get('spawn_mode')} "
-                f"post_diff:{str(node.get('post_diff')).lower()} activate:{activation}"
+                f"  - {_node_signature(node)} {node['id']} [{node.get('kind')}] "
+                f"activate:{activation}{next_str}"
             )
         return "\n".join(lines)
 

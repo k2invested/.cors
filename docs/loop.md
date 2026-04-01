@@ -1,6 +1,6 @@
 # loop.py
 
-[loop.py](/Users/k2invested/Desktop/cors/loop.py) is the live kernel. It is where the runtime architecture becomes operational.
+[loop.py](/Users/k2invested/Desktop/cors/loop.py) is the live turn orchestrator. It is where the runtime architecture becomes operational at turn scope.
 
 ## What The Loop Owns
 
@@ -10,16 +10,12 @@ The loop owns one complete turn:
 - creating the origin step
 - loading identity and package context
 - invoking the compiler
-- resolving hashes
-- running tools
-- applying tree policy
-- committing mutations
-- injecting postconditions
-- running codon workflows
+- injecting semantic runtime surfaces
+- delegating per-gap execution into the execution engine
 - synthesizing the user response
 - persisting trajectory and extracted chains
 
-If `step.py` is the object model and `compile.py` is the sequencing law, `loop.py` is the operational world.
+If `step.py` is the object model and `compile.py` is the sequencing law, `loop.py` is the turn-level orchestrator. The actual per-gap execution core now lives in [execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py).
 
 ## Session Model
 
@@ -88,7 +84,17 @@ Step hashes resolve as semantic tree branches, not flat blobs. The loop renders 
 
 ## Runtime Branches
 
-Branch selection is driven by vocab.
+Branch selection is driven by vocab, but the branch machinery no longer lives inline in the turn loop. [loop.py](/Users/k2invested/Desktop/cors/loop.py) now hands each admitted ledger entry to [execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py), which owns:
+
+- ref resolution
+- vocab routing
+- tree-policy reroutes
+- tool and mutation execution
+- codon expansion
+- commit/postcondition injection
+- step recording
+
+The same execution engine is also used by `run_command()`, so `/command` packages and ordinary turn-time gaps now share one execution path.
 
 Observation-only paths such as `hash_resolve_needed` and `external_context` inject data and record an observation step without a mutation commit.
 
@@ -159,6 +165,14 @@ Two behaviors make the loop more recursive than older docs suggested.
 
 `_reprogramme_pass()` runs automatically before synthesis and asks whether entity-style semantic state should be updated from the conversation.
 
+It also now has a deterministic first-contact bootstrap path. If no `on_contact:<id>` entity exists for the inbound contact, the pass writes a thin bootstrap entity before synthesis. That bootstrap entity carries:
+
+- minimal identity metadata
+- default access rules
+- an `init` block marking the entity as still unknown / onboarding-pending
+
+That means the second turn can inject the entity honestly without pretending the system already knows the person well.
+
 Heartbeat persists an automatic dangling `reason_needed` gap if the compiler saw background triggers without a corresponding await. The compiler’s `background_refs()` are attached so the next turn can see which packages or chains are waiting for reintegration.
 
 This means loop closure is not only “all current gaps resolved.” The system can preserve unfinished higher-order work across turns.
@@ -167,8 +181,6 @@ This means loop closure is not only “all current gaps resolved.” The system 
 
 Some of the prompt language still reaches slightly beyond what the runtime strictly supports.
 
-`reprogramme_needed` still talks about richer `.st` structure than [skills/loader.py](/Users/k2invested/Desktop/cors/skills/loader.py) preserves as first-class executable fields.
-
 There is also residual legacy vocab drift. The OMO violation path still records `"scan_needed"` even though `scan_needed` is not part of the live compiler vocab algebra.
 
-So `loop.py` is the best place to understand what the kernel really does now, but it also shows where the prompt and builder ecology have not fully converged on the runtime law yet.
+So [loop.py](/Users/k2invested/Desktop/cors/loop.py) is the best place to understand how one turn is assembled, while [execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py) is the best place to understand how one admitted gap is actually executed. The main remaining drift is not loader lossiness anymore; it is prompt and vocab convergence around the newer structural package model.

@@ -152,6 +152,8 @@ def test_chain_package_persist_load_and_render(tmp_path, monkeypatch):
     assert package_hash == me.stable_doc_hash(package)
     assert rendered.startswith(f"stepchain:{package_hash}")
     assert "phase_reason" in rendered
+    assert "{bx+h/0:1}" in rendered
+    assert "{vx+v/1:1}" in rendered
 
 
 def test_activate_stepchain_package_creates_runtime_gaps():

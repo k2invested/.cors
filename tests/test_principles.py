@@ -382,7 +382,7 @@ P4_CASES = [
 
 P5_CASES = [
     ("registry_loads_admin", lambda: registry().resolve_by_name("admin") is not None),
-    ("registry_loads_research", lambda: registry().resolve_by_name("research") is not None),
+    ("registry_loads_hash_edit", lambda: registry().resolve_by_name("hash_edit") is not None),
     ("admin_display_name_is_identity_name", lambda: skill("admin").display_name == "kenny"),
     ("resolve_by_hash_returns_skill", lambda: registry().resolve(skill("admin").hash) == skill("admin")),
     ("hash_edit_skill_exists", lambda: skill("hash_edit").name == "hash_edit"),
@@ -399,8 +399,11 @@ P5_CASES = [
     ("render_entity_has_steps_summary", lambda: "steps:" in loop._render_entity(skill("admin"))),
     ("find_identity_skill_returns_admin", lambda: loop._find_identity_skill("admin", registry()) == skill("admin")),
     ("render_identity_has_preferences", lambda: "## Preferences" in loop._render_identity(skill("admin"))),
+    ("render_identity_has_access_rules_when_present", lambda: "## Access Rules" in loop._render_identity(skill("admin")) if "access_rules" in skill_data("admin") else True),
     ("reprogramme_skill_trigger_is_vocab", lambda: skill("reprogramme").trigger == "on_vocab:reprogramme_needed"),
     ("reprogramme_skill_all_steps_loaded", lambda: skill("reprogramme").step_count() == 3),
+    ("init_user_intent_uses_on_contact_trigger", lambda: loop._build_init_user_intent("discord:123", "hi")["trigger"] == "on_contact:discord:123"),
+    ("init_user_intent_starts_pending", lambda: loop._build_init_user_intent("discord:123", "hi")["init"]["status"] == "pending"),
 ]
 
 
@@ -431,8 +434,8 @@ P6_CASES = [
 P7_CASES = [
     ("admin_steps_all_deterministic", lambda: all(not s.post_diff for s in skill("admin").steps)),
     ("hash_edit_has_one_flexible_step", lambda: len(skill("hash_edit").flexible_steps()) == 1),
-    ("research_has_flexible_steps", lambda: any(s.post_diff for s in skill("research").steps)),
-    ("research_has_deterministic_steps", lambda: any(not s.post_diff for s in skill("research").steps)),
+    ("hash_edit_has_flexible_steps_again", lambda: any(s.post_diff for s in skill("hash_edit").steps)),
+    ("hash_edit_has_deterministic_steps_again", lambda: any(not s.post_diff for s in skill("hash_edit").steps)),
     ("reason_first_step_deterministic", lambda: skill("reason").steps[0].post_diff is False),
     ("reason_later_steps_flexible", lambda: all(s.post_diff for s in skill("reason").steps[1:])),
     ("await_first_two_deterministic", lambda: all(not s.post_diff for s in skill("await").steps[:2])),
@@ -596,7 +599,7 @@ P13_CASES = [
     ("reprogramme_relevance_descending", lambda: (lambda vals: vals == sorted(vals, reverse=True))([s["relevance"] for s in skill_data("reprogramme")["steps"]])),
     ("hash_edit_observe_then_flexible_then_mutate", lambda: [s.get("vocab") for s in skill_data("hash_edit")["steps"]] == ["hash_resolve_needed", None, "hash_edit_needed"]),
     ("admin_refs_field_present", lambda: "refs" in skill_data("admin")),
-    ("complete_london_councils_refs_present", lambda: "refs" in skill_data("complete_london_councils")),
+    ("cors_ui_refs_field_present", lambda: "refs" in skill_data("cors_ui")),
     ("builder_preserves_refs", lambda: st_builder_module.build_st({"name": "wf", "desc": "d", "refs": {"admin": "abc"}, "actions": []})["refs"] == {"admin": "abc"}),
     ("find_passive_chains_supports_embedding", lambda: (lambda traj, gap, chain: (traj.gap_index.__setitem__(gap.hash, gap), traj.add_chain(chain), bool(traj.find_passive_chains("entity_hash")))[2])(Trajectory(), make_gap("origin", content_refs=["entity_hash"]), Chain.create(make_gap("origin", content_refs=["entity_hash"]).hash, "step1"))),
     ("force_close_marks_reason", lambda: (lambda ctx: (ctx.compiler.force_close_chain(next(iter(ctx.traj.chains))), "force-closed" in next(iter(ctx.traj.chains.values())).desc)[1])(build_origin_context())),

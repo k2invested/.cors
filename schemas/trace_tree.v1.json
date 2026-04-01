@@ -1,0 +1,396 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cors.local/schemas/trace_tree.v1.json",
+  "title": "cors trace_tree.v1",
+  "description": "Canonical transition-trace replay format derived from semantic trees, compiled packages, or realized chains. Used for simulation, backtesting, and structural replay of how gap configurations naturally unfold across generations.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "source_type",
+    "root_trace",
+    "traces"
+  ],
+  "properties": {
+    "version": {
+      "const": "trace_tree.v1"
+    },
+    "source_type": {
+      "$ref": "#/$defs/sourceType"
+    },
+    "source_ref": {
+      "$ref": "#/$defs/hashRef"
+    },
+    "root_trace": {
+      "type": "string",
+      "minLength": 1
+    },
+    "traces": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/traceNode"
+      }
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    }
+  },
+  "$defs": {
+    "sourceType": {
+      "enum": [
+        "trajectory",
+        "realized_chain",
+        "stepchain",
+        "skeleton",
+        "semantic_skeleton",
+        "manual_fixture"
+      ]
+    },
+    "hashRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runtimeVocab": {
+      "enum": [
+        "hash_resolve_needed",
+        "external_context",
+        "pattern_needed",
+        "hash_edit_needed",
+        "content_needed",
+        "script_edit_needed",
+        "command_needed",
+        "reason_needed",
+        "await_needed",
+        "commit_needed",
+        "reprogramme_needed",
+        "clarify_needed",
+        "stitch_needed"
+      ]
+    },
+    "gapStatus": {
+      "enum": [
+        "active",
+        "resolved",
+        "dormant",
+        "redirected",
+        "awaiting",
+        "force_closed"
+      ]
+    },
+    "manifestKind": {
+      "enum": [
+        "observe",
+        "mutate",
+        "bridge",
+        "verify",
+        "embed",
+        "await",
+        "clarify",
+        "terminal",
+        "unknown"
+      ]
+    },
+    "spawnMode": {
+      "enum": [
+        "none",
+        "context",
+        "action",
+        "mixed",
+        "embed"
+      ]
+    },
+    "spawnTrigger": {
+      "enum": [
+        "none",
+        "on_manifest",
+        "on_post_diff",
+        "conditional"
+      ]
+    },
+    "returnPolicy": {
+      "enum": [
+        "resume_transition",
+        "resume_parent",
+        "reintegrate",
+        "await_reentry",
+        "terminal"
+      ]
+    },
+    "activationMode": {
+      "enum": [
+        "runtime_vocab",
+        "curated_step_hash",
+        "inline",
+        "none"
+      ]
+    },
+    "scoreBand": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9
+    },
+    "gapExpression": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "desc",
+        "status",
+        "step_ref_count",
+        "content_ref_count",
+        "score_bands"
+      ],
+      "properties": {
+        "hash": {
+          "$ref": "#/$defs/hashRef"
+        },
+        "desc": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vocab": {
+          "$ref": "#/$defs/runtimeVocab"
+        },
+        "status": {
+          "$ref": "#/$defs/gapStatus"
+        },
+        "step_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hashRef"
+          }
+        },
+        "content_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hashRef"
+          }
+        },
+        "step_ref_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "content_ref_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "score_bands": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "relevance",
+            "confidence",
+            "grounded"
+          ],
+          "properties": {
+            "relevance": {
+              "$ref": "#/$defs/scoreBand"
+            },
+            "confidence": {
+              "$ref": "#/$defs/scoreBand"
+            },
+            "grounded": {
+              "$ref": "#/$defs/scoreBand"
+            }
+          }
+        },
+        "signature": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "manifestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "spawn_mode",
+        "spawn_trigger",
+        "post_diff",
+        "activation_mode",
+        "return_policy"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/manifestKind"
+        },
+        "spawn_mode": {
+          "$ref": "#/$defs/spawnMode"
+        },
+        "spawn_trigger": {
+          "$ref": "#/$defs/spawnTrigger"
+        },
+        "post_diff": {
+          "type": "boolean"
+        },
+        "activation_mode": {
+          "$ref": "#/$defs/activationMode"
+        },
+        "activation_ref": {
+          "$ref": "#/$defs/hashRef"
+        },
+        "emitted_commit": {
+          "type": "boolean"
+        },
+        "background": {
+          "type": "boolean"
+        },
+        "return_policy": {
+          "$ref": "#/$defs/returnPolicy"
+        }
+      }
+    },
+    "topology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "depth",
+        "generation",
+        "child_ids",
+        "sibling_policy",
+        "blocked_siblings"
+      ],
+      "properties": {
+        "parent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "child_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "sibling_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sibling_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sibling_policy": {
+          "enum": [
+            "after_descendants",
+            "parallel_visible",
+            "independent"
+          ]
+        },
+        "blocked_siblings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "terminal_state"
+      ],
+      "properties": {
+        "terminal_state": {
+          "$ref": "#/$defs/gapStatus"
+        },
+        "return_target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "closure_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "traceNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "gap",
+        "manifestation",
+        "topology",
+        "outcome"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_step": {
+          "$ref": "#/$defs/hashRef"
+        },
+        "source_phase": {
+          "type": "string",
+          "minLength": 1
+        },
+        "gap": {
+          "$ref": "#/$defs/gapExpression"
+        },
+        "manifestation": {
+          "$ref": "#/$defs/manifestation"
+        },
+        "topology": {
+          "$ref": "#/$defs/topology"
+        },
+        "outcome": {
+          "$ref": "#/$defs/outcome"
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_depth": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "generation_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bridge_nodes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mutation_nodes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reentry_points": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "await_nodes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "background_nodes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

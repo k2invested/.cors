@@ -45,10 +45,10 @@ If the package is `stepchain.v1`, it renders:
 - root
 - trigger
 - phase order
-- each node’s kind
-- spawn mode
-- `post_diff`
+- each node’s compact structural signature
+- node kind
 - activation key or execution mode
+- first visible transition target when present
 
 If the package is an extracted historical chain, it renders:
 
@@ -57,6 +57,20 @@ If the package is an extracted historical chain, it renders:
 - a short step listing
 
 So the model sees structure, not just raw JSON.
+
+The package renderer now speaks the same compact visual language family as the trajectory trees. Stepchain nodes render as:
+
+- `node{kindspawnflowmode/s:c}`
+
+where:
+
+- `kind` is `o` observe, `m` mutate, `b` bridge/reason, `v` verify, `a` await, `e` embed, `c` clarify
+- `spawn` is `0` none, `c` context, `a` action, `x` mixed, `e` embed
+- `flow` is `+` re-openable / `post_diff:true`, `=` closed / `post_diff:false`
+- `mode` is `v` runtime-vocab activation, `h` curated-step-hash activation, `i` inline
+- `s:c` is `step_refs:content_refs` count from the node’s gap template
+
+So a node like `{bx+h/0:1}` means: bridge/reason node, mixed spawn, open re-entry, hash-addressed activation, zero step refs, one content ref in its local template.
 
 ## Step Network Render
 

@@ -46,7 +46,7 @@ The trajectory is a closed hash graph. Raw data never touches it. Only hash refe
 
 One persistent LLM session per turn. The same model does perception, gap scoring, and command composition — all in one continuous stream. No separate mini-models for classification. No hand-off between specialists. Coherence comes from the persistent context window. The trajectory provides structural grounding. The context window does not preload all of `trajectory.json` raw; it carries a salient semantic render of prior trajectory state, and deeper structure remains hash-resolvable on demand.
 
-The trajectory is rendered as a traversable hash tree (same shape as git commit trees) via `render_recent()`. Known skill hashes render with named prefixes — `kenny:72b1d5ffc964`, `research:a72c3c4dec0c`. When a skill evolves, the hash changes but the name stays. Steps referencing the old hash trace to what was. Steps referencing the new hash trace to what is. During iteration, the currently addressed ledger chain is also rendered as its own semantic tree (`Active Chain Tree`), so the model sees the live causal branch it is inside while working the current gap.
+The trajectory is rendered as a traversable hash tree (same shape as git commit trees) via `render_recent()`. Known skill hashes render with named prefixes — `kenny:72b1d5ffc964`, `debug:a72c3c4dec0c`. When a skill evolves, the hash changes but the name stays. Steps referencing the old hash trace to what was. Steps referencing the new hash trace to what is. During iteration, the currently addressed ledger chain is also rendered as its own semantic tree (`Active Chain Tree`), so the model sees the live causal branch it is inside while working the current gap.
 
 ### Code mechanisms
 
@@ -603,7 +603,7 @@ In this system, referred context is not prose or memory — it is hashes. Two la
 
 Everything referenceable is a hash:
 - A person → `kenny:72b1d5ffc964` (their .st file hash)
-- A workflow → `research:a72c3c4dec0c` (the .st file hash)
+- A workflow → `debug:a72c3c4dec0c` (the .st file hash)
 - An idea → a step hash on the trajectory where the idea was articulated
 - A file → a git blob hash
 - A directory → a git tree hash
@@ -820,7 +820,7 @@ A `.st` file's steps, or a compiled workflow skeleton's phases, are still subjec
 This means a workflow can look fluid while still being mechanically lawful, because the manifestation engine is validating and sequencing it under one set of compiler laws.
 
 ```
-research.st:
+debug.st:
   step 1: hash_resolve_needed (observe, rel=1.0, post_diff=false)  ← fires first, deterministic
   step 2: null vocab (flex, rel=0.9, post_diff=true)               ← LLM reasons, may branch
   step 3: hash_edit_needed (mutate, rel=0.8, post_diff=true)       ← can branch on failure
@@ -834,9 +834,9 @@ The compiler sees: observe gap (priority 20), then unknown gap (50), then two mu
 The real power: a .st step's vocab can trigger ANOTHER .st file. When that happens, the child .st's gaps disperse onto the ledger AS CHILDREN of the current chain. Depth-first means they resolve before the parent resumes.
 
 ```
-video_pipeline.st:
+debug_orchestrator.st:
   step 1: hash_resolve_needed → resolve project context
-  step 2: (triggers research.st) → research gaps disperse here, depth-first
+  step 2: (triggers debug.st) → debug gaps disperse here, depth-first
   step 3: stitch_needed → generate UI
   step 4: (triggers hash_edit.st) → edit gaps disperse here
 ```
@@ -1435,7 +1435,7 @@ When building a new workflow:
 ### The anti-pattern
 
 ```
-BAD: video_pipeline.st references research.st → which references hash_edit.st → ...
+BAD: debug_orchestrator.st references debug.st → which references hash_edit.st → ...
      (7 nested .st files, 23 total gaps, 15 irrelevant to the actual goal)
 
 GOOD: video_pipeline.st

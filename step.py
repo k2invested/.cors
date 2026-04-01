@@ -576,7 +576,7 @@ class Trajectory:
 
         Resolves named entities from the skill registry:
           72b1d5ffc964 → admin:72b1d5ffc964
-          a72c3c4dec0c → research:a72c3c4dec0c
+          a72c3c4dec0c → debug:a72c3c4dec0c
 
         Falls back to layer prefix:
           step refs  → step:<hash>

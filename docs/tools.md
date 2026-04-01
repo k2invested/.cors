@@ -41,6 +41,8 @@ The current `TOOL_MAP` in [loop.py](/Users/k2invested/Desktop/cors/loop.py) rout
 
 [tools/semantic_skeleton_compile.py](/Users/k2invested/Desktop/cors/tools/semantic_skeleton_compile.py) compiles the semantic envelope and lowers any action-bearing slice through `skeleton_compile.py`.
 
+[tools/trace_tree_build.py](/Users/k2invested/Desktop/cors/tools/trace_tree_build.py) derives `trace_tree.v1` replay structures from realized chains, compiled `stepchain.v1`, and skeleton-based inputs. It is the bridge from stored execution/package structure into simulator-ready unfolding traces.
+
 These files matter more than most other tools because they sit directly on the boundary between runtime reasoning and persisted structure.
 
 ## Broader Tool Surface
