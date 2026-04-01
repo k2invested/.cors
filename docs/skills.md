@@ -1,191 +1,159 @@
-# skills/ — Step Packages (.st files)
+# skills and `.st` files
 
-**Layer**: 0 (no dependencies)
-**Principles**: §8, §14, §16, §17, §18, §19, §20
+This repo uses `.st` as a shared file format for several different kinds of packaged structure. `PRINCIPLES.md` gives the philosophical model. This file explains what the current code actually does with `.st` files.
 
-## Purpose
+## What `.st` Means In The Current System
 
-`.st` files are hash-addressable step scripts. They encode domain knowledge, workflows, identities, monitors, and commitments as sequences of atomic steps the system executes. Loaded at startup, hashed, and registered. The LLM references them by hash or they fire by trigger.
+Right now a `.st` file can play at least three roles:
 
-## .st Schema
+- an executable action package
+- an entity-style persistent state object
+- a codon package
 
-```json
-{
-  "name": "skill_name",
-  "desc": "what this skill does",
-  "trigger": "manual | on_contact:X | on_vocab:X | every_turn | on_mention | scheduled:Xh | command:X",
-  "author": "developer | agent",
-  "refs": {
-    "ref_name": "blob_or_chain_hash"
-  },
-  "steps": [
-    {
-      "action": "action_name",
-      "desc": "what this step does",
-      "vocab": "hash_resolve_needed | pattern_needed | hash_edit_needed | null",
-      "post_diff": true,
-      "resolve": ["ref_name"],
-      "condition": "previous_step.failed",
-      "inject": {
-        "system": "prompt modification text",
-        "temperature": 0.3
-      }
-    }
-  ]
-}
-```
+The format is shared, but the runtime meaning depends on where the file sits and how the loop uses it.
 
-### Required fields
+That distinction matters.
 
-| Field | Type | Required | Purpose |
-|-------|------|----------|---------|
-| name | str | yes | Skill identifier |
-| desc | str | yes | Human-readable description |
-| steps | list | no | Step sequence (empty for pure entities — stepless .st files) |
-| steps[].action | str | yes (per step) | Action identifier |
-| steps[].desc | str | yes (per step) | What this step does |
+An action-like `.st` is being used as executable structure.
 
-### Optional fields
+An entity-like `.st` is being used as persistent represented state.
 
-| Field | Type | Default | Purpose |
-|-------|------|---------|---------|
-| trigger | str | "manual" | When this skill fires |
-| author | str | "developer" | Who created it |
-| refs | dict | {} | Named hash references (blobs, chains, commits) |
-| steps[].vocab | str | null | Precondition vocab mapping |
-| steps[].post_diff | bool | true | Flexible (true) or deterministic (false) |
-| steps[].resolve | list | [] | Which refs to resolve before this step |
-| steps[].condition | str | null | Conditional execution |
-| steps[].inject | dict | null | Scoped prompt modification |
-| identity | dict | null | Person identity (name, role, context, etc.) |
-| preferences | dict | null | Communication/workflow/architecture preferences |
-| constraints | dict | null | Compliance or regulation constraints |
-| sources | list | null | Source URLs, APIs, or references |
-| scope | str | null | Domain scope definition |
+A codon `.st` is treated as protected structural law and is not allowed to mutate directly.
 
-## Trigger Types
+## Current Runtime Loader
 
-| Trigger | Fires when |
-|---------|-----------|
-| `manual` | Only when explicitly invoked by hash |
-| `on_contact:admin` | Message from matching contact_id |
-| `on_vocab:research_needed` | Compiler routes a gap with that vocab |
-| `every_turn` | Start of every turn |
-| `on_mention` | Entity referenced in user message |
-| `scheduled:24h` | Every 24 hours |
-| `command:X` | Only via /X command. Hidden from LLM registry (not surfaceable through gaps). Bypasses gap routing — executed directly via `run_command()`. |
+`skills/loader.py` is much narrower than the raw `.st` format might suggest.
 
-## post_diff — The Strictness Dial
+When it loads a skill step, it keeps only:
 
-Per-step configuration that controls execution mode:
+- `action`
+- `desc`
+- `vocab`
+- `post_diff`
 
-| post_diff | Mode | Behavior |
-|-----------|------|----------|
-| true | Flexible | Execute → LLM reasons → gaps may surface → chain may branch |
-| false | Deterministic | Execute → move on → no reasoning, no branching |
+At the `Skill` level it keeps:
 
-A workflow is a .st where most steps are deterministic. An exploration task has post_diff: true on key decision points.
+- `hash`
+- `name`
+- `desc`
+- `steps`
+- `source`
+- `display_name`
+- `trigger`
+- `is_command`
 
-## .st as Manifestation
+So the executable runtime does not currently preserve fields such as:
 
-When a .st file resolves, it manifests a specialized agent for the chain's duration. A .st file can be a workflow (with steps) or a pure entity (stepless — identity/preferences/constraints only). The `inject` field modifies the LLM's context:
+- `resolve`
+- `condition`
+- `inject`
+- step-level `relevance`
+- richer manifestation metadata
 
-```json
-{
-  "action": "enter_research_mode",
-  "inject": {
-    "system": "Prioritize source verification. Score every claim.",
-    "temperature": 0.3
-  },
-  "post_diff": false
-}
-```
+Those fields may still exist in the raw file and may still matter when the file is rendered back into context, but they are not part of the loaded `SkillStep` contract.
 
-Manifestations are scoped to the chain. When the chain closes, the injection expires. Manifestations can nest.
+## Triggers
 
-## .st Types
+The loader and surrounding tools currently recognize these trigger styles:
 
-| Type | Written by | Trigger | Example |
-|------|-----------|---------|---------|
-| Skill | Developer | on_vocab | research.st — research pipeline, hash_edit.st — universal file editing |
-| Identity | Developer/Agent | on_contact | admin.st — user preferences |
-| Entity | Agent (via reprogramme) | manual / on_mention | pure entities created at runtime (person, concept, domain) |
-| Monitor | Developer/Agent | every_turn / scheduled | monitor_api.st |
-| Command | Developer | command:X | hidden from LLM, /command only |
+- `manual`
+- `every_turn`
+- `on_mention`
+- `on_contact:<id>`
+- `on_vocab:<vocab>`
+- `scheduled:<value>`
+- `command:<name>`
 
-All the same format. All hash-addressable. All executable by the same compiler.
+`command:` files are hidden from the main LLM-facing registry and are only available through `run_command()`.
 
-### Manifestation fields
+## Current Registry Behavior
 
-The fields present in a .st file determine what the entity IS. st_builder forwards all non-base fields (name, desc, trigger, author, refs, actions) as manifestation config:
+`SkillRegistry` maintains three lookup surfaces:
 
-| Fields present | Entity type |
-|---------------|-------------|
-| identity + preferences | Person |
-| constraints + sources + scope | Compliance / regulation domain |
-| schema + access_rules | Business database |
-| principles + boundaries | Domain expertise |
+- `by_hash`
+- `by_name`
+- `commands`
 
-## Existing Skills
+Display names come from `identity.name` when present, otherwise from `name`. That is why rendered refs can appear as `kenny:<hash>` rather than `admin:<hash>`.
 
-| File | Steps | Trigger | Purpose |
-|------|-------|---------|---------|
-| admin.st | 4 | on_contact:admin | Kenny's identity + preferences (load_identity → load_principles → load_recent → load_commitments) |
-| hash_edit.st | 3 | on_vocab:hash_edit_needed | Universal file editing workflow (resolve_target O → compose_edit flexible → execute_edit M). OMO baked into .st structure. |
-| research.st | 5 | on_vocab | Research pipeline |
+The prompt-facing skill list excludes `/command` skills.
 
-Note: Hashes are computed at load time from file content and change when the .st file is updated. Do not hardcode hashes in documentation.
+## Codons
 
-Skills can also be pure entities (stepless .st files) — e.g. a person, concept, or domain created via reprogramme_needed. The fields present determine what the entity IS.
+The codons live in `skills/codons/` and are loaded with the same loader as other `.st` files:
 
-## Module: loader.py
+- `reason.st`
+- `await.st`
+- `commit.st`
+- `reprogramme.st`
 
-### Types
+They are special because tree policy marks the codon directory as immutable and rejects attempted mutation into `reason_needed`.
 
-| Type | Purpose |
-|------|---------|
-| SkillStep | One atomic step: action, desc, vocab, post_diff |
-| Skill | Complete skill: hash, name, desc, steps[], source, display_name, trigger, is_command |
-| SkillRegistry | Hash→Skill, name→Skill, and commands dict. Two visibility tiers: bridge skills (LLM-surfaceable) and command skills (hidden, /command only). |
+That gives codons a different ontological role from ordinary skills even though the loader format is shared.
 
-### Functions
+## Entity vs Action `.st`
 
-| Function | Purpose |
-|----------|---------|
-| `load_skill(path) → Skill?` | Load one .st file. Extracts display_name from identity.name. Detects command: trigger prefix → sets is_command. |
-| `load_all(skills_dir) → SkillRegistry` | Load all .st files |
-| `SkillRegistry.resolve(hash) → Skill?` | Lookup by hash (bridge skills only) |
-| `SkillRegistry.resolve_by_name(name) → Skill?` | Lookup by name (bridge skills only) |
-| `SkillRegistry.resolve_command(name) → Skill?` | Resolve a /command by name |
-| `SkillRegistry.all_commands() → list[Skill]` | List all command skills |
-| `SkillRegistry.render_for_prompt() → str` | Render for LLM context (excludes command skills) |
-| `SkillRegistry.resolve_name(hash) → str?` | Hash → display name for tree rendering (e.g. "kenny", "research"). Extracted from identity.name or defaults to skill name. |
+The codebase is already moving toward a real distinction between entity-like and action-like `.st` files.
 
-## Module: tools/st_builder.py
+Action `.st`
+Represents executable workflow structure. These are typically invoked by vocab or used as reusable procedural packages.
 
-Builds valid .st files from semantic intent. The agent describes what it wants in natural language, the builder handles structure and validation.
+Entity `.st`
+Represents persisted state about a person, concept, domain, or other durable object. These are often surfaced via hash resolution and are the natural target of `reprogramme_needed`.
 
-### Input (semantic intent)
-```json
-{
-  "name": "task name",
-  "desc": "what it does",
-  "trigger": "manual",
-  "actions": [
-    { "do": "read the config", "observe": true },
-    { "do": "edit the value", "mutate": true }
-  ]
-}
-```
+This distinction is not yet enforced by separate schemas, but the runtime already leans that way:
 
-### Output
-Valid .st file with auto-generated action names, inferred vocab, and correct post_diff settings.
+- `.st` mutation is rerouted to `reprogramme_needed`
+- codon mutation is blocked
+- entity resolution happens through hash resolution rather than a separate entity vocab
 
-### Features
-- Vocab inference from action descriptions (regex patterns)
-- Auto-generated action slugs
-- Schema validation before writing (steps field optional — allows stepless pure entities)
-- Handles refs passthrough
-- Forwards all non-base fields (identity, preferences, constraints, sources, scope — any manifestation fields) from intent to .st file
-- Supports `command:` trigger prefix for hidden /command skills
-- Valid triggers: manual, every_turn, on_mention, on_contact:X, on_vocab:X, scheduled:Xh, command:X
+## Builder Reality
+
+`tools/st_builder.py` writes valid JSON `.st` files, forwards non-base manifestation fields, and supports stepless entities.
+
+But it is important to be clear about its current drift.
+
+Its vocab inference still emits legacy terms such as:
+
+- `scan_needed`
+- `research_needed`
+- `url_needed`
+
+Those are not part of the executable vocab algebra defined in `compile.py`.
+
+That means `st_builder.py` is still useful as a persistence tool, but it should not be treated as perfectly aligned with the live runtime vocab model.
+
+## Existing Repo Drift
+
+The current repo already contains `.st` files that reflect earlier runtime assumptions. For example, `skills/research.st` still contains `research_needed`, which is not part of the compiler’s active vocab sets.
+
+So the right way to read the ecosystem today is:
+
+- some `.st` files are fully aligned with the live kernel
+- some still encode older vocabulary or richer intended structure than the loader currently executes
+
+## Extraction And Skeletons
+
+There are now two related but distinct packaging ideas in the repo.
+
+`tools/chain_to_st.py`
+Extracts a resolved chain into `.st`, but the extraction is heuristic. It derives actions from descriptions and infers properties from step shape.
+
+`schemas/skeleton.v1.json`
+Defines an author-time semantic tree skeleton intended for deterministic compilation into executable packages.
+
+That is the better place to look if you want a planning-side contract. The runtime `.st` loader is still narrower than the author-time planning surface.
+
+## Practical Reading Of The System Today
+
+If you need the short version, it is this:
+
+`.st` is the repo’s shared packaging format, but not every `.st` field is first-class at runtime.
+
+The live kernel currently treats `.st` files as:
+
+- executable package definitions when loaded into `SkillStep`
+- rendered entity data when resolved by hash
+- protected structural primitives when they are codons
+
+That is the shape the docs need to respect until the loader, compiler, builder, and skeleton compiler all converge further.

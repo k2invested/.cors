@@ -1,128 +1,154 @@
-# step.py — The Step Primitive
+# step.py
 
-**Layer**: 0 (no dependencies)
-**Principles**: §1, §2, §4, §5, §11, §12, §13
+`step.py` is the runtime foundation of the kernel. Everything else assumes its object model.
 
-## Purpose
+## What A Step Is Here
 
-Defines the step primitive and all types that compose it. The foundation — every other module builds on these types. A step is meaningful movement: a two-phase transition (pre-diff + post-diff) with two hash layers (step refs for reasoning, content refs for data).
+A step is the unit of meaningful movement. In code, that means one object that carries:
 
-## Types
+- the reasoning ancestry that was followed
+- the content hashes that grounded the move
+- the semantic description of what happened
+- any emitted gaps
+- an optional commit if the move mutated the workspace
 
-### Epistemic
+The design is still built around two hash layers and the code preserves that separation:
 
-Epistemic signal vector. Three dimensions derived from chain structure by the governor.
+- `step_refs` are causal ancestry
+- `content_refs` are evidence or acted-on artifacts
 
-| Field | Type | Meaning |
-|-------|------|---------|
-| relevance | float | LLM-assessed: how much does resolving this advance the trajectory toward the shared goal? Primary admission driver. |
-| confidence | float | LLM-assessed: how safe and trustworthy is this to act on? |
-| grounded | float | Kernel-computed: deterministic hash co-occurrence frequency on the trajectory. NOT LLM-assessed — overwritten by compiler at admission. |
-
-Methods:
-- `as_vector() → [float, float, float]` — for governor linear algebra
-- `distance_to(other) → float` — euclidean distance between two epistemic states
-- `magnitude() → float` — vector magnitude
-
-### Gap
-
-A gap articulation — the LLM's assessment of what needs to happen. Every gap is hashed (content-addressed from desc + refs) and stored on the trajectory whether acted on or not.
-
-| Field | Type | Meaning |
-|-------|------|---------|
-| hash | str | Content-addressed 12-char hex hash |
-| desc | str | Semantic articulation of the gap |
-| content_refs | list[str] | **Layer 2**: blobs/trees/commits referenced as evidence |
-| step_refs | list[str] | **Layer 1**: reasoning steps in the causal chain |
-| origin | str? | Step hash that surfaced this gap |
-| scores | Epistemic | Epistemic signal for the governor |
-| vocab | str? | Mapped precondition (hash_resolve_needed, hash_edit_needed, pattern_needed, etc.) |
-| vocab_score | float | Confidence in the vocab mapping |
-| resolved | bool | True when the chain closed this gap |
-| dormant | bool | True if below threshold — stored but not acted on |
-
-Factory: `Gap.create(desc, content_refs=[], step_refs=[]) → Gap`
-
-### Step
-
-The atom. Every state transition produces one. Two-phase: pre-diff (what was observed) + post-diff (what was concluded).
-
-| Field | Type | Meaning |
-|-------|------|---------|
-| hash | str | Content-addressed from desc + timestamp |
-| step_refs | list[str] | **Layer 1**: step hashes the LLM followed |
-| content_refs | list[str] | **Layer 2**: blobs/trees/commits referenced |
-| desc | str | Semantic articulation of the causal chain |
-| gaps | list[Gap] | One per causal chain — with vocab + scores |
-| commit | str? | Git commit SHA if mutation occurred |
-| t | float | Timestamp |
-| chain_id | str? | Which reasoning chain this step belongs to |
-| parent | str? | Step hash that spawned this step (child gap) |
-
-Factory: `Step.create(desc, step_refs=[], content_refs=[], gaps=[], commit=None) → Step`
-
-Key methods:
-- `is_mutation() → bool` — has commit
-- `is_observation() → bool` — no commit
-- `has_gaps() → bool` — has active (non-resolved, non-dormant) gaps
-- `active_gaps() → list[Gap]`
-- `dormant_gaps() → list[Gap]`
-- `all_refs() → list[str]` — all hashes from both layers + gap refs
-
-### Chain
-
-A reasoning chain — sequence of steps originating from one gap. Has its own hash. Chains that branch are reasoning steps at a higher level.
-
-| Field | Type | Meaning |
-|-------|------|---------|
-| hash | str | Derived from member step hashes |
-| origin_gap | str | Gap hash that started this chain |
-| steps | list[str] | Step hashes in execution order |
-| desc | str | Summary (set when chain completes) |
-| resolved | bool | All gaps resolved |
-| extracted | bool | Saved to chains/*.json |
-
-Factory: `Chain.create(origin_gap, first_step) → Chain`
-
-### Trajectory
-
-The closed hash graph. Steps go on it. Content (blobs/commits) is referenced but never stored here.
-
-| Structure | Type | Purpose |
-|-----------|------|---------|
-| steps | dict[str, Step] | Hash → Step lookup (O(1)) |
-| order | list[str] | Chronological step hash sequence |
-| chains | dict[str, Chain] | Chain hash → Chain |
-| gap_index | dict[str, Gap] | All gaps including dormant |
-
-Key methods:
-- `append(step)` — add step, index its gaps
-- `resolve(hash) → Step?` — lookup by hash
-- `resolve_gap(hash) → Gap?` — lookup gap by hash
-- `recent(n) → list[Step]` — last N steps
-- `recent_chains(n) → list[Chain]` — last N chains
-- `co_occurrence(hash) → int` — how many steps reference this hash
-- `is_commit(hash) → bool` — is this a mutation step
-- `dormant_gaps() → list[Gap]` — all dormant gaps
-- `recurring_dormant(min_count) → list[str]` — dormant descriptions appearing N+ times
-- `render_recent(n, registry=None) → str` — Render trajectory as traversable hash tree with named skill references (e.g. kenny:72b1d5ffc964)
-- `_tag_ref(ref, layer, registry) → str` — Tag hash with type prefix, resolves named entities from skill registry
-- `_render_refs(step_refs, content_refs, registry) → str` — Render refs list with named tags
-- `_render_steps_as_tree(steps, registry) → str` — Render loose steps as flat hash tree
-- `save(path)` / `load(path)` — JSON persistence
+The two layers are never merged into one field.
 
 ## Hash Functions
 
-| Function | Input | Output | Purpose |
-|----------|-------|--------|---------|
-| `blob_hash(content)` | str | 12-char hex | Content-addressed hash (SHA-256) |
-| `chain_hash(step_hashes)` | list[str] | 12-char hex | Hash a sequence of step hashes |
+The file exposes two basic hash helpers:
 
-## Invariants
+- `blob_hash(content)` for 12-character content hashes
+- `chain_hash(step_hashes)` for chain identity
 
-- Steps are immutable after creation
-- Gaps are immutable after creation
-- Two hash layers never mixed on the same field
-- Every gap stored in gap_index regardless of status
-- Trajectory only appends, never overwrites
-- Same content always produces the same hash
+`Step.create()` includes the timestamp in its hash input, so steps are unique events rather than pure content-addressed values. `Gap.create()` hashes from description plus refs, so repeated identical gap articulations collapse more naturally.
+
+## Epistemic
+
+`Epistemic` is the score carrier used by the compiler and governor. It has three fields:
+
+- `relevance`
+- `confidence`
+- `grounded`
+
+The code comments in `step.py` are older and slightly misleading here. The runtime behavior in `compile.py` is the authority: relevance and confidence come from the model, while grounded is recomputed deterministically from trajectory co-occurrence when the compiler admits a gap.
+
+## Gap
+
+`Gap` is the kernel’s unit of unresolved discrepancy. Its important fields are:
+
+- `hash`
+- `desc`
+- `content_refs`
+- `step_refs`
+- `origin`
+- `scores`
+- `vocab`
+- `vocab_score`
+- `resolved`
+- `dormant`
+- `turn_id`
+
+Two details matter operationally:
+
+Every gap is indexed on the trajectory whether it is active or dormant.
+
+`turn_id` exists so the compiler can apply stricter readmission thresholds to old dangling gaps and dormant promotions.
+
+## Step
+
+`Step` is the central runtime record. Its fields are:
+
+- `hash`
+- `step_refs`
+- `content_refs`
+- `desc`
+- `gaps`
+- `commit`
+- `t`
+- `chain_id`
+- `parent`
+
+Useful runtime helpers:
+
+- `is_mutation()`
+- `is_observation()`
+- `has_gaps()`
+- `active_gaps()`
+- `dormant_gaps()`
+- `all_refs()`
+
+The post-diff surface is intentionally simple in the current runtime. The step itself does not store first-class `action`, `resolve`, `condition`, or `post_diff`. Those concepts currently live elsewhere or are inferred when extracting or loading `.st` files.
+
+## Chain
+
+`Chain` is how the system groups steps into a higher-order unit. A chain stores:
+
+- its own hash
+- the origin gap
+- the ordered member step hashes
+- a summary description
+- `resolved`
+- `extracted`
+
+Chains are rehashed as new steps are appended. Long resolved chains can be written out to `chains/*.json`.
+
+## Trajectory
+
+`Trajectory` is the closed runtime graph. It owns:
+
+- `steps`
+- `order`
+- `chains`
+- `gap_index`
+
+This gives the kernel fast lookup by hash while still preserving chronology.
+
+Important behaviors in the current implementation:
+
+- `append(step)` indexes both the step and all of its gaps
+- `co_occurrence(hash)` drives deterministic grounding
+- `dormant_gaps()` and `recurring_dormant()` make dormant memory visible
+- `extract_chains()` writes long resolved chains to disk
+- `find_passive_chains()` and `append_to_passive_chain()` support cross-turn accumulation against unresolved chains
+
+That passive-chain behavior is easy to miss from the old docs, but it matters: the system is not limited to strictly local within-turn chains.
+
+## Rendering
+
+`Trajectory.render_recent()` is the main semantic-tree renderer the model sees.
+
+It renders:
+
+- chains
+- origin gaps
+- steps
+- active, resolved, and dormant gaps
+- refs with named `.st` hashes when the skill registry can resolve them
+- commit hashes on mutation steps
+- absolute timestamps
+
+If there are no chains yet, the file falls back to rendering loose steps as a flat tree.
+
+This rendering surface is important because `loop.py` reuses the same shape when resolving step hashes and gap hashes back into context.
+
+## Persistence
+
+The runtime persistence format is intentionally simple:
+
+- `trajectory.json` stores ordered step dictionaries
+- `chains.json` stores the chain index
+- `chains/<hash>.json` stores extracted long resolved chains
+
+There is no separate database layer. The trajectory is JSON and Git remains the external content store.
+
+## Current Limits
+
+The step runtime is strong, but it is not yet a fully lossless planning IR.
+
+The main limitation is that several planning fields discussed elsewhere in the repo are not first-class on `Step` or `SkillStep`. That is why deterministic extraction and `.st` loading still involve heuristics or field loss in parts of the system.

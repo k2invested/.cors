@@ -1,187 +1,181 @@
-# loop.py — The Turn Loop
+# loop.py
 
-**Layer**: 2 (depends on step.py, compile.py, skills/loader.py)
-**Principles**: §2, §3, §5, §6, §17, §18, §19, §20
+`loop.py` is the live kernel. It is where the runtime architecture becomes concrete.
 
-## Purpose
+## What The Loop Owns
 
-Orchestrates one turn from user input to synthesis. Manages a persistent LLM session, produces the first step (origin), fires identity .st, invokes the compiler, resolves hashes, executes tools, and synthesizes the response.
+The loop owns one complete turn:
 
-## Status: IMPLEMENTED
+- loading state
+- creating the origin step
+- loading identity
+- invoking the compiler
+- resolving hashes
+- running tools
+- applying tree policy
+- committing mutations
+- injecting postconditions
+- running codon workflows
+- synthesizing the user response
+- persisting trajectory and extracted chains
 
-## Turn Flow
+If `step.py` is the object model and `compile.py` is the sequencing law, `loop.py` is the operational world.
 
-1. INIT — Load trajectory from trajectory.json, load chains from chains.json, load skills from skills/, set _skill_registry for resolve_hash access, resolve git HEAD. Build dynamic system prompt (BRIDGE_VOCAB_PLACEHOLDER replaced with entity list + explanation that entity resolution uses hash_resolve_needed).
-2. RESUME CHECK — _find_dangling_gaps() scans trajectory for unresolved gaps from prior turns (clarify_needed halts, interrupted turns). Surfaced so the LLM can see what was left dangling. Non-selection = dropped.
-3. FIRST STEP (origin) — Inject trajectory (hash tree via render_recent) + HEAD tree + user message into persistent session. LLM produces first atomic step with gap articulations. This is the origin of the turn's causal chain.
-4. IDENTITY — Fire contact's .st file (e.g. admin.st) AFTER the first step, not before. Identity loads mid-context where it won't be pushed out. Identity step references the skill hash (kenny:72b1d5ffc964).
-5. COMPILER — Admit origin gaps onto ledger, sort by priority (observe first, reprogramme last). If no gaps → auto-synthesize.
-6. ITERATION LOOP (max 30 rounds):
-   a. Pop top gap → governor signal
-   b. Clarify check: if clarify_needed, halt iteration. Gap persists on trajectory for next-turn resume.
-   c. Resolve hash references (skill registry → trajectory step → trajectory gap → git object)
-   d. Execute by vocab:
-      - Observation-only (hash_resolve_needed, external_context): resolve + inject, blob step, no post-diff. Entity .st files resolved automatically when their hash appears in content_refs (resolve_hash checks skill registry first).
-      - Deterministic (hash_resolve_needed): kernel resolves directly, LLM reasons over result
-      - Observation (pattern_needed, email_needed): tool executes, LLM reasons
-      - Mutation (hash_edit_needed, content_needed, script_edit_needed, etc.): .st auto-route check first (mutations targeting .st files, incl. hash_edit_needed, rerouted to reprogramme_needed), then 5.4 composes command, kernel executes. Failed executions (non-zero exit) recorded as "FAILED: desc" on trajectory, not committed, gap left unresolved — LLM gets another chance. Successful mutations auto-commit, universal postcondition fires (hash_resolve_needed → commit SHA).
-      - Reprogramme (reprogramme_needed): compose .st intent via LLM → execute st_builder → auto-commit
-      - Unknown: LLM addresses directly
-   e. Record step on trajectory + chain
-   f. If compiler.is_done() → break
-7. REPROGRAMME PASS — Automatic pre-synthesis housekeeping. Agent reviews turn, updates .st files if needed via st_builder. Commit hash lands on trajectory.
-8. SYNTHESIS — Inject SYNTH_SYSTEM, LLM synthesizes response
-9. SAVE — Persist trajectory.json and chains.json
+## Session Model
 
-## Key Types
+The file uses a persistent `Session` object backed by the OpenAI chat completions API. The model defaults to:
 
-### Session
-Persistent LLM session for one turn. Accumulates messages — the LLM's own outputs stay in context. New data injected as user messages.
+- `KERNEL_COMPOSE_MODEL`
+- or `gpt-4.1` if unset
 
-| Method | Purpose |
-|--------|---------|
-| set_system(content) | Set system message once at turn start |
-| inject(content, role) | Inject content into session (default role: user) |
-| call(user_content) → str | Call LLM, optionally inject user content first |
-| message_count() → int | Number of messages in session |
+The session accumulates:
 
-## System Prompts
+- system prompt
+- injected context
+- the model’s own prior outputs
 
-### PRE_DIFF_SYSTEM
-Teaches the LLM:
-- What a step is (universal primitive — people, workflows, ideas, events, tasks are all steps)
-- What a gap is (verifiable discrepancy: observational or misalignment)
-- Epistemic triad scoring (relevance + confidence scored by LLM, grounded computed by kernel)
-- Gap discipline (entity resolution uses hash_resolve_needed with entity hash in content_refs — no special entity vocab)
-- clarify_needed (halt iteration when user input needed, gap persists for resume)
-- Hash tree navigation (how to read the trajectory tree, trace causality, reverse-engineer state)
-- Identity as entity (user hash is a mental model to reason about, not instructions to follow)
-- Vocab mapping (5 observe + 7 mutate + reprogramme_needed bridge)
-- Output format: natural reasoning with embedded JSON block containing gaps
+This means the loop is stateful within a turn even when individual tools are not.
 
-The prompt is dynamic: BRIDGE_VOCAB_PLACEHOLDER is replaced at runtime with reprogramme_needed description + explanation that entity resolution has NO vocab (just hash_resolve_needed) + list of known entities with hashes for reference.
+## Turn Lifecycle
 
-### COMPOSE_SYSTEM
-Command composition for mutation gaps. LLM produces JSON with `command` and `reasoning` fields. Prefers python3 one-liners over sed for macOS compatibility.
+The current `run_turn()` flow is:
 
-### SYNTH_SYSTEM
-Final response synthesis — concise, conversational, no internal details. Do not mention hashes, trajectory, or internal systems.
+1. Load trajectory, chains, skills, and HEAD.
+2. Build the dynamic pre-diff prompt.
+3. Find unresolved dangling gaps from earlier turns.
+4. Ask for the origin step.
+5. Append the origin step to the trajectory.
+6. Inject identity if a contact-triggered `.st` exists.
+7. Create a compiler for the current turn.
+8. Re-admit qualifying cross-turn gaps.
+9. Emit origin gaps onto the ledger.
+10. Iterate up to `MAX_ITERATIONS`.
+11. Run `_reprogramme_pass()`.
+12. Synthesize the user-facing answer.
+13. Persist an automatic heartbeat if background work still needs reintegration.
+14. Save trajectory and chains.
+
+That is the actual control loop today.
 
 ## Hash Resolution
 
-resolve_hash(ref, trajectory) tries four sources in order:
-1. Skill registry — .st entity hash → rendered entity data (identity, preferences, refs, steps). Uses _skill_registry module-level variable set by run_turn.
-2. Trajectory step — step hash → full step data (desc, refs, gaps, commit)
-3. Trajectory gap — gap hash → gap data with scores (relevance, confidence, grounded)
-4. Git object — git show → blob/tree/commit content
+`resolve_hash()` currently resolves in this order:
 
-Entity .st files resolve through hash_resolve_needed automatically — the same mechanism as any other hash. No separate entity vocab or code path.
+1. skill registry
+2. trajectory step
+3. trajectory gap
+4. Git object
 
-resolve_all_refs(step_refs, content_refs, trajectory) resolves all references and formats as labeled injection blocks (`── resolved step:<hash> ──` and `── resolved <hash> ──`).
+Two consequences follow from that:
 
-## Tool Execution
+Entity-style `.st` files are resolved through the same hash-resolution surface as everything else.
 
-TOOL_MAP maps vocab → tool script path:
+Step hashes resolve as semantic tree branches, not as flat blobs. The loop renders ancestry and child gaps when injecting a step reference back into context.
 
-| Vocab | Tool Script |
-|-------|-------------|
-| hash_resolve_needed | (inline — resolve_hash) |
-| pattern_needed | tools/file_grep.py |
-| email_needed | tools/email_check.py |
-| external_context | (inline — LLM surfaces from context) |
-| hash_edit_needed | tools/hash_manifest.py |
-| content_needed | tools/file_write.py |
-| script_edit_needed | tools/file_edit.py |
-| command_needed | tools/code_exec.py |
-| message_needed | tools/email_send.py |
-| json_patch_needed | tools/json_patch.py |
-| git_revert_needed | tools/git_ops.py |
+## Execution Branches
 
-Execution modes:
-- DETERMINISTIC_VOCAB: {hash_resolve_needed} — kernel resolves directly (incl. .st entity files via skill registry), LLM reasons over injected result, may produce child gaps
-- OBSERVATION_ONLY_VOCAB: {hash_resolve_needed, external_context} — resolve into context, blob step (no post-diff, no child gaps). Entity .st files auto-resolve when their hash is in content_refs.
-- Clarify (clarify_needed): halt iteration, record clarification gap on trajectory (persists across turns for resume), break from loop
-- Observation vocab (is_observe): tool executes as subprocess, LLM reasons over result, may produce child gaps
-- Mutation vocab (is_mutate): .st auto-route check first (script_edit_needed/content_needed/json_patch_needed/hash_edit_needed targeting .st files rerouted to reprogramme_needed), then OMO validation, 5.4 composes command via JSON (hash_edit_needed uses hash_manifest.py JSON params format), kernel executes via shell. Failed executions (non-zero exit) recorded as "FAILED: desc" on trajectory, not committed, gap left unresolved. Successful mutations auto-commit, universal postcondition fires (hash_resolve_needed gap targeting commit SHA injected onto ledger).
-- Reprogramme (reprogramme_needed): compose .st intent via LLM → execute st_builder → auto-commit. No post-diff.
+The runtime branch selection is driven by vocab.
 
-Tools execute as subprocesses: stdin receives JSON params, stdout returns result. Timeout: 30 seconds. Working directory: CORS_ROOT.
+Observation-only:
 
-## Key Functions
+- `hash_resolve_needed`
+- `external_context`
 
-| Function | Purpose |
-|----------|---------|
-| run_turn(message, contact_id) → str | Complete turn lifecycle, returns synthesis |
-| run_command(cmd_name, args) → str | Run a /command .st file directly, bypasses LLM gap routing |
-| resolve_hash(ref, trajectory) → str? | Resolve any hash (step/gap/git) |
-| resolve_all_refs(step_refs, content_refs, trajectory) → str | Resolve + format all refs as injection blocks |
-| execute_tool(tool_path, params) → (str, int) | Subprocess tool execution (stdin JSON → stdout) |
-| auto_commit(message) → str? | Git add -A + commit, returns short SHA or None |
-| git_head() → str | Current HEAD hash (short) |
-| git_tree(commit) → str | File listing at commit (--name-only -r) |
-| git_show(ref) → str | Resolve git object to content |
-| git_diff(from_ref, to_ref) → str | Diff between two commits |
-| git(cmd, cwd) → str | Run any git command, return stdout |
+These inject data and record a blob-like step with no post-diff branching.
 
-## Helper Functions
+Deterministic:
 
-| Function | Purpose |
-|----------|---------|
-| _parse_step_output(raw, step_refs, content_refs, chain_id) → (Step, list[Gap]) | Parse LLM output → Step + gaps. Extracts JSON block from natural text. Sets gap.vocab and gap.scores from LLM-provided values. Grounded always 0.0 (kernel computes at admission). |
-| _extract_json(raw) → dict? | Extract a JSON object from LLM output |
-| _extract_command(raw) → str? | Extract `command` field from LLM JSON output |
-| _find_identity_skill(contact_id, registry) → Skill? | Find .st file with `trigger: "on_contact:<contact_id>"` |
-| _find_dangling_gaps(trajectory) → list[Gap] | Find unresolved gaps from prior turns (clarify_needed halts, interrupted turns). Called at turn start for resume check. |
-| _render_identity(skill) → str | Format identity + preferences from .st file for session injection |
-| _resolve_entity(content_refs, registry, trajectory) → str? | Resolve entity .st files referenced in content_refs. Checks skill registry first, falls back to trajectory. |
-| _render_entity(skill) → str | Render a .st entity's full data (name, desc, trigger, identity, preferences, refs, steps) for session injection |
-| _reprogramme_pass(session, registry, trajectory) → Step? | Automatic pre-synthesis reprogramme pass. Agent reviews turn, decides if .st files need updating. Routes to st_builder. Returns blob step with commit hash, or None. |
-| _synthesize(session, message) → str | Inject SYNTH_SYSTEM and produce final response |
-| _save_turn(trajectory) | Persist trajectory.json and chains.json |
+- currently only `hash_resolve_needed`
 
-## Configuration
+This path resolves data directly and then asks the model to articulate any resulting child gaps.
 
-| Constant | Value | Purpose |
-|----------|-------|---------|
-| CORS_ROOT | Path(__file__).parent | Root directory for all paths |
-| SKILLS_DIR | CORS_ROOT / "skills" | Skills directory |
-| TRAJ_FILE | CORS_ROOT / "trajectory.json" | Trajectory persistence |
-| CHAINS_FILE | CORS_ROOT / "chains.json" | Chain persistence |
-| MAX_ITERATIONS | 30 | Max iteration loop rounds |
-| TRAJECTORY_WINDOW | 10 | Recent chains to render for LLM |
+Observation:
 
-## Environment Variables
+- any `is_observe(vocab)` term not handled as observation-only
 
-| Variable | Purpose |
-|----------|---------|
-| OPENAI_API_KEY | LLM API access (OpenAI client) |
-| KERNEL_COMPOSE_MODEL | LLM model for session (default: gpt-4.1) |
+The loop executes a tool if needed, injects the result, and asks the model what it observed.
 
-## Key Responsibilities
+Mutation:
 
-| Component | Role |
-|-----------|------|
-| Persistent LLM (Session) | Reads structure, produces meaning (gap articulations, commands, synthesis) |
-| Compiler | Sequences gaps via stack (priority-sorted), enforces OMO, manages chains |
-| Kernel (loop.py) | Resolves hashes (skill registry → trajectory → git), executes tools, auto-commits with universal postcondition, handles execution failures (non-zero exit), manages session, runs reprogramme pass, resume check via _find_dangling_gaps |
-| Governor (in compile.py) | Monitors epistemic vectors, gates action (HALT, REVERT signals) |
-| Skills (loader.py) | Resolves .st files, provides named hash resolution, separates bridge vs command visibility |
+- any `is_mutate(vocab)` term
 
-## Context Window Management
+The loop checks policy, validates OMO, asks the model to compose an action, executes it, commits if successful, and injects a universal postcondition gap targeting the resulting commit or post-observe path.
 
-The persistent session accumulates only:
-- Trajectory hash tree (initial seed via render_recent)
-- HEAD workspace state
-- User message + identity
-- Freshly resolved hash data (per iteration)
-- LLM's own reasoning
+Bridge codons:
 
-Everything previously observed exists as hash references on the trajectory. Never re-injected. The context window is a workspace, not a warehouse.
+- `commit_needed`
+- `reason_needed`
+- `await_needed`
+- `reprogramme_needed`
 
-## REPL
+These each have dedicated handling and may disperse child gaps from the corresponding codon `.st`.
 
-The module includes a `__main__` block that runs an interactive REPL:
-- `you>` prompt accepts user input
-- `/quit` exits
-- `/wipe` deletes trajectory.json and chains.json (reset)
-- Each input runs `run_turn()` and prints the synthesis
+## Tree Policy
+
+Tree policy is enforced before a mutation is accepted as real state change.
+
+Current behavior:
+
+- protected immutable paths are auto-reverted
+- codon mutations reject into `reason_needed`
+- ordinary `skills/` mutations reroute to `reprogramme_needed`
+- UI output reroutes to `stitch_needed`
+
+This is one of the most important architectural protections in the codebase. It already distinguishes codons from general `.st` files and `.st` files from ordinary workspace mutation.
+
+## Auto-Commit
+
+`auto_commit()` now returns a tuple:
+
+- `(commit_sha, on_reject_vocab)`
+
+After commit it immediately checks whether protected paths were modified. If so, it auto-reverts and may hand back an `on_reject` vocab such as `reason_needed`.
+
+Successful mutations trigger a universal postcondition:
+
+- create a `hash_resolve_needed` gap
+- target the commit or configured post-observe path
+- emit it back into the compiler
+
+That postcondition is one of the clearest operational realizations of OMO in the current system.
+
+## Codon Handling
+
+The bridge codons are partly hardcoded and partly package-driven.
+
+`reason_needed`
+Loads `reason.st` if available and disperses its steps as child gaps. If not, the loop falls back to inline reasoning.
+
+`commit_needed`
+Loads `commit.st` if available and reintegrates commitment structure. Otherwise it falls back to inline reasoning.
+
+`await_needed`
+Loads `await.st` if available and records a manual await on the chain. Otherwise it falls back to inline reasoning.
+
+`reprogramme_needed`
+Loads current entity context, injects principles and registry context, asks the model for `.st` intent, routes that intent through `tools/st_builder.py`, and commits the result.
+
+In other words, codons are both runtime cases and packaged step systems.
+
+## Reprogramme Pass And Heartbeat
+
+Two behaviors in `loop.py` make the architecture more recursive than the old docs implied.
+
+`_reprogramme_pass()`
+Runs automatically before synthesis and asks whether any entity-style `.st` state should be updated from the conversation.
+
+Heartbeat
+If the compiler saw background triggers without a corresponding await, the loop persists an automatic dangling `reason_needed` gap for the next turn.
+
+These are important because they mean loop closure is not only “all current gaps resolved.” The system also preserves unfinished higher-order work across turns.
+
+## Important Current Drift
+
+Some of the prompt language is broader than the runtime actually supports.
+
+For example, `reprogramme_needed` prompt text still talks about composing richer `.st` structures than `skills/loader.py` currently preserves as first-class executable fields.
+
+There is also residual legacy vocab drift in the loop.
+The OMO violation path still records `"scan_needed"` even though `scan_needed` is not part of the current executable vocab algebra.
+
+So `loop.py` is the best place to understand what the kernel really does today, but it also exposes where the surrounding prompt and builder ecology has not fully converged on the current runtime law.

@@ -1,289 +1,158 @@
-# Architecture — Step Kernel v5 (cors)
+# Architecture
 
-## System Overview
+`docs/PRINCIPLES.md` is the source of truth for the design. This file is narrower: it describes the architecture that is actually implemented in the current codebase, and it calls out where that implementation is still catching up to the principles.
 
-A hash-native reasoning agent. One primitive (step), one LLM (persistent 5.4), one governor (deterministic linear algebra), one storage layer (git).
-
-The trajectory is a closed hash graph of reasoning steps. Raw data lives in git as blobs/trees/commits. The LLM navigates the hash graph, articulates gaps, and composes commands. The compiler sequences execution via a stack-based ledger. The governor monitors epistemic convergence.
-
-## Module Map
-
-```
-cors/
-  step.py        (Layer 0)  — primitives
-  compile.py     (Layer 1)  — sequencing + governor
-  loop.py        (Layer 2)  — orchestration
-  skills/        (Layer 0)  — step packages (.st files + loader)
-  tools/         (Layer 0)  — execution scripts (standalone)
-  docs/          —           — specs, architecture, principles
-  tests/         —           — structural validation (95 tests)
-  .git/          (Layer 0)  — content storage (blobs, trees, commits)
-```
-
-Strict layer ordering: Layer 0 has no internal dependencies. Layer 1 depends on Layer 0. Layer 2 depends on Layer 0 + 1. No circular dependencies.
-
----
-
-## Module: step.py
+## Core Shape
 
-**Purpose**: Defines the step primitive and all types that compose it. The foundation — every other module builds on these types.
-
-**Mechanisms served**: §1 (Step), §2 (Hash layers), §4 (Chains), §11 (Dormant gaps), §12 (Recursive convergence), §13 (Closed hash graph)
-
-### Public types
-
-| Type | Purpose |
-|------|---------|
-| `Epistemic` | Epistemic signal vector (relevance, confidence, grounded). relevance and confidence are LLM-assessed. grounded is computed deterministically by the kernel from hash co-occurrence frequency. Supports vector math: `as_vector()`, `distance_to()`, `magnitude()`. |
-| `Gap` | Gap articulation — desc + content_refs (Layer 2) + step_refs (Layer 1) + vocab mapping + scores + dormant flag. Every gap is hashed. |
-| `Step` | The atom — pre-diff (step_refs + content_refs + desc) + post-diff (gaps + commit). Hash-addressed, immutable once created. |
-| `Chain` | Reasoning chain — sequence of step hashes originating from one gap. Has its own hash. Tracked as a unit. |
-| `Trajectory` | The closed hash graph — step index (hash→Step), gap index (hash→Gap), chain index, chronological order. Persistence via JSON. |
+The kernel is built around one runtime primitive: the step. A step records what was followed, what was looked at, what was concluded, and whether a mutation produced a commit. Gaps are emitted from steps, the compiler admits and sequences those gaps, and the turn loop resolves or executes them.
 
-### Key functions
+The current layers are:
 
-| Function | Signature | Purpose |
-|----------|-----------|---------|
-| `blob_hash(content)` | `str → str` | 12-char SHA-256 content hash |
-| `chain_hash(step_hashes)` | `list[str] → str` | Hash a sequence of step hashes |
-| `Step.create(...)` | `→ Step` | Factory with auto-hash and timestamp |
-| `Gap.create(...)` | `→ Gap` | Factory with auto-hash from desc+refs |
-| `Chain.create(origin_gap, first_step)` | `→ Chain` | Start a new chain |
-| `Trajectory.render_recent(n, registry=None)` | `→ str` | Render trajectory as traversable hash tree with named skill references |
-| `Trajectory._tag_ref()` | helper | Tag a hash reference with its type (step/gap/blob) |
-| `Trajectory._render_refs()` | helper | Render a list of refs with their tags |
-| `Trajectory._render_steps_as_tree()` | helper | Render steps as an indented hash tree structure |
-| `Trajectory.save(path)` / `.load(path)` | | JSON persistence |
+- Layer 0: `step.py`, `skills/loader.py`, `tools/`
+- Layer 1: `compile.py`
+- Layer 2: `loop.py`
 
-### Invariants
+The dependency direction is still clean in practice:
 
-- Steps are immutable after creation (hash derived from content + timestamp)
-- Gaps are immutable after creation (hash derived from desc + refs)
-- Two hash layers never mixed: step_refs for Layer 1, content_refs for Layer 2
-- Every gap stored in gap_index regardless of dormant status
-- Trajectory only appends — never overwrites
+- `step.py` defines the runtime objects.
+- `compile.py` depends on `step.py`.
+- `loop.py` depends on both and orchestrates execution.
+- tools are executed as subprocesses rather than imported into the kernel.
 
----
+Git remains the external content store. The trajectory stores step and gap structure, while blobs, trees, and commits stay in `.git` and are resolved on demand.
 
-## Module: compile.py
+## Runtime Model
 
-**Purpose**: The compiler — structures execution from semantic emissions. Manages the ledger (stack-based ordered frontier), enforces OMO rhythm, tracks chain lifecycle, and hosts the governor's convergence detection.
+The running system has four main surfaces.
 
-**Mechanisms served**: §7 (Governor), §9 (Ledger), §10 (OMO), §14 (Vocab bridge), §15 (No micro loop), §16 (post_diff config)
+`step.py`
+Defines `Gap`, `Step`, `Chain`, and `Trajectory`. This is the closed hash graph the model reasons over.
 
-### Public types
+`compile.py`
+Turns emitted gaps into executable order. It owns the ledger, admission thresholds, OMO enforcement, chain lifecycle, and the deterministic governor.
 
-| Type | Purpose |
-|------|---------|
-| `LedgerEntry` | A gap on the ledger with placement metadata (chain_id, depth, parent_gap, priority) |
-| `Ledger` | Stack-based ordered frontier. Push origin/child gaps, pop from top, sort by priority, track resolved/history. |
-| `ChainState` | Enum: OPEN, ACTIVE, SUSPENDED, CLOSED |
-| `GovernorSignal` | Enum: ALLOW, CONSTRAIN, REDIRECT, REVERT, ACT, HALT |
-| `GovernorState` | Tracks epistemic vectors across steps for convergence/stagnation/divergence/oscillation detection |
-| `Compiler` | The sequencer — emission→admission→placement, pop+route, OMO enforcement, chain management |
+`loop.py`
+Runs a turn end to end. It loads trajectory and skills, creates the origin step, routes gaps by vocab, executes tools, commits mutations, injects postconditions, and synthesizes the user response.
 
-### Key functions
+`skills/*.st`
+Provides hash-addressable packaged structure. In practice these currently play two roles:
 
-| Function | Purpose |
-|----------|---------|
-| `Compiler.emit(step)` | Three-part lifecycle: emission → admission (threshold) → placement (stack push) |
-| `Compiler.emit_origin_gaps(step)` | Same but creates new chains per gap (for initial pre-diff). Sorts by priority after emission. |
-| `Compiler.next()` | Pop top of stack, get governor signal. Returns (entry, signal). |
-| `Compiler.validate_omo(vocab)` | Check if proposed action respects O-M-O transition grammar |
-| `Compiler.resolve_current_gap(hash)` | Mark gap resolved, check chain completion |
-| `_compute_grounded(gap)` | Compute grounded score deterministically from hash co-occurrence frequency |
-| `_admission_score(gap)` | Compute admission score: 0.8*rel + 0.2*grounded (relevance-dominant, grounded deterministic) |
-| `govern(entry, chain_length, state)` | Pure deterministic governor — measures vectors, returns signal |
+- executable action packages
+- persistent entity-style state
 
-### Constants
+That distinction is important architecturally even though the current loader still treats both through the same raw file format.
 
-| Name | Value | Purpose |
-|------|-------|---------|
-| `ADMISSION_THRESHOLD` | 0.4 | Min admission score (0.8*rel + 0.2*grounded) to enter ledger |
-| `CONFIDENCE_THRESHOLD` | 0.8 | Gap resolved when confidence exceeds this |
-| `DORMANT_THRESHOLD` | 0.2 | Below this, gap stored as dormant |
-| `MAX_CHAIN_DEPTH` | 15 | Force-close chain beyond this |
-| `SATURATION_THRESHOLD` | 0.05 | Information gain below this = stagnation |
-| `STAGNATION_WINDOW` | 3 | N steps with no movement = stagnation |
-| `CHAIN_EXTRACT_LENGTH` | 8 | Chains longer than this extracted to file |
+## Execution Flow
 
-### Vocab sets
-
-| Set | Members | Maps to |
-|-----|---------|---------|
-| `OBSERVE_VOCAB` | pattern_needed, hash_resolve_needed, email_needed, external_context, clarify_needed | Hash resolution / read tools / clarification halt |
-| `MUTATE_VOCAB` | hash_edit_needed, content_needed, script_edit_needed, command_needed, message_needed, json_patch_needed, git_revert_needed | Execution tools / .st scripts |
-| `BRIDGE_VOCAB` | reprogramme_needed | The single bridge primitive — create/update entity .st files |
-
-### Key functions (vocab)
-
-| Function | Purpose |
-|----------|---------|
-| `vocab_priority(vocab)` | Priority ordering for ledger: observe (20) → mutate (40) → reprogramme (99). Returns sort key. |
-| `is_observe(vocab)` / `is_mutate(vocab)` / `is_bridge(vocab)` | Vocab set membership checks |
-
-### Invariants
-
-- Ledger is LIFO — deepest child popped first
-- One chain at a time — depth-first per origin gap
-- OMO enforced — no consecutive mutations without observation
-- Admission requires 0.8*rel + 0.2*grounded ≥ ADMISSION_THRESHOLD (relevance-dominant, grounded deterministic)
-- Dormant gaps stored on trajectory but never enter ledger
-- Force-close at MAX_CHAIN_DEPTH
-
----
-
-## Module: skills/loader.py
-
-**Purpose**: Loads `.st` files from the skills directory, hashes them, and builds a resolvable registry. The LLM references skills by hash. The kernel resolves them to step sequences.
-
-**Mechanisms served**: §8 (Predefined step hashes), §14 (Vocab bridge), §17 (.st as manifestation), §18 (Identity as .st)
-
-### Public types
-
-| Type | Purpose |
-|------|---------|
-| `SkillStep` | One atomic step within a skill: action, desc, vocab, post_diff |
-| `Skill` | A complete skill: hash, name, display_name, desc, steps[], source path, trigger, is_command. display_name: extracted from identity.name or defaults to skill name — used in tree render |
-| `SkillRegistry` | Map of hash→Skill, name→Skill, and commands dict. Two visibility tiers: bridge skills (LLM-surfaceable) and command skills (hidden, /command only). |
-
-### Key functions
-
-| Function | Purpose |
-|----------|---------|
-| `load_skill(path)` | Load one .st file → Skill |
-| `load_all(skills_dir)` | Load all .st files → SkillRegistry |
-| `SkillRegistry.resolve(hash)` | Hash → Skill |
-| `SkillRegistry.resolve_name(hash)` | Hash → display name for tree rendering (kenny, research, etc.) |
-| `SkillRegistry.resolve_by_name(name)` | Name → Skill |
-| `SkillRegistry.resolve_command(name)` | Resolve a /command by name. Command skills are hidden from LLM registry. |
-| `SkillRegistry.all_commands()` | List all command skills |
-| `SkillRegistry.render_for_prompt()` | Render all skills as LLM context (excludes command skills) |
+At runtime the flow is:
 
----
+1. Load trajectory, chains, skills, and HEAD.
+2. Ask the model for the origin step.
+3. Inject identity if a contact-triggered `.st` exists.
+4. Admit origin gaps into the compiler ledger.
+5. Iterate depth-first over ledger entries.
+6. Resolve, observe, mutate, or bridge based on vocab.
+7. Auto-commit successful mutations and inject a `hash_resolve_needed` postcondition.
+8. Run the pre-synthesis reprogramme pass.
+9. Synthesize the user-facing response.
+10. Persist trajectory and extracted chains.
 
-## Module: loop.py
+The loop is not a planner in the traditional sense. Planning emerges from step emission, compiler ordering, and the codon workflows loaded from `skills/codons/`.
 
-**Status**: IMPLEMENTED
+## Vocab Surface
 
-**Purpose**: The turn loop — orchestrates one turn from user input to synthesis. Manages the persistent 5.4 session, feeds pre/post iterations, invokes the compiler, resolves hashes, executes tools, and produces the final response.
+The executable runtime vocab is defined in `compile.py`.
 
-**Mechanisms served**: §2 (LLM as attention), §3 (Commits), §5 (Navigation), §6 (One LLM one governor), §19 (HEAD injection)
+Observe:
 
-### Public types
+- `pattern_needed`
+- `hash_resolve_needed`
+- `email_needed`
+- `external_context`
+- `clarify_needed`
 
-| Type | Purpose |
-|------|---------|
-| `Session` | Persistent LLM session — accumulates messages, manages context window |
+Mutate:
 
-### System prompts
+- `hash_edit_needed`
+- `stitch_needed`
+- `content_needed`
+- `script_edit_needed`
+- `command_needed`
+- `message_needed`
+- `json_patch_needed`
+- `git_revert_needed`
 
-| Prompt | Purpose |
-|--------|---------|
-| `PRE_DIFF_SYSTEM` | Teaches gaps, epistemic triad, hash tree navigation, identity, gap discipline, clarify_needed. Dynamic: BRIDGE_VOCAB_PLACEHOLDER replaced at runtime with entity list + explanation that entity resolution uses hash_resolve_needed (no separate vocab). |
-| `COMPOSE_SYSTEM` | Composition prompt for tool parameterization |
-| `SYNTH_SYSTEM` | Synthesis prompt for final response generation |
+Bridge codons:
 
-### Execution modes
+- `reason_needed`
+- `await_needed`
+- `commit_needed`
+- `reprogramme_needed`
 
-| Mode | Description |
-|------|-------------|
-| Deterministic | Kernel resolves — no LLM needed (hash_resolve_needed) |
-| Observation-only | Blob step, no post-diff — data ingestion without gap emission (hash_resolve_needed, external_context) |
-| Observation | Tool executes, LLM reasons over result (pattern_needed, email_needed) |
-| Clarify | clarify_needed halts iteration, gap persists on trajectory for next-turn resume |
-| Mutation | 5.4 composes command, kernel executes, auto-commit, universal postcondition fires. Failed executions (non-zero exit) recorded as "FAILED: desc" on trajectory, not committed, gap left unresolved. |
-| Reprogramme | Create/update entity .st via st_builder |
-| .st auto-route | script_edit_needed/content_needed/json_patch_needed/hash_edit_needed targeting .st files rerouted to reprogramme_needed |
+This is wider than the older docs implied. The current system is no longer a single-bridge runtime. It has four bridge codons and explicit priority ordering for them.
 
-### Key functions
+## Tree Policy
 
-| Function | Purpose |
-|----------|---------|
-| `run_turn(message, contact_id)` | Complete turn lifecycle — returns synthesis |
-| `run_command(cmd_name, args)` | Run a /command .st file directly, bypasses LLM gap routing |
-| `resolve_hash()` | Tries skill registry (.st entity) → trajectory step → trajectory gap → git object |
-| `_find_dangling_gaps()` | Find unresolved gaps from prior turns (clarify_needed, interrupted). Called at turn start for resume check. |
-| `auto_commit(message)` | Git add -A + commit, returns SHA or None. Universal postcondition: every commit injects hash_resolve_needed gap targeting commit SHA onto ledger. |
-| `TOOL_MAP` | Vocab → tool script mapping (includes hash_edit_needed → tools/hash_manifest.py) |
-| `DETERMINISTIC_VOCAB` | {hash_resolve_needed} — kernel resolves without LLM |
-| `OBSERVATION_ONLY_VOCAB` | {hash_resolve_needed, external_context} — blob steps with no post-diff |
-| `_skill_registry` | Module-level variable set by run_turn. Used by resolve_hash to check if a hash is a .st file. |
-| `_reprogramme_pass()` | Automatic pre-synthesis pass — agent reviews turn, updates .st files if needed. Runs between iteration loop and synthesis. |
-| `_resolve_entity()` | Resolve entity .st files from content_refs via skill registry |
-| `_render_entity()` | Render a .st entity's full data (identity, preferences, refs, steps) for session injection |
+`loop.py` enforces a tree policy before accepting mutations.
 
-### Environment variables
+Current default policy:
 
-| Variable | Purpose |
-|----------|---------|
-| `OPENAI_API_KEY` | Required — LLM access |
-| `KERNEL_COMPOSE_MODEL` | Compose/synthesis model |
+- `skills/codons/` is immutable and rejects into `reason_needed`
+- `skills/` reroutes mutation toward `reprogramme_needed`
+- `ui_output/` reroutes mutation toward `stitch_needed`
+- core kernel files and persistence files are immutable
 
-### Turn flow
+This is one of the clearest architectural distinctions in the codebase. It already treats codons, executable `.st` files, and ordinary workspace files differently.
 
-```
-1. Message arrives
-2. Load trajectory + skills + HEAD. Set _skill_registry for resolve_hash access.
-3. Build dynamic system prompt (BRIDGE_VOCAB_PLACEHOLDER replaced with entity list + hash_resolve explanation)
-4. Resume check: _find_dangling_gaps() surfaces unresolved gaps from prior turns
-5. First LLM pass → first atomic step (origin)
-6. Identity .st fires AFTER first step
-7. Compiler admits gaps, sorts by priority
-8. Iteration loop: pop → execute by vocab → inject → next step
-   - clarify_needed: halt iteration, gap persists for next-turn resume
-   - .st auto-route: mutations targeting .st files (incl. hash_edit_needed) rerouted to reprogramme_needed
-   - Execution failure: non-zero exit recorded as "FAILED: desc", not committed, gap left unresolved
-   - Universal postcondition: every auto_commit injects hash_resolve_needed → commit SHA
-9. Reprogramme pass (automatic, pre-synthesis housekeeping)
-10. HALT → synthesize
-11. Save trajectory + chains
-```
+## Codons
 
----
+The codons in `skills/codons/` are not just labels. They are real packaged workflows:
 
-## Module: tools/st_builder.py
+- `reason.st`
+- `await.st`
+- `commit.st`
+- `reprogramme.st`
 
-**Purpose**: Builds valid `.st` files from semantic intent. The agent describes what it wants in natural language, the builder handles structure, format, and validation.
+`loop.py` expands these by loading the corresponding `.st` and dispersing its steps as child gaps. In other words, codons are executable step packages, not hardcoded switch cases alone.
 
-**Mechanisms served**: §8 (Predefined step hashes), §17 (.st as manifestation)
+## Semantic Tree, Skeleton, and Extraction
 
-### Interface
+The current runtime semantic tree is the realized trajectory: steps, gaps, refs, chains, and commits.
 
-Input (stdin JSON): semantic intent with name, desc, trigger, actions
-Output: validated .st file written to skills/
+Alongside that, the repo now has `schemas/skeleton.v1.json`. That schema is not the runtime tree. It is an author-time planning skeleton intended for deterministic compilation into executable packages.
 
----
+That gives the architecture three distinct levels:
 
-## Module: tools/hash_manifest.py
+- runtime trajectory: realized semantic tree
+- long-chain extraction: `chains/*.json`
+- author-time skeleton: `schemas/skeleton.v1.json`
 
-**Purpose**: Universal file I/O by hash reference. Single tool for all file mutations. Read by hash, write, patch, diff. Routes mutations by file type to specialized tools (.st → st_builder.py, .json → json_patch.py, .docx → doc_edit.py, .pdf → pdf_fill.py).
+This separation matches the code better than the older docs did. The runtime tree is what happened. The skeleton is what can be formalized and lowered.
 
-**Mechanisms served**: §3 (Commits), §13 (Closed hash graph), §14 (Vocab bridge)
+## Important Drift To Keep In Mind
 
-### Interface
+Several mechanisms still lag the principles or each other.
 
-Input (stdin JSON): `{"action": "read|write|patch|diff", "path": "relative/path", "content": "...", "patch": {"old": "...", "new": "..."}, "ref": "commit_sha"}`
+The `.st` runtime is lossy.
+`skills/loader.py` only keeps `action`, `desc`, `vocab`, and `post_diff` as first-class executable step data. Fields such as `resolve`, `condition`, `inject`, and richer manifestation fields remain present in raw files but are not preserved in the loaded `SkillStep`.
 
-### File type routing (TOOL_ROUTES)
+The builder and some existing skills still use legacy vocabs.
+`tools/st_builder.py` infers `scan_needed`, `research_needed`, and `url_needed`, and some current `.st` files still contain them. Those terms are not part of the executable vocab algebra in `compile.py`.
 
-| Extension | Delegated tool |
-|-----------|---------------|
-| .st | st_builder.py |
-| .json | json_patch.py |
-| .docx | doc_edit.py |
-| .pdf | pdf_fill.py |
+`chain_to_st.py` is heuristic, not a perfect round-trip.
+It derives action names from descriptions and infers some step properties from resolved chain structure. It is useful, but it is not a lossless serialization of runtime structure.
 
----
+Some prompts still describe the older worldview.
+`loop.py` includes prompt language around `.st` composition and manifestation that is broader than what the loader and compiler currently treat as executable first-class structure.
 
-## Dependencies
+## What This Means
 
-```
-step.py          → (no dependencies)
-compile.py       → step.py
-skills/loader.py → (no dependencies)
-loop.py          → step.py, compile.py, skills/loader.py
-tools/*          → (standalone scripts, no module imports)
-```
+The architecture is stronger than the stale docs suggested. The code already distinguishes:
 
-Zero circular dependencies. Strict DAG.
+- primitive runtime structure
+- sequencing law
+- higher-order codon workflows
+- protected persistence surfaces
+- author-time planning skeletons
+
+The main documentation problem was not that the system lacked architecture. It was that the docs flattened several real distinctions that already exist in the code.

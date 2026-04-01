@@ -1,109 +1,75 @@
-# tools/ — Execution Scripts
+# tools
 
-**Layer**: 0 (standalone, no module imports)
-**Principles**: §3, §13, §14
+The `tools/` directory is the kernel’s execution surface. The loop does not import these as internal modules. It spawns them as subprocesses and treats them as bounded operators.
 
-## Purpose
+## Contract
 
-Standalone Python scripts executed by the kernel as subprocesses. Each tool reads params from stdin (JSON), executes, and writes results to stdout. Tools never import from step.py or compile.py — they are isolated execution units.
+The common pattern is:
 
-## Hash-Native Tools (v5)
+- JSON goes in on stdin
+- output comes back on stdout
+- exit code communicates success or failure
 
-| Tool | Purpose | Input | Output |
-|------|---------|-------|--------|
-| hash_manifest.py | Universal file I/O by hash reference. Read, write, patch, diff. Routes mutations by file type (.st→st_builder, .json→json_patch, .docx→doc_edit, .pdf→pdf_fill). | `{"action": "read\|write\|patch\|diff", "path": "...", "content": "...", "patch": {"old":"..","new":".."}, "ref": "sha"}` | File content, diff, or confirmation |
-| st_builder.py | Build .st files from semantic intent. Supports stepless pure entities. Forwards all non-base fields as manifestation config. | `{"name": ..., "actions": [...], "identity": {}, ...}` | Valid .st file written to skills/ |
+That separation matters because it keeps the execution layer outside the core runtime object model.
 
-## Observation Tools (resolve hash → data)
+## Tools The Loop Actually Routes To
 
-| Tool | Vocab | Purpose |
-|------|-------|---------|
-| file_grep.py | pattern_needed | Search file contents by pattern |
-| email_check.py | email_needed | Check email |
-| (inline resolve_hash) | hash_resolve_needed | Resolve step/gap/git hashes from trajectory (no tool script — handled in loop.py) |
-| (inline) | external_context | LLM surfaces from current context (no tool script) |
+The current `TOOL_MAP` in `loop.py` routes directly to:
 
-## Mutation Tools (execute → commit)
+- `tools/file_grep.py`
+- `tools/email_check.py`
+- `tools/hash_manifest.py`
+- `tools/stitch_generate.py`
+- `tools/file_write.py`
+- `tools/file_edit.py`
+- `tools/code_exec.py`
+- `tools/email_send.py`
+- `tools/json_patch.py`
+- `tools/git_ops.py`
 
-| Tool | Vocab | Purpose |
-|------|-------|---------|
-| hash_manifest.py | hash_edit_needed | Universal file editing — routes by file type to specialized tools |
-| code_exec.py | command_needed | Execute shell commands |
-| file_write.py | content_needed | Write new files |
-| file_edit.py | script_edit_needed | Edit existing files |
-| json_patch.py | json_patch_needed | Surgical JSON mutation |
-| email_send.py | message_needed | Send email |
-| git_ops.py | git_revert_needed | Git operations (revert, etc.) |
+`hash_resolve_needed` and `external_context` are handled inline by the kernel rather than by a subprocess.
 
-## Domain Tools
+## Important Core Tools
 
-| Tool | Purpose |
-|------|---------|
-| land_registry.py | Query land registry API |
-| epc_lookup.py | Fetch energy performance certificates |
-| flood_risk.py | Check flood risk zones |
-| police_api.py | Query police API |
-| postcodes_io.py | Postcode lookups |
-| ons_demographics.py | ONS demographic data |
-| companies_house.py | Companies House queries |
-| google_trends.py | Google Trends data |
-| rental_search.py | Rental market search |
+`hash_manifest.py`
+The main mutation operator behind `hash_edit_needed`.
 
-## Media Tools
+`st_builder.py`
+The `.st` persistence builder used by `reprogramme_needed`.
 
-| Tool | Purpose |
-|------|---------|
-| runway_gen.py | Generate video via Runway |
-| video_generator.py | Video generation pipeline |
-| generate_scenes.py | Scene planning |
-| generate_narration.py | TTS narration |
-| scraper.py | YouTube transcript scraper |
-| youtube_research.py | YouTube research |
+`chain_to_st.py`
+The chain extraction path for crystallizing resolved runtime structure into `.st`.
 
-## Document Tools
+Those three are more architecturally important than most of the domain tools because they sit on the boundary between runtime reasoning and persisted structure.
 
-| Tool | Purpose |
-|------|---------|
-| doc_read.py | Read .docx/.pdf documents |
-| doc_edit.py | Edit .docx documents |
-| doc_edit_batch.py | Batch .docx edits |
-| pdf_read.py | Read PDF files |
-| pdf_fill.py | Fill PDF forms |
-| pdf_check_fields.py | Check PDF form fields |
+## Domain And Utility Tools In The Repo
 
-## Tool Interface
+Beyond the directly routed tools, the repo contains a wider bench of utilities and domain operators, including:
 
-All tools follow the same interface:
+- document tools such as `doc_read.py`, `doc_edit.py`, `pdf_read.py`, and `pdf_fill.py`
+- web and research tools such as `web_search.py`, `research_web.py`, `url_fetch.py`, and `youtube_research.py`
+- registry and property tools such as `land_registry.py`, `epc_lookup.py`, `flood_risk.py`, and `postcodes_io.py`
+- context and indexing tools such as `repo_index.py`, `context_pack.py`, `recall.py`, and `scan_tree.py`
+- media tools such as `runway_gen.py`, `video_generator.py`, and `generate_narration.py`
 
-```
-stdin  → JSON params
-stdout → result text (or JSON)
-stderr → error messages
-exit 0 → success
-exit 1 → error
-```
+Not all of these are currently first-class vocab-routed tools in `loop.py`, but they are part of the repo’s operator surface.
 
-The kernel spawns tools as subprocesses. No shared state. No imports from the core system. Tools are hot-swappable — replace a script, the system uses the new version next execution.
+## Routing And Policy
 
-## Post-execution
+Two routing rules matter more than the individual tools.
 
-After a mutation tool (universal postcondition):
-1. Kernel runs `auto_commit(message)` → `git add -A && git commit` → captures SHA
-2. SHA recorded on the step's commit field
-3. Universal postcondition: every auto_commit injects a `hash_resolve_needed` gap targeting the commit SHA onto the ledger. This is structural — not per-tool. The gap enters as a child (depth-first, pops next) so the system observes the mutation result before proceeding.
+First, `.st`-targeted mutation is not treated like ordinary file editing. The loop checks tree policy and reroutes `.st` mutation toward `reprogramme_needed`.
 
-### File type routing (hash_manifest.py)
+Second, codon mutation is not allowed. If a mutation touches `skills/codons/`, the commit is reverted and the system rejects into `reason_needed`.
 
-When hash_edit_needed fires, hash_manifest routes mutations by file extension:
+So the tool layer is not a free-for-all. The kernel imposes architectural law over which operators may touch which surfaces.
 
-| Extension | Delegated tool |
-|-----------|---------------|
-| .st | st_builder.py |
-| .json | json_patch.py |
-| .docx | doc_edit.py |
-| .pdf | pdf_fill.py |
-| (other) | Direct read/write/patch |
+## Current Drift
 
-### .st auto-route
+There are two important mismatches to keep in mind.
 
-Any script_edit_needed, content_needed, json_patch_needed, or hash_edit_needed gap targeting a .st file is automatically rerouted to reprogramme_needed by loop.py. This ensures .st files always go through the st_builder for schema validation.
+`st_builder.py` still infers legacy vocab terms that are not part of the compiler’s live runtime algebra.
+
+`chain_to_st.py` presents itself as deterministic extraction, but its current implementation is only partially direct. It still derives some step properties heuristically from resolved chain shape.
+
+That means both tools are useful, but neither should be treated as a perfect reflection of the current runtime semantics.

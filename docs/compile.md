@@ -1,163 +1,173 @@
-# compile.py — The Compiler
+# compile.py
 
-**Layer**: 1 (depends on step.py)
-**Principles**: §7, §9, §10, §14, §15, §16
+`compile.py` is the lawful sequencer of the kernel. It does not invent plans. It decides which emitted gaps are admissible, how they are ordered, when a chain should be redirected or force-closed, and how OMO is enforced.
 
-## Purpose
+## The Ledger
 
-Structures execution from semantic emissions. The compiler is a sequencer that admits gaps, places them into lawful order, preserves OMO rhythm, manages chain boundaries, and monitors epistemic convergence. It is NOT a planner or search algorithm.
+The ledger is the active unresolved frontier. It is not history.
 
-## Core Concept: The Ledger
+The current implementation is explicitly stack-shaped:
 
-The ledger is the ordered unresolved frontier — a recursively rewritten ordered agenda. Not history. Not a log. The active execution surface.
+- origin gaps are pushed as chain roots
+- child gaps are pushed on top
+- the compiler pops from the top
 
-It is a **stack** (LIFO). Origin gaps enter first. Child gaps push on top. The compiler pops from the top — deepest child first. Depth-first per origin gap. One chain at a time.
+That gives you depth-first execution within a lawful ordered frontier.
 
-### Three-part gap lifecycle
+`LedgerEntry` stores:
 
-1. **Emission**: a step produces candidate gaps (LLM pre-diff output)
-2. **Admission**: only gaps with admission score (0.8 * relevance + 0.2 * grounded) ≥ ADMISSION_THRESHOLD enter the ledger. Grounded is computed deterministically by the kernel from hash co-occurrence, not LLM-assessed. Below DORMANT_THRESHOLD → stored as dormant on trajectory.
-3. **Placement**: admitted gaps push onto the stack at lawful position (top for children, bottom for origin gaps)
+- the gap itself
+- `chain_id`
+- `depth`
+- `parent_gap`
+- `priority`
 
-## Types
+`Ledger` stores:
 
-### LedgerEntry
+- `stack`
+- `chain_states`
+- `resolved`
+- `history`
 
-A gap on the ledger with placement metadata.
+Only origin gaps are re-sorted by priority. Child gaps stay on top so depth-first behavior is preserved.
 
-| Field | Type | Meaning |
-|-------|------|---------|
-| gap | Gap | The gap being tracked |
-| chain_id | str | Which chain this gap belongs to |
-| depth | int | Depth in the chain (0 = origin) |
-| parent_gap | str? | Gap hash that spawned this entry |
-| priority | int | vocab_priority() value — lower = pops first (default 50) |
+## Chain Lifecycle
 
-### Ledger
+The compiler tracks four chain states:
 
-The stack-based ordered frontier.
+- `OPEN`
+- `ACTIVE`
+- `SUSPENDED`
+- `CLOSED`
 
-| Method | Purpose |
-|--------|---------|
-| `push_origin(gap, chain_id)` | Push origin gap, create new chain. Sets priority from vocab_priority(). |
-| `push_child(gap, chain_id, parent_gap, depth)` | Push child gap on top (depth-first). Sets priority from vocab_priority(). |
-| `peek() → LedgerEntry?` | Look at top without removing |
-| `pop() → LedgerEntry?` | Pop top entry — next gap to address |
-| `resolve_gap(hash)` | Mark gap as resolved |
-| `sort_by_priority()` | Sort stack so highest priority gaps pop first. Origins sorted by priority (observe at top, reprogramme at bottom). Children stay on top for depth-first. |
-| `chain_is_complete(chain_id) → bool` | Are all gaps in this chain resolved? |
-| `is_empty() → bool` | Ledger empty = turn done |
+This is more than bookkeeping. `skip_chain()` suspends a chain when the governor redirects, and background tracking later uses chain identity when deciding whether a heartbeat is needed.
 
-### ChainState
+## Admission
 
-Enum tracking chain lifecycle:
+Gap admission is deterministic once the model has emitted `relevance` and `confidence`.
 
-| State | Meaning |
-|-------|---------|
-| OPEN | Origin gap entered, chain created |
-| ACTIVE | Currently being addressed |
-| SUSPENDED | Waiting for child chain to resolve |
-| CLOSED | All gaps resolved |
+Constants:
 
-### GovernorSignal
+- `ADMISSION_THRESHOLD = 0.4`
+- `CROSS_TURN_THRESHOLD = 0.6`
+- `DORMANT_PROMOTE_THRESHOLD = 0.7`
+- `CONFIDENCE_THRESHOLD = 0.8`
+- `DORMANT_THRESHOLD = 0.2`
+- `MAX_CHAIN_DEPTH = 15`
+- `SATURATION_THRESHOLD = 0.05`
+- `STAGNATION_WINDOW = 3`
+- `CHAIN_EXTRACT_LENGTH = 8`
 
-| Signal | Trigger | Effect |
-|--------|---------|--------|
-| ALLOW | Gap is converging | Continue addressing |
-| CONSTRAIN | Chain depth > MAX_CHAIN_DEPTH | Force-close chain |
-| REDIRECT | Stagnation detected | Skip to next origin gap |
-| REVERT | Divergence detected | Undo last mutation |
-| ACT | Observe vocab with sufficient scores | Execute mutation |
-| HALT | All gaps resolved or pathological | End turn |
+Admission score is:
 
-### GovernorState
+`0.8 * relevance + 0.2 * grounded`
 
-Tracks epistemic vectors across steps for convergence detection.
+Grounded is recomputed from trajectory co-occurrence. The LLM does not control it.
 
-| Method | Purpose |
-|--------|---------|
-| `record(epistemic)` | Append vector to history |
-| `information_gain() → float` | Delta magnitude between last two vectors |
-| `is_stagnating() → bool` | No movement in STAGNATION_WINDOW steps |
-| `is_diverging() → bool` | Confidence dropped > 0.15 |
-| `is_oscillating() → bool` | Confidence alternating up/down |
+Thresholds are tiered:
 
-### Compiler
+- fresh gaps use `ADMISSION_THRESHOLD`
+- dangling cross-turn gaps use `CROSS_TURN_THRESHOLD`
+- dormant promotions use `DORMANT_PROMOTE_THRESHOLD`
 
-The main sequencer. Owns the ledger, governor state, and chain tracking.
+Anything below `DORMANT_THRESHOLD` is stored as dormant and never enters the ledger.
 
-| Method | Purpose |
-|--------|---------|
-| `emit(step)` | Three-part lifecycle: emission → admission → placement |
-| `emit_origin_gaps(step)` | Same but creates new chains per gap (initial pre-diff). Sorts by priority after emission: observe first, reprogramme last. |
-| `next() → (LedgerEntry?, GovernorSignal)` | Pop + govern — returns what to do next |
-| `validate_omo(vocab) → bool` | Check O-M-O transition grammar |
-| `record_execution(vocab, produced_commit)` | Track OMO state |
-| `needs_postcondition() → bool` | True after mutation (observation must follow) |
-| `resolve_current_gap(hash)` | Mark resolved, check chain completion |
-| `add_step_to_chain(hash)` | Record step in active chain |
-| `force_close_chain(chain_id)` | Force-close (too deep / pathological) |
-| `skip_chain(chain_id)` | Move chain to bottom of stack (stagnation) |
-| `is_done() → bool` | Ledger empty |
-| `render_ledger() → str` | Debug view of current stack |
-| `_compute_grounded(gap) → float` | Deterministic grounded score from hash co-occurrence on trajectory. Normalizes: 1 occurrence = 0.3, 3+ = 0.8+, capped at 1.0 |
-| `_admission_score(gap) → float` | Compute admission: 0.8 * relevance + 0.2 * grounded. Overwrites LLM's grounded with deterministic value. Relevance-dominant — extreme relevance can enter with zero co-occurrence |
+## Governor
 
-## Vocab Sets
+The governor is deterministic and intentionally simple. It operates on epistemic vectors and emits one of:
 
-Three disjoint sets:
+- `ALLOW`
+- `CONSTRAIN`
+- `REDIRECT`
+- `REVERT`
+- `ACT`
+- `HALT`
 
-**OBSERVE_VOCAB** (hash resolution / read / clarification — 5 terms):
-pattern_needed, hash_resolve_needed, email_needed, external_context, clarify_needed
+The logic currently does four main things:
 
-**MUTATE_VOCAB** (execution / write — 7 terms):
-hash_edit_needed, content_needed, script_edit_needed, command_needed, message_needed, json_patch_needed, git_revert_needed
+- force-closes chains that exceed max depth
+- reverts on divergence
+- redirects on oscillation or stagnation
+- upgrades mutate gaps to `ACT` when grounded and confidence are both at least `0.5`
 
-**BRIDGE_VOCAB** (1 term — static):
-`{"reprogramme_needed"}` — the single bridge primitive. No dynamic registration. No `{entity}_needed` vocab terms. Entity .st files resolve through hash_resolve_needed automatically — resolve_hash checks the skill registry first: if a hash is a .st file, it renders the entity data. Same mechanism as any other hash resolution.
+This is not a search controller. It is closer to a structural gate over chain health.
 
-Helper functions: `is_observe(vocab)`, `is_mutate(vocab)`, `is_bridge(vocab)`
+## OMO
 
-### vocab_priority(vocab)
+The compiler still enforces observe-mutate-observe rhythm.
 
-Priority ordering for the ledger. Lower number = pops first (top of stack).
+In code that means:
 
-| Priority | Category | Vocab |
-|----------|----------|-------|
-| 20 | Observe | pattern_needed, hash_resolve_needed, email_needed, external_context, clarify_needed |
-| 40 | Mutate | hash_edit_needed, content_needed, script_edit_needed, etc. |
-| 50 | Unknown | unrecognized vocab |
-| 99 | Reprogramme | reprogramme_needed — runs last |
+- consecutive mutations are blocked by `validate_omo()`
+- `record_execution()` tracks whether the last step produced a commit
+- `needs_postcondition()` marks the requirement for observation after mutation
 
-## Constants
+The actual postcondition injection is done in `loop.py`, but the grammar belongs to the compiler.
 
-| Name | Value | Purpose |
-|------|-------|---------|
-| ADMISSION_THRESHOLD | 0.4 | Min admission score (0.8*rel + 0.2*grounded) to enter ledger |
-| CONFIDENCE_THRESHOLD | 0.8 | Gap resolved when confidence exceeds this |
-| DORMANT_THRESHOLD | 0.2 | Below this → dormant (stored, not acted on) |
-| MAX_CHAIN_DEPTH | 15 | Force-close beyond this |
-| SATURATION_THRESHOLD | 0.05 | Info gain below this = stagnation |
-| STAGNATION_WINDOW | 3 | N steps with no movement |
-| CHAIN_EXTRACT_LENGTH | 8 | Chains longer than this extracted to file |
+## Runtime Vocab Algebra
 
-## OMO Enforcement
+The executable vocab surface in the compiler is:
 
-The compiler enforces Observe-Mutate-Observe as a transition grammar:
-- Mutation requires preceding observation (`last_was_mutation` must be False)
-- After mutation, postcondition must fire (automatic observation)
-- Observations can follow observations (OOO is valid)
+Observe:
 
-The sequence isn't planned — it emerges from vocab mapping + postcondition rules.
+- `pattern_needed`
+- `hash_resolve_needed`
+- `email_needed`
+- `external_context`
+- `clarify_needed`
 
-## Invariants
+Mutate:
 
-- Ledger is LIFO — deepest child popped first
-- One chain at a time — depth-first per origin gap
-- No consecutive mutations without observation between
-- Admission requires score ≥ 0.4 (0.8*rel + 0.2*grounded; grounded is deterministic)
-- Dormant gaps stored but never enter ledger
-- Force-close at MAX_CHAIN_DEPTH
-- OBSERVE_VOCAB ∩ MUTATE_VOCAB = ∅
-- Origin gaps sorted by priority after initial emission
-- BRIDGE_VOCAB is static — just {reprogramme_needed}. Entity resolution uses hash_resolve_needed.
+- `hash_edit_needed`
+- `stitch_needed`
+- `content_needed`
+- `script_edit_needed`
+- `command_needed`
+- `message_needed`
+- `json_patch_needed`
+- `git_revert_needed`
+
+Bridge:
+
+- `reprogramme_needed`
+- `reason_needed`
+- `commit_needed`
+- `await_needed`
+
+Priority ordering is currently:
+
+- observe: `20`
+- mutate: `40`
+- unknown: `50`
+- `reason_needed`: `90`
+- `await_needed`: `95`
+- `commit_needed`: `98`
+- `reprogramme_needed`: `99`
+
+That ordering matters because the stack is LIFO. Higher priority numbers sink lower and therefore fire later.
+
+## Background Tracking
+
+The current compiler also has a small but important background mechanism.
+
+It tracks:
+
+- `_background_triggers`
+- `_awaited_chains`
+
+From that it derives `needs_heartbeat()`, which is how `loop.py` decides whether to persist an automatic `reason_needed` dangling gap after synthesis.
+
+This is one of the places where the actual architecture is richer than the older docs suggested. The system already has a structural notion of background work and reintegration.
+
+## Where The Code Still Drifts
+
+There are a few mismatches worth documenting plainly.
+
+The compiler’s vocab algebra is stricter than parts of the surrounding system.
+Some tools and `.st` files still reference legacy terms such as `scan_needed`, `research_needed`, and `url_needed`, but those are not part of `OBSERVE_VOCAB`, `MUTATE_VOCAB`, or `BRIDGE_VOCAB`.
+
+`CONFIDENCE_THRESHOLD` exists but is not currently the main resolution path.
+Most gap resolution in practice happens through chain handling in `loop.py`, not through a direct “confidence crossed threshold” transition.
+
+The governor is intentionally lightweight.
+If you read the principles as implying a more expressive planning calculus, that richer structure does not live here yet. `compile.py` is still the sequencing law, not the author-time planner.
