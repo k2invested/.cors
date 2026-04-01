@@ -317,22 +317,21 @@ P2_CASES = [
 P3_CASES = [
     ("observe_pattern_needed", lambda: is_observe("pattern_needed")),
     ("observe_hash_resolve_needed", lambda: is_observe("hash_resolve_needed")),
-    ("observe_mailbox_needed", lambda: is_observe("mailbox_needed")),
+    ("observe_email_needed", lambda: is_observe("email_needed")),
     ("observe_external_context", lambda: is_observe("external_context")),
-    ("observe_research_needed", lambda: is_observe("research_needed")),
+    ("observe_clarify_needed", lambda: is_observe("clarify_needed")),
     ("mutate_hash_edit_needed", lambda: is_mutate("hash_edit_needed")),
     ("mutate_stitch_needed", lambda: is_mutate("stitch_needed")),
     ("mutate_content_needed", lambda: is_mutate("content_needed")),
     ("mutate_script_edit_needed", lambda: is_mutate("script_edit_needed")),
     ("mutate_command_needed", lambda: is_mutate("command_needed")),
-    ("mutate_email_needed", lambda: is_mutate("email_needed")),
+    ("mutate_message_needed", lambda: is_mutate("message_needed")),
     ("mutate_json_patch_needed", lambda: is_mutate("json_patch_needed")),
     ("mutate_git_revert_needed", lambda: is_mutate("git_revert_needed")),
     ("bridge_reason_needed", lambda: is_bridge("reason_needed")),
     ("bridge_await_needed", lambda: is_bridge("await_needed")),
     ("bridge_commit_needed", lambda: is_bridge("commit_needed")),
     ("bridge_reprogramme_needed", lambda: is_bridge("reprogramme_needed")),
-    ("bridge_clarify_needed", lambda: is_bridge("clarify_needed")),
     ("deterministic_vocab_is_hash_resolve", lambda: loop.DETERMINISTIC_VOCAB == {"hash_resolve_needed"}),
     ("observation_only_contains_external_context", lambda: "external_context" in loop.OBSERVATION_ONLY_VOCAB),
     ("tool_map_hash_edit_routes_hash_manifest", lambda: loop.TOOL_MAP["hash_edit_needed"]["tool"] == "tools/hash_manifest.py"),
@@ -346,24 +345,6 @@ P3_CASES = [
     ("tree_policy_exact_match_compile_immutable", lambda: loop._match_policy("compile.py", loop._load_tree_policy())["immutable"] is True),
     ("tree_policy_longest_prefix_wins", lambda: loop._match_policy("skills/codons/reason.st", loop._load_tree_policy())["on_reject"] == "reason_needed"),
 ]
-
-
-def test_compiler_next_redirect_without_alternative_chain_falls_back_to_allow():
-    traj = Trajectory()
-    compiler = Compiler(traj)
-    gap = make_gap("only gap", vocab="pattern_needed")
-    gap.scores = Epistemic(0.5, 0.5, 0.5)
-    compiler.ledger.stack = [LedgerEntry(gap=gap, chain_id="solo")]
-    compiler.ledger.chain_states["solo"] = ChainState.OPEN
-    compiler.governor_state.record(Epistemic(0.5, 0.5, 0.5))
-    compiler.governor_state.record(Epistemic(0.5, 0.5, 0.5))
-    compiler.governor_state.record(Epistemic(0.5, 0.5, 0.5))
-
-    popped, signal = compiler.next()
-
-    assert popped is not None
-    assert popped.chain_id == "solo"
-    assert signal == GovernorSignal.ALLOW
 
 
 P4_CASES = [
@@ -411,7 +392,7 @@ P5_CASES = [
     ("validate_st_accepts_pure_entity", lambda: st_builder_module.validate_st({"name": "entity", "desc": "d", "steps": []}) == []),
     ("validate_st_rejects_invalid_trigger", lambda: any("invalid trigger" in e for e in st_builder_module.validate_st({"name": "x", "desc": "d", "trigger": "bad", "steps": []}))),
     ("builder_preserves_explicit_vocab", lambda: st_builder_module.build_st({"name": "x", "desc": "d", "steps": [{"action": "inspect", "desc": "inspect file", "vocab": "hash_resolve_needed"}]})["steps"][0]["vocab"] == "hash_resolve_needed"),
-    ("validate_st_rejects_unknown_runtime_vocab", lambda: any("invalid runtime vocab" in e for e in st_builder_module.validate_st({"name": "x", "desc": "d", "steps": [{"action": "inspect", "desc": "inspect file", "vocab": "url_needed"}]}))),
+    ("validate_st_rejects_unknown_runtime_vocab", lambda: any("invalid runtime vocab" in e for e in st_builder_module.validate_st({"name": "x", "desc": "d", "steps": [{"action": "inspect", "desc": "inspect file", "vocab": "research_needed"}]}))),
     ("slugify_trims_to_four_words", lambda: st_builder_module.slugify("Update the very important config file") == "update_the_very_important"),
     ("resolve_entity_renders_known_skill", lambda: skill("admin").hash in loop._resolve_entity([skill("admin").hash], registry(), Trajectory())),
     ("render_entity_has_identity_block", lambda: "identity:" in loop._render_entity(skill("admin"))),

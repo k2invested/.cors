@@ -52,9 +52,9 @@ Observe:
 
 - `pattern_needed`
 - `hash_resolve_needed`
-- `mailbox_needed`
+- `email_needed`
 - `external_context`
-- `research_needed`
+- `clarify_needed`
 
 Mutate:
 
@@ -63,7 +63,7 @@ Mutate:
 - `content_needed`
 - `script_edit_needed`
 - `command_needed`
-- `email_needed`
+- `message_needed`
 - `json_patch_needed`
 - `git_revert_needed`
 
@@ -73,11 +73,9 @@ Bridge:
 - `await_needed`
 - `commit_needed`
 - `reprogramme_needed`
-- `clarify_needed`
 
 `vocab_priority()` is the runtime sort key:
 
-- `clarify_needed` -> `15`
 - observe -> `20`
 - mutate -> `40`
 - unknown -> `50`
@@ -182,6 +180,8 @@ What it does not do:
 
 Those still happen in [loop.py](/Users/k2invested/Desktop/cors/loop.py).
 
+One current drift remains important to document honestly: the OMO violation path in the loop still records `"scan_needed"` as a legacy fallback even though `scan_needed` is not part of the live compiler vocab algebra.
+
 ## Background Tracking
 
 The compiler now has a more explicit background surface than older docs described.
@@ -227,6 +227,6 @@ Three limits are worth recording explicitly.
 
 `CONFIDENCE_THRESHOLD` exists but is not the main resolution path. Actual gap closure happens through chain handling and loop routing, not a simple confidence-triggered resolution.
 
-The vocab algebra is stricter than some older docs and helper surfaces. Legacy terms such as `scan_needed` and `url_needed` are outside the live compiler surface. `research_needed` is now part of the live observe surface, while deeper search/fetch terms remain package-scoped inside research workflows.
+The vocab algebra is stricter than some of the repo’s surrounding tools and older `.st` files. Legacy terms such as `scan_needed`, `research_needed`, and `url_needed` are outside the live compiler surface.
 
 The governor is deliberately lightweight. If you want richer planning calculus or whole-workflow validation, that lives in the skeleton compilers, not here.

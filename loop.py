@@ -44,7 +44,6 @@ from compile import (
 from skills.loader import load_all, SkillRegistry, Skill
 import manifest_engine as me
 from execution_engine import ExecutionConfig, ExecutionHooks, execute_iteration
-from vocab import pre_diff_vocab_guide
 
 
 # ── Configuration ────────────────────────────────────────────────────────
@@ -375,9 +374,8 @@ TOOL_MAP = {
     # Format: {"tool": path, "post_observe": target_path_or_None}
     "hash_resolve_needed":  {"tool": None},
     "pattern_needed":       {"tool": "tools/file_grep.py"},
-    "mailbox_needed":       {"tool": "tools/email_check.py"},
+    "email_needed":         {"tool": "tools/email_check.py"},
     "external_context":     {"tool": None},
-    "research_needed":      {"tool": "tools/research_web.py"},
 
     # Mutation tools (composed — 5.4 writes the command)
     # post_observe: None = resolve commit tree, path = resolve specific dir/file from commit
@@ -386,7 +384,7 @@ TOOL_MAP = {
     "content_needed":       {"tool": "tools/file_write.py"},
     "script_edit_needed":   {"tool": "tools/file_edit.py"},
     "command_needed":       {"tool": "tools/code_exec.py"},
-    "email_needed":         {"tool": "tools/email_send.py", "post_observe": "mailbox"},
+    "message_needed":       {"tool": "tools/email_send.py"},
     "json_patch_needed":    {"tool": "tools/json_patch.py"},
     "git_revert_needed":    {"tool": "tools/git_ops.py"},
 }
@@ -533,7 +531,31 @@ The kernel resolves content_refs for you. If you reference a hash, the kernel wi
 
 ## Vocab mapping
 
-VOCAB_GUIDE_PLACEHOLDER
+Each gap maps to a vocab term that tells the kernel HOW to resolve it:
+
+OBSERVE (kernel resolves, you receive data):
+  pattern_needed — search file contents by pattern
+  hash_resolve_needed — resolve step/gap/blob hashes from trajectory
+  email_needed — check email
+  external_context — surface from current context
+  clarify_needed — you cannot proceed without user input. USE THIS when:
+    - The user's intent is ambiguous and you'd be guessing
+    - Multiple interpretations exist and the wrong one wastes effort
+    - You need a specific piece of information only the user has
+    The desc field becomes your question. This halts the iteration loop.
+    The gap persists on the trajectory — next turn, the LLM sees it and
+    can resume the chain with the user's clarification as new context.
+  (workspace files visible via HEAD commit tree. URLs and web research are steps inside workflow .st files, not standalone vocab.)
+
+MUTATE (you compose a command, kernel executes):
+  hash_edit_needed — edit any file (universal: read by hash → compose edit → execute via hash_manifest)
+  stitch_needed — generate UI via Google Stitch (prompt → HTML + Tailwind CSS)
+  content_needed — write a new file
+  script_edit_needed — edit an existing file
+  command_needed — execute a shell command
+  message_needed — send an email/message
+  json_patch_needed — surgical JSON edit
+  git_revert_needed — git revert/checkout
 
 BRIDGE_VOCAB_PLACEHOLDER
 
@@ -709,11 +731,7 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
         "  Known entities (reference by hash in content_refs):\n"
         f"{entity_list_lines}"
     )
-    system_prompt = (
-        PRE_DIFF_SYSTEM
-        .replace("VOCAB_GUIDE_PLACEHOLDER", pre_diff_vocab_guide())
-        .replace("BRIDGE_VOCAB_PLACEHOLDER", dynamic_bridge)
-    )
+    system_prompt = PRE_DIFF_SYSTEM.replace("BRIDGE_VOCAB_PLACEHOLDER", dynamic_bridge)
     session.set_system(system_prompt)
 
     print(f"\n{'='*60}")
@@ -917,20 +935,6 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
-def _extract_json_block(raw: str) -> tuple[dict | None, int | None]:
-    """Extract the first valid top-level JSON object from model output."""
-    decoder = json.JSONDecoder()
-    for i, ch in enumerate(raw):
-        if ch != "{":
-            continue
-        try:
-            obj, _end = decoder.raw_decode(raw[i:])
-        except json.JSONDecodeError:
-            continue
-        if isinstance(obj, dict):
-            return obj, i
-    return None, None
-
 def _parse_step_output(raw: str, step_refs: list[str], content_refs: list[str],
                        chain_id: str = None) -> tuple[Step, list[Gap]]:
     """Parse LLM output into a Step with gaps.
@@ -939,9 +943,12 @@ def _parse_step_output(raw: str, step_refs: list[str], content_refs: list[str],
     Extract the gaps from the JSON, build a Step.
     """
     gaps = []
-    data, json_start = _extract_json_block(raw)
     try:
-        if data:
+        # Find JSON block in output
+        json_start = raw.find("{")
+        json_end = raw.rfind("}") + 1
+        if json_start >= 0 and json_end > json_start:
+            data = json.loads(raw[json_start:json_end])
             for g in data.get("gaps", []):
                 gap = Gap.create(
                     desc=g.get("desc", ""),
@@ -962,7 +969,8 @@ def _parse_step_output(raw: str, step_refs: list[str], content_refs: list[str],
         pass
 
     # Extract desc from the natural text portion (before JSON)
-    desc = raw[:json_start].strip() if isinstance(json_start, int) and json_start > 0 else raw[:200].strip()
+    json_start = raw.find("{")
+    desc = raw[:json_start].strip() if json_start > 0 else raw[:200].strip()
     # Trim to a reasonable length
     if len(desc) > 200:
         desc = desc[:200] + "..."
@@ -980,14 +988,27 @@ def _parse_step_output(raw: str, step_refs: list[str], content_refs: list[str],
 
 def _extract_json(raw: str) -> dict | None:
     """Extract a JSON object from LLM output."""
-    data, _json_start = _extract_json_block(raw)
-    return data
+    try:
+        json_start = raw.find("{")
+        json_end = raw.rfind("}") + 1
+        if json_start >= 0 and json_end > json_start:
+            return json.loads(raw[json_start:json_end])
+    except (json.JSONDecodeError, KeyError):
+        pass
+    return None
 
 
 def _extract_command(raw: str) -> str | None:
     """Extract a command from LLM JSON output."""
-    data = _extract_json(raw)
-    return data.get("command") if isinstance(data, dict) else None
+    try:
+        json_start = raw.find("{")
+        json_end = raw.rfind("}") + 1
+        if json_start >= 0 and json_end > json_start:
+            data = json.loads(raw[json_start:json_end])
+            return data.get("command")
+    except (json.JSONDecodeError, KeyError):
+        pass
+    return None
 
 
 def _resolve_entity(content_refs: list[str], registry: SkillRegistry,

@@ -31,7 +31,6 @@ import json
 import time
 from dataclasses import dataclass, field
 from typing import Optional
-from vocab import vocab_class_code
 
 
 TREE_LANGUAGE_KEY = (
@@ -40,6 +39,19 @@ TREE_LANGUAGE_KEY = (
     "class:o observe,m mutate,b bridge,c clarify,_ unknown; "
     "rcg are rel/conf/gr bands 0-9; s:c are step_refs:content_refs counts."
 )
+
+OBSERVE_VOCABS = {
+    "hash_resolve_needed", "external_context", "pattern_needed",
+    "scan_needed", "research_needed", "url_needed",
+}
+MUTATE_VOCABS = {
+    "hash_edit_needed", "content_needed", "script_edit_needed", "command_needed",
+}
+BRIDGE_VOCABS = {
+    "reason_needed", "await_needed", "commit_needed", "reprogramme_needed", "stitch_needed",
+}
+CLARIFY_VOCABS = {"clarify_needed"}
+
 
 # ── Time formatting ──────────────────────────────────────────────────────
 
@@ -95,7 +107,17 @@ def score_band(value: float) -> str:
 
 def vocab_class(vocab: Optional[str]) -> str:
     """Compress runtime vocab into a one-character manifestation class."""
-    return vocab_class_code(vocab)
+    if not vocab:
+        return "_"
+    if vocab in OBSERVE_VOCABS:
+        return "o"
+    if vocab in MUTATE_VOCABS:
+        return "m"
+    if vocab in BRIDGE_VOCABS:
+        return "b"
+    if vocab in CLARIFY_VOCABS:
+        return "c"
+    return "_"
 
 
 # ── Epistemic ─────────────────────────────────────────────────────────────
