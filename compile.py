@@ -551,6 +551,9 @@ class Compiler:
         """Mark the current gap as resolved. Check chain completion.
         If chain is complete and exceeds extract length, mark for extraction."""
         self.ledger.resolve_gap(gap_hash)
+        gap = self.trajectory.resolve_gap(gap_hash)
+        if gap is not None:
+            gap.resolved = True
 
         if self.active_chain:
             chain_id = self.active_chain.hash

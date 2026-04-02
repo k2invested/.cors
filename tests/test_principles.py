@@ -1202,6 +1202,25 @@ def test_p12_inline_reprogramme_emits_postcondition_assessment_before_synth():
     assert postconditions[0].gaps[0].vocab == "hash_resolve_needed"
 
 
+def test_p12_resolve_current_gap_marks_trajectory_gap_resolved_for_cross_turn_resume():
+    traj = Trajectory()
+    gap = make_gap("persist alias", vocab="reprogramme_needed", relevance=0.9, confidence=0.9)
+    origin = make_step("origin", gaps=[gap])
+    traj.append(origin)
+
+    compiler = Compiler(traj)
+    compiler.emit_origin_gaps(origin)
+    entry, _signal = compiler.next()
+
+    assert entry is not None
+    compiler.resolve_current_gap(gap.hash)
+
+    resolved_gap = traj.resolve_gap(gap.hash)
+    assert resolved_gap is not None
+    assert resolved_gap.resolved is True
+    assert loop._find_dangling_gaps(traj) == []
+
+
 def test_p12_reprogramme_failure_does_not_commit_without_written_path():
     class FakeSession:
         def __init__(self):
