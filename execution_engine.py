@@ -284,21 +284,13 @@ def _inject_chain_spec(
 
 def _inject_reason_parent_context(*, session: Any, reason_skill: Any) -> None:
     session.inject(
-        "## Reason Parent Context\n"
+        "## Delegation Preferences\n"
         f"{reason_skill.desc}\n\n"
-        "reason.st is parent reasoning context for this activation. "
-        "It is analogous to how admin.st conditions the main agent. "
-        "It is not the workflow being activated.\n"
-        "- The live origin gap is the task.\n"
-        "- Choose exactly one output mode.\n"
-        "- submit_skeleton: author one new validator-passing skeleton.v1 for reusable workflow origination.\n"
-        "- activate_existing_workflow: choose an existing package by hash and delegate it.\n"
-        "- reason_needed itself is always a background delegation boundary.\n"
-        "- Natural vocab mapping is what runs current_turn inline.\n"
-        "- Embedded/composed activations stay current_turn inside authored workflows.\n"
-        "- Workflow delegation selected by reason is background work.\n"
-        "- Do not recurse by emitting the generic reason codon as the answer.\n"
-        "- Do not ask clarify if trajectory, entities, packages, or workspace structure can narrow the choice.\n"
+        "Rules:\n"
+        "- reason_needed is background only\n"
+        "- return one mode only\n"
+        "- keep the handoff concise\n"
+        "- use available context before clarifying\n"
     )
 
 
@@ -849,16 +841,16 @@ def execute_iteration(
                 )
             authoring_required = _reason_requires_workflow_authoring(gap, registry)
             raw = session.call(
-                "Choose one manifestation for this reason_needed activation.\n"
-                "Return JSON only.\n\n"
-                "1. Submit a workflow skeleton for deterministic compilation:\n"
+                f"Task: {gap.desc}\n\n"
+                "Return JSON only.\n"
+                "Choose one mode.\n\n"
+                "1. Submit a workflow skeleton:\n"
                 '{"mode":"submit_skeleton","activation":"background","skeleton":{...skeleton.v1...}}\n\n'
-                "2. Activate an existing workflow/package by hash (.st skill hash or saved stepchain .json hash):\n"
-                '{"mode":"activate_existing_workflow","workflow_ref":"hash","activation":"background","prompt":"optional task prompt"}\n\n'
-                "Use submit_skeleton when constructing a new reusable action/workflow package.\n"
+                "2. Delegate an existing workflow by hash:\n"
+                '{"mode":"activate_existing_workflow","workflow_ref":"hash","activation":"background","prompt":"concise task handoff"}\n\n'
+                "Use submit_skeleton for new reusable workflows.\n"
                 "Use activate_existing_workflow when an existing package should handle the task.\n"
-                "reason_needed is always a background delegation boundary.\n"
-                "If this gap is new workflow origination, submit_skeleton is required.\n"
+                "New workflow origination requires submit_skeleton.\n"
                 "If you submit a skeleton, it must be valid skeleton.v1."
             )
             intent = hooks.extract_json(raw) or {}
