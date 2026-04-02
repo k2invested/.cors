@@ -1,6 +1,6 @@
 {
   "name": "reason",
-  "desc": "Start codon — parent reasoning context for reason_needed activations. It conditions the reasoning agent the way admin.st conditions the main agent, but it is not itself the target workflow being activated. Three primary outputs: (1) CONTINUE: proceed with better-formed next gaps or a justified decision using current context. (2) AUTHOR: submit one validator-passing skeleton.v1 when a new reusable action/workflow package must be created. (3) ACTIVATE: select an existing workflow/package by hash and delegate it current_turn or background. It also remains the persistence-judgment layer, reorientation checkpoint, and heartbeat parent context.",
+  "desc": "Start codon — parent reasoning context for reason_needed activations. It conditions the reasoning agent the way admin.st conditions the main agent, but it is not itself the target workflow being activated. Three primary outputs: (1) CONTINUE: proceed with better-formed next gaps or an explicit justified decision using current context. (2) AUTHOR: submit one validator-passing skeleton.v1 when a new reusable action/workflow package must be created. (3) ACTIVATE: select an existing workflow/package by hash and delegate it current_turn or background. It also remains the persistence-judgment layer, reorientation checkpoint, and heartbeat parent context.",
   "trigger": "on_vocab:reason_needed",
   "author": "system",
   "steps": [
@@ -19,7 +19,7 @@
     },
     {
       "action": "author_or_delegate",
-      "desc": "if continuing: articulate the next lawful gap(s) or justified decision directly. if authoring: return one valid skeleton.v1. if activating: select an existing workflow by hash and provide the task prompt/payload. embedded activations stay current_turn; background is only for delegated autonomous work.",
+      "desc": "if continuing: articulate the next lawful gap(s) or an explicit justified decision directly so later steps can rely on it by step hash. if authoring: return one valid skeleton.v1. if activating: select an existing workflow by hash and provide the task prompt/payload. embedded activations stay current_turn; background is only for delegated autonomous work.",
       "relevance": 0.8,
       "post_diff": true
     },

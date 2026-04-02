@@ -311,11 +311,25 @@ def _build_reason_continue_step(
 ) -> Step:
     step_refs = list(dict.fromkeys([origin_step.hash] + list(intent.get("step_refs", []))))
     content_refs = list(dict.fromkeys(list(gap.content_refs) + list(intent.get("content_refs", []))))
+    decision = intent.get("decision")
+    justification = intent.get("justification")
+    outcome = intent.get("outcome")
+    decision_lines: list[str] = []
+    if isinstance(decision, str) and decision.strip():
+        decision_lines.append(f"decision: {decision.strip()}")
+    if isinstance(justification, str) and justification.strip():
+        decision_lines.append(f"justification: {justification.strip()}")
+    if isinstance(outcome, str) and outcome.strip():
+        decision_lines.append(f"outcome: {outcome.strip()}")
+    desc = str(intent.get("desc") or f"reasoned: {gap.desc}")
+    if decision_lines and "decision:" not in desc.lower():
+        desc = f"{desc}\n\n" + "\n".join(decision_lines)
     step_result = Step.create(
-        desc=str(intent.get("desc") or f"reasoned: {gap.desc}"),
+        desc=desc,
         step_refs=step_refs,
         content_refs=content_refs,
         chain_id=chain_id,
+        assessment=decision_lines,
     )
     for item in intent.get("gaps", []):
         if not isinstance(item, dict):
@@ -326,7 +340,7 @@ def _build_reason_continue_step(
         child_gap = Gap.create(
             desc=desc,
             content_refs=list(dict.fromkeys(list(gap.content_refs) + list(item.get("content_refs", [])))),
-            step_refs=list(dict.fromkeys(list(item.get("step_refs", [])))),
+            step_refs=list(dict.fromkeys([step_result.hash] + list(item.get("step_refs", [])))),
         )
         child_gap.scores = Epistemic(
             relevance=float(item.get("relevance", 0.8)),
@@ -894,12 +908,13 @@ def execute_iteration(
                 "Choose one manifestation for this reason_needed activation.\n"
                 "Return JSON only.\n\n"
                 "1. Continue locally with better-formed next gaps or a justified decision:\n"
-                '{"mode":"continue_with_gaps","desc":"what was decided or clarified","gaps":[{"desc":"optional next gap","vocab":"...","relevance":0.8,"confidence":0.7,"content_refs":[],"step_refs":[]}],"content_refs":[],"step_refs":[]}\n\n'
+                '{"mode":"continue_with_gaps","desc":"what was decided or clarified","decision":"explicit judgment or decision","justification":"why this follows from trajectory / semantic tree / packages","outcome":"what later steps should treat as established","gaps":[{"desc":"optional next gap","vocab":"...","relevance":0.8,"confidence":0.7,"content_refs":[],"step_refs":[]}],"content_refs":[],"step_refs":[]}\n\n'
                 "2. Submit a workflow skeleton for deterministic compilation:\n"
                 '{"mode":"submit_skeleton","activation":"none|current_turn|background","skeleton":{...skeleton.v1...}}\n\n'
                 "3. Activate an existing workflow/package by hash (.st skill hash or saved stepchain .json hash):\n"
                 '{"mode":"activate_existing_workflow","workflow_ref":"hash","activation":"current_turn|background","embedded":false,"prompt":"optional task prompt"}\n\n'
-                "Use continue_with_gaps when judgment or better clarity is enough to proceed now.\n"
+                "Use continue_with_gaps when judgment, decision, or better clarity is enough to proceed now.\n"
+                "If you choose continue_with_gaps, prefer to emit an explicit decision/justification/outcome when later steps should be able to rely on it.\n"
                 "Use submit_skeleton when constructing a new reusable action/workflow package.\n"
                 "Use activate_existing_workflow when an existing package should handle the task.\n"
                 "If activation is embedded/composed inline, it must stay current_turn.\n"
