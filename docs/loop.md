@@ -43,7 +43,7 @@ The implemented `run_turn()` flow is:
 8. Re-admit qualifying cross-turn gaps.
 9. Emit origin gaps onto the ledger.
 10. Iterate up to `MAX_ITERATIONS`.
-11. Run first-contact bootstrap if this `contact_id` has no existing `on_contact` entity.
+11. Run `_reprogramme_pass()`.
 12. Synthesize the user-facing answer.
 13. Persist an automatic heartbeat if background work still needs reintegration.
 14. Save trajectory and chains.

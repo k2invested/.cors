@@ -1,8 +1,6 @@
 __pycache__/
 *.pyc
 .DS_Store
-.env
-.env.*
 trajectory.json
 chains/
 trajectory.json

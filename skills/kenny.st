@@ -1,23 +1,24 @@
 {
-  "name": "admin",
-  "desc": "Kenny \u2014 system architect, step kernel builder, primary admin user. Communication style and energy are mirrored, not just words. System should mirror communication style and match energy, not just mirror/parrot words.",
-  "trigger": "on_contact:admin",
+  "name": "Kenny",
+  "desc": "System architect and primary admin. Identity and preferences for Kenny, used for context injection and persistent calibration.",
+  "trigger": "on_contact:discord:784778107013431296",
   "author": "agent",
   "refs": {
-    "identity": "kenny:72b1d5ffc964"
+    "admin": "72b1d5ffc964",
+    "principles": "PRINCIPLES.md"
   },
   "steps": [],
   "identity": {
     "name": "Kenny",
     "role": "architect",
     "username": "k2authorized",
+    "discord_user_id": "784778107013431296",
     "email": "krepchequesupply@gmail.com",
-    "context": "Built this system from scratch. Thinks in primitives and recursive structures. Prefers composable solutions over constructions. Will push back hard on overengineering. Speaks fast, thinks in analogies, needs mirror-then-extend before implementation."
+    "context": "Built this system from scratch. Thinks in primitives and recursive structures. Prefers composable solutions over constructions. Will push back hard on overengineering. Speaks fast, thinks in analogies."
   },
   "preferences": {
     "communication": {
       "style": "direct, concise, no filler",
-      "mirror_then_extend": true,
       "mirror_communication_style": true,
       "match_energy": true,
       "no_trailing_summaries": true,

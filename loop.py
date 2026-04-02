@@ -35,13 +35,11 @@ import os
 import re
 import subprocess
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
-from env_loader import load_env
 from step import Step, Gap, Epistemic, Trajectory, TREE_LANGUAGE_KEY
 from compile import (
-    Compiler, GovernorSignal, is_mutate,
+    Compiler, GovernorSignal,
 )
 from skills.loader import load_all, SkillRegistry, Skill
 import manifest_engine as me
@@ -58,27 +56,6 @@ CHAINS_DIR   = CORS_ROOT / "chains"
 MAX_ITERATIONS = 30
 TRAJECTORY_WINDOW = 10   # how many recent chains to render for LLM
 _turn_counter = 0        # increments each turn — used for cross-turn gap threshold
-
-load_env()
-
-
-@dataclass(frozen=True)
-class StatePaths:
-    trajectory: Path
-    chains_file: Path
-    chains_dir: Path
-
-
-def _state_paths(
-    traj_file: str | Path | None = None,
-    chains_file: str | Path | None = None,
-    chains_dir: str | Path | None = None,
-) -> StatePaths:
-    return StatePaths(
-        trajectory=Path(traj_file) if traj_file is not None else TRAJ_FILE,
-        chains_file=Path(chains_file) if chains_file is not None else CHAINS_FILE,
-        chains_dir=Path(chains_dir) if chains_dir is not None else CHAINS_DIR,
-    )
 
 
 # ── Git operations ───────────────────────────────────────────────────────
@@ -799,21 +776,12 @@ For JSON mutations, use the json_patch tool format.
 SYNTH_SYSTEM = """You are the response synthesizer. Read the full session and produce a natural response to the user.
 
 Keep it concise and conversational. Do not mention internal systems, hashes, or trajectory.
-Just answer the user's question or confirm what was done.
-
-Never claim that a file, preference, or workspace state was changed, removed, updated, saved, or persisted unless the injected turn outcome facts explicitly show a successful mutation or commit."""
+Just answer the user's question or confirm what was done."""
 
 
 # ── Turn loop ────────────────────────────────────────────────────────────
 
-def run_turn(
-    user_message: str,
-    contact_id: str = "admin",
-    *,
-    traj_file: str | Path | None = None,
-    chains_file: str | Path | None = None,
-    chains_dir: str | Path | None = None,
-) -> str:
+def run_turn(user_message: str, contact_id: str = "admin") -> str:
     """Run one complete turn. Returns the synthesis response.
 
     Flow:
@@ -830,10 +798,9 @@ def run_turn(
     global _turn_counter, _skill_registry
     _turn_counter += 1
     current_turn = _turn_counter
-    state = _state_paths(traj_file, chains_file, chains_dir)
 
-    trajectory = Trajectory.load(str(state.trajectory))
-    Trajectory.load_chains(str(state.chains_file), trajectory)
+    trajectory = Trajectory.load(str(TRAJ_FILE))
+    Trajectory.load_chains(str(CHAINS_FILE), trajectory)
     registry = load_all(str(SKILLS_DIR))
     _skill_registry = registry
     head = git_head()
@@ -957,11 +924,6 @@ def run_turn(
     # via the stack (LIFO, depth-first).
 
     compiler = Compiler(trajectory, current_turn=current_turn)
-    turn_facts: dict[str, list[str]] = {
-        "commits": [],
-        "successful_mutations": [],
-        "attempted_mutations": [],
-    }
 
     # Tag origin gaps with current turn
     for g in origin_gaps:
@@ -976,8 +938,8 @@ def run_turn(
     if not origin_gaps and not dangling:
         # No gaps → auto-synthesize
         print("\n── AUTO-SYNTH (no gaps) ──")
-        response = _synthesize(session, user_message, turn_facts)
-        _save_turn(trajectory, state)
+        response = _synthesize(session, user_message)
+        _save_turn(trajectory)
         return response
 
     # Emit origin gaps — each creates its own chain
@@ -1015,20 +977,12 @@ def run_turn(
             compiler=compiler,
             registry=registry,
             current_turn=current_turn,
-            hooks=_execution_hooks(state.chains_dir),
-            config=_execution_config(state.chains_dir),
+            hooks=_execution_hooks(),
+            config=_execution_config(),
         )
 
         if outcome.control == "break":
             break
-
-        if gap.vocab == "reprogramme_needed" or (gap.vocab and is_mutate(gap.vocab)):
-            descriptor = f"{gap.vocab}: {gap.desc}"
-            if outcome.step_result and outcome.step_result.commit:
-                turn_facts["commits"].append(outcome.step_result.commit)
-                turn_facts["successful_mutations"].append(descriptor)
-            else:
-                turn_facts["attempted_mutations"].append(descriptor)
 
         # Check if done
         if compiler.is_done():
@@ -1048,7 +1002,7 @@ def run_turn(
     # ── 7. SYNTHESIS ─────────────────────────────────────────────────
 
     print("\n── SYNTHESIS ──")
-    response = _synthesize(session, user_message, turn_facts)
+    response = _synthesize(session, user_message)
 
     # ── 8. HEARTBEAT ─────────────────────────────────────────────────
     #
@@ -1085,7 +1039,7 @@ def run_turn(
 
     # ── 9. SAVE ──────────────────────────────────────────────────────
 
-    _save_turn(trajectory, state)
+    _save_turn(trajectory)
 
     return response
 
@@ -1256,13 +1210,11 @@ def _render_entity_tree(registry: SkillRegistry) -> str:
     return "\n".join(lines)
 
 
-def _render_step_network(registry: SkillRegistry, chains_dir: Path | None = None) -> str:
-    active_chains_dir = chains_dir or CHAINS_DIR
-    return me.render_step_network(active_chains_dir, registry, _is_entity_skill, _skill_payload)
+def _render_step_network(registry: SkillRegistry) -> str:
+    return me.render_step_network(CHAINS_DIR, registry, _is_entity_skill, _skill_payload)
 
 
-def _execution_hooks(chains_dir: Path | None = None) -> ExecutionHooks:
-    active_chains_dir = chains_dir or CHAINS_DIR
+def _execution_hooks() -> ExecutionHooks:
     return ExecutionHooks(
         resolve_all_refs=resolve_all_refs,
         execute_tool=execute_tool,
@@ -1275,16 +1227,16 @@ def _execution_hooks(chains_dir: Path | None = None) -> ExecutionHooks:
         load_tree_policy=_load_tree_policy,
         match_policy=_match_policy,
         resolve_entity=_resolve_entity,
-        render_step_network=lambda registry: _render_step_network(registry, active_chains_dir),
+        render_step_network=_render_step_network,
         emit_reason_skill=_emit_reason_skill,
         git=git,
     )
 
 
-def _execution_config(chains_dir: Path | None = None) -> ExecutionConfig:
+def _execution_config() -> ExecutionConfig:
     return ExecutionConfig(
         cors_root=CORS_ROOT,
-        chains_dir=chains_dir or CHAINS_DIR,
+        chains_dir=CHAINS_DIR,
         tool_map=TOOL_MAP,
         deterministic_vocab=DETERMINISTIC_VOCAB,
         observation_only_vocab=OBSERVATION_ONLY_VOCAB,
@@ -1385,44 +1337,18 @@ def _find_dangling_gaps(trajectory: Trajectory) -> list[Gap]:
 
 
 def _find_identity_skill(contact_id: str, registry: SkillRegistry) -> Skill | None:
-    """Find the canonical .st identity bound to this contact."""
-    bound_matches: list[Skill] = []
-    trigger_matches: list[Skill] = []
-
-    def is_bound_identity(data: dict) -> bool:
-        identity = data.get("identity", {}) or {}
-        if identity.get("external_id") == contact_id:
-            return True
-        if contact_id.startswith("discord:"):
-            discord_user_id = contact_id.split(":", 1)[1]
-            if str(identity.get("discord_user_id", "")).strip() == discord_user_id:
-                return True
-        return False
-
+    """Find the .st file that triggers for this contact."""
     for skill in registry.all_skills():
+        # Read the .st file to check trigger
         try:
             with open(skill.source) as f:
                 data = json.load(f)
-            if is_bound_identity(data):
-                bound_matches.append(skill)
-            if data.get("trigger", "") == f"on_contact:{contact_id}":
-                trigger_matches.append(skill)
+            trigger = data.get("trigger", "")
+            if trigger == f"on_contact:{contact_id}":
+                return skill
         except (json.JSONDecodeError, FileNotFoundError):
             continue
-
-    matches = bound_matches or trigger_matches
-    if not matches:
-        return None
-
-    matches.sort(
-        key=lambda skill: (
-            skill.name == "admin",
-            len(skill.steps),
-            skill.trigger == f"on_contact:{contact_id}",
-        ),
-        reverse=True,
-    )
-    return matches[0]
+    return None
 
 
 def _slug_contact_id(contact_id: str) -> str:
@@ -1571,66 +1497,21 @@ def _render_identity(skill: Skill) -> str:
     return "\n".join(lines)
 
 
-def _render_turn_outcome_facts(turn_facts: dict[str, list[str]]) -> str:
-    commits = turn_facts.get("commits", [])
-    successful = turn_facts.get("successful_mutations", [])
-    attempted = turn_facts.get("attempted_mutations", [])
-
-    lines = ["## Turn Outcome Facts"]
-    if commits:
-        lines.append("Successful commits:")
-        for commit in commits:
-            lines.append(f"- {commit}")
-    else:
-        lines.append("Successful commits:")
-        lines.append("- none")
-
-    if successful:
-        lines.append("Successful mutations:")
-        for item in successful:
-            lines.append(f"- {item}")
-    else:
-        lines.append("Successful mutations:")
-        lines.append("- none")
-
-    if attempted:
-        lines.append("Attempted but unconfirmed mutations:")
-        for item in attempted:
-            lines.append(f"- {item}")
-    else:
-        lines.append("Attempted but unconfirmed mutations:")
-        lines.append("- none")
-
-    lines.append(
-        "Rule: only say something was changed, removed, updated, saved, or persisted if Successful commits or Successful mutations above prove it."
-    )
-    if not commits and not successful:
-        lines.append(
-            "No mutation succeeded this turn. Describe observations, clarifications, or next steps instead of claiming the change already happened."
-        )
-    return "\n".join(lines)
-
-
-def _synthesize(session: Session, user_message: str, turn_facts: dict[str, list[str]] | None = None) -> str:
+def _synthesize(session: Session, user_message: str) -> str:
     """Produce the final response from the session."""
-    if turn_facts is not None:
-        session.inject(_render_turn_outcome_facts(turn_facts), role="system")
     session.inject(SYNTH_SYSTEM, role="system")
     response = session.call(f"Synthesize your response to: \"{user_message}\"")
     print(f"  Response: {response[:200]}")
     return response
 
 
-def _save_turn(trajectory: Trajectory, state: StatePaths | None = None):
+def _save_turn(trajectory: Trajectory):
     """Persist trajectory, chains, and extract long chains to files."""
-    active_state = state or _state_paths()
-    active_state.trajectory.parent.mkdir(parents=True, exist_ok=True)
-    active_state.chains_file.parent.mkdir(parents=True, exist_ok=True)
-    active_state.chains_dir.mkdir(parents=True, exist_ok=True)
-    trajectory.save(str(active_state.trajectory))
-    trajectory.save_chains(str(active_state.chains_file))
+    trajectory.save(str(TRAJ_FILE))
+    trajectory.save_chains(str(CHAINS_FILE))
     # Extract long resolved chains to individual files
-    trajectory.extract_chains(str(active_state.chains_dir))
+    chains_dir = str(CORS_ROOT / "chains")
+    trajectory.extract_chains(chains_dir)
     extracted = sum(1 for c in trajectory.chains.values() if c.extracted)
     print(f"  Saved: {len(trajectory.order)} steps, {len(trajectory.chains)} chains"
           + (f" ({extracted} extracted)" if extracted else ""))
@@ -1650,9 +1531,8 @@ def run_command(cmd_name: str, args: str = "") -> str:
     if not skill:
         return f"Unknown command: /{cmd_name}"
 
-    state = _state_paths()
-    trajectory = Trajectory.load(str(state.trajectory))
-    Trajectory.load_chains(str(state.chains_file), trajectory)
+    trajectory = Trajectory.load(str(TRAJ_FILE))
+    Trajectory.load_chains(str(CHAINS_FILE), trajectory)
 
     print(f"\n── COMMAND: /{cmd_name} ({skill.display_name}:{skill.hash}) ──")
 
@@ -1708,8 +1588,8 @@ def run_command(cmd_name: str, args: str = "") -> str:
             compiler=compiler,
             registry=registry,
             current_turn=current_turn,
-            hooks=_execution_hooks(state.chains_dir),
-            config=_execution_config(state.chains_dir),
+            hooks=_execution_hooks(),
+            config=_execution_config(),
         )
 
         if outcome.control == "break" or compiler.is_done():
@@ -1717,7 +1597,7 @@ def run_command(cmd_name: str, args: str = "") -> str:
 
     # Synthesize
     response = _synthesize(session, f"/{cmd_name}")
-    _save_turn(trajectory, state)
+    _save_turn(trajectory)
     return response
 
 

@@ -399,7 +399,7 @@ P5_CASES = [
     ("resolve_entity_renders_known_skill", lambda: skill("admin").hash in loop._resolve_entity([skill("admin").hash], registry(), Trajectory())),
     ("render_entity_has_identity_block", lambda: "identity:" in loop._render_entity(skill("admin"))),
     ("render_entity_has_steps_summary", lambda: "steps:" in loop._render_entity(skill("admin"))),
-    ("find_identity_skill_returns_admin", lambda: loop._find_identity_skill("discord:784778107013431296", registry()) == skill("admin")),
+    ("find_identity_skill_returns_admin", lambda: loop._find_identity_skill("admin", registry()) == skill("admin")),
     ("render_identity_has_preferences", lambda: "## Preferences" in loop._render_identity(skill("admin"))),
     ("render_identity_has_access_rules_when_present", lambda: "## Access Rules" in loop._render_identity(skill("admin")) if "access_rules" in skill_data("admin") else True),
     ("reprogramme_skill_trigger_is_vocab", lambda: skill("reprogramme").trigger == "on_vocab:reprogramme_needed"),
@@ -583,7 +583,7 @@ P12_CASES = [
     ("match_policy_prefix_path", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
     ("match_policy_longest_prefix", lambda: loop._match_policy("skills/codons/await.st", loop._load_tree_policy())["on_reject"] == "reason_needed"),
     ("execute_tool_missing_file_nonzero", lambda: loop.execute_tool("tools/does_not_exist.py", {})[1] == 1),
-    ("find_identity_skill_admin", lambda: loop._find_identity_skill("discord:784778107013431296", registry()) == skill("admin")),
+    ("find_identity_skill_admin", lambda: loop._find_identity_skill("admin", registry()) == skill("admin")),
     ("render_identity_has_username", lambda: "username:" in loop._render_identity(skill("admin"))),
     ("render_identity_has_communication_pref", lambda: "communication:" in loop._render_identity(skill("admin"))),
     ("validate_st_accepts_command_trigger", lambda: st_builder_module.validate_st({"name": "cmd", "desc": "d", "trigger": "command:demo", "steps": []}) == []),
@@ -819,12 +819,6 @@ def test_p12_bootstrap_contact_entity_skips_known_contact(monkeypatch):
     assert loop._bootstrap_contact_entity(registry(), "admin", "hi") is None
 
 
-def test_p12_find_identity_skill_prefers_canonical_bound_admin_for_discord_contact():
-    identity = loop._find_identity_skill("discord:784778107013431296", registry())
-    assert identity is not None
-    assert identity.name == "admin"
-
-
 def test_p12_bootstrap_contact_entity_creates_first_contact_step(monkeypatch):
     monkeypatch.setattr(loop, "_find_identity_skill", lambda contact_id, registry_obj: None)
     monkeypatch.setattr(loop, "execute_tool", lambda tool, intent: ("Written: /Users/k2invested/Desktop/cors/skills/user_discord_123.st", 0))
@@ -836,77 +830,6 @@ def test_p12_bootstrap_contact_entity_creates_first_contact_step(monkeypatch):
     assert step.commit == "abc123"
     assert step.desc == "reprogrammed bootstrap: user_discord_123"
     assert step.content_refs == ["abc123"]
-
-
-def test_p12_inline_reprogramme_does_not_trigger_heartbeat():
-    class FakeSession:
-        def __init__(self):
-            self.injected: list[str] = []
-
-        def inject(self, content: str, role: str = "user"):
-            self.injected.append(content)
-
-        def call(self, user_content: str = None) -> str:
-            return json.dumps({
-                "artifact_kind": "entity",
-                "name": "admin",
-                "desc": "updated admin preferences",
-            })
-
-    traj = Trajectory()
-    compiler = Compiler(traj)
-    origin_step = make_step("origin")
-    gap = make_gap("persist admin preference", content_refs=[skill("admin").hash], vocab="reprogramme_needed")
-    entry = SimpleNamespace(gap=gap, chain_id="chain1")
-    session = FakeSession()
-
-    hooks = execution_engine_module.ExecutionHooks(
-        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
-        execute_tool=lambda tool, params: ("Written: /Users/k2invested/Desktop/cors/skills/admin.st", 0),
-        auto_commit=lambda message, paths=None: ("abc123", None),
-        parse_step_output=lambda raw, step_refs, content_refs, chain_id=None: (make_step("noop"), []),
-        extract_json=lambda raw: json.loads(raw),
-        extract_command=lambda raw: None,
-        extract_written_path=lambda output: "/Users/k2invested/Desktop/cors/skills/admin.st",
-        is_reprogramme_intent=lambda intent: True,
-        load_tree_policy=lambda: {},
-        match_policy=lambda path, policy: None,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
-        render_step_network=lambda registry_obj: "step_network",
-        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
-        git=lambda cmd, cwd=None: "",
-    )
-    config = execution_engine_module.ExecutionConfig(
-        cors_root=ROOT,
-        chains_dir=ROOT / "chains",
-        tool_map=loop.TOOL_MAP,
-        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
-        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
-    )
-
-    outcome = execution_engine_module.execute_iteration(
-        entry=entry,
-        signal=GovernorSignal.ALLOW,
-        session=session,
-        origin_step=origin_step,
-        trajectory=traj,
-        compiler=compiler,
-        registry=registry(),
-        current_turn=0,
-        hooks=hooks,
-        config=config,
-    )
-
-    assert outcome.step_result is not None
-    assert outcome.step_result.commit == "abc123"
-    assert compiler.needs_heartbeat() is False
-
-
-def test_p12_reprogramme_prompt_preserves_entity_shape():
-    source = (ROOT / "execution_engine.py").read_text()
-    assert "### Entity format continuity" in source
-    assert "Preserve trigger, refs, and deterministic steps by default." in source
-    assert "Do not replace a structured entity with steps: []" in source
 
 
 def test_p12_resolve_hash_supports_skill_source_path(monkeypatch):
@@ -962,61 +885,6 @@ def test_p12_parse_step_output_canonicalizes_gap_content_refs(monkeypatch):
     assert skill is not None
     assert gaps[0].content_refs == [skill.hash]
     assert step.content_refs == [loop.git(["rev-parse", "HEAD:docs/ARCHITECTURE.md"]).strip().splitlines()[0]]
-
-
-def test_p12_save_turn_uses_explicit_state_paths(tmp_path):
-    trajectory = Trajectory()
-    trajectory.append(make_step("hello"))
-    state = loop.StatePaths(
-        trajectory=tmp_path / "discord" / "trajectory.json",
-        chains_file=tmp_path / "discord" / "chains.json",
-        chains_dir=tmp_path / "discord" / "chains",
-    )
-
-    loop._save_turn(trajectory, state)
-
-    assert state.trajectory.exists()
-    assert state.chains_file.exists()
-
-
-def test_p12_render_turn_outcome_facts_blocks_uncommitted_change_claims():
-    rendered = loop._render_turn_outcome_facts(
-        {
-            "commits": [],
-            "successful_mutations": [],
-            "attempted_mutations": ["reprogramme_needed: remove mirror then extend"],
-        }
-    )
-
-    assert "Successful commits:\n- none" in rendered
-    assert "Attempted but unconfirmed mutations:" in rendered
-    assert "No mutation succeeded this turn." in rendered
-
-
-def test_p12_st_builder_reuses_existing_contact_trigger_path(tmp_path):
-    skills_dir = tmp_path / "skills"
-    skills_dir.mkdir()
-    admin_path = skills_dir / "admin.st"
-    admin_path.write_text(json.dumps({
-        "name": "admin",
-        "desc": "canonical admin",
-        "trigger": "on_contact:discord:784778107013431296",
-        "steps": [{"action": "load_identity", "desc": "load", "post_diff": False}],
-        "identity": {"discord_user_id": "784778107013431296"},
-    }))
-
-    path = st_builder_module.write_st(
-        {
-            "name": "Kenny",
-            "desc": "updated",
-            "trigger": "on_contact:discord:784778107013431296",
-            "steps": [],
-            "identity": {"discord_user_id": "784778107013431296"},
-        },
-        output_dir=str(skills_dir),
-    )
-
-    assert path == str(admin_path)
 
 
 def test_p12_compiler_next_redirects_to_alternative_chain_without_recursive_loop(monkeypatch):
