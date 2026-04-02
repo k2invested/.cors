@@ -545,6 +545,9 @@ P5_CASES = [
     ("init_user_intent_sets_discord_id_as_identifier", lambda: loop._build_init_user_intent("discord:123", "hi", contact_profile={"username": "courtney"})["identity"]["discord_user_id"] == "123"),
     ("bound_discord_profile_requires_on_contact_entity", lambda: loop._is_bound_discord_profile("discord:123", bootstrap_identity_skill())),
     ("bound_discord_profile_excludes_admin", lambda: loop._is_bound_discord_profile("discord:784778107013431296", skill("admin")) is False),
+    ("discord_profile_update_detector_ignores_greeting_only", lambda: loop._message_warrants_discord_profile_update("Hey", bootstrap_identity_skill()) is False),
+    ("discord_profile_update_detector_flags_first_person_identity", lambda: loop._message_warrants_discord_profile_update("Hello I'm Jay. I work as a data analyst and have bad knees", bootstrap_identity_skill(contact_id="discord:456", username="jay")) is True),
+    ("discord_profile_update_detector_flags_pending_profile_fragment", lambda: loop._message_warrants_discord_profile_update("Edit assistant for 2 years", bootstrap_identity_skill()) is True),
     ("reprogramme_intent_accepts_semantic_skeleton", lambda: loop._is_reprogramme_intent({
         "version": "semantic_skeleton.v1",
         "artifact": {"kind": "entity"},

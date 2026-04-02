@@ -1833,6 +1833,52 @@ def _is_bound_discord_profile(contact_id: str, identity_skill: Skill | None) -> 
     return identity_skill.trigger == f"on_contact:{contact_id}"
 
 
+def _message_warrants_discord_profile_update(user_message: str, identity_skill: Skill | None) -> bool:
+    text = user_message.strip().lower()
+    if not text:
+        return False
+
+    greeting_only = re.fullmatch(r"(hey|hi|hello|yo|sup|what'?s up|morning|afternoon|evening)[!. ]*", text)
+    if greeting_only:
+        return False
+
+    init_pending = bool((identity_skill.payload or {}).get("init", {}).get("status") == "pending") if identity_skill else False
+    has_first_person = bool(re.search(r"\b(i|i'm|im|i am|my|me|my name)\b", text))
+    profile_signals = any(token in text for token in (
+        "my name",
+        "i'm",
+        "i am",
+        "based",
+        "live",
+        "from",
+        "work",
+        "working",
+        "currently",
+        "goal",
+        "looking for work",
+        "years",
+        "year",
+        "assistant",
+        "analyst",
+        "manager",
+        "editor",
+        "developer",
+        "scientist",
+        "science",
+        "caribbean",
+        "black",
+        "knee",
+        "knees",
+    )) or bool(re.search(r"\b\d+\b", text))
+    declarative_fragment = "?" not in text and len(text.split()) >= 2
+
+    if has_first_person and profile_signals:
+        return True
+    if init_pending and declarative_fragment and profile_signals:
+        return True
+    return False
+
+
 def _filter_discord_gaps(gaps: list[Gap]) -> tuple[list[Gap], int]:
     kept: list[Gap] = []
     pruned = 0
@@ -2027,6 +2073,7 @@ def _run_no_gap_discord_profile_sync(
     print("\n── NO-GAP DISCORD PROFILE SYNC ──")
     sync_session = Session(model=os.environ.get("KERNEL_COMPOSE_MODEL", "gpt-4.1"))
     sync_session.set_system(PRE_DIFF_SYSTEM)
+    force_update = _message_warrants_discord_profile_update(user_message, identity_skill)
 
     entity_data = _resolve_entity([identity_skill.hash], registry, trajectory)
     if entity_data:
@@ -2045,6 +2092,16 @@ def _run_no_gap_discord_profile_sync(
         "Update this bound contact entity in place only if this turn established durable semantic state.\n"
         f"{json.dumps(frame, indent=2)}"
     )
+    if force_update:
+        sync_session.inject(
+            "## Deterministic Sync Signal\n"
+            "The latest message contains durable self-description that should be persisted into the bound contact entity."
+        )
+    noop_rule = (
+        '- Do not return {"noop": true}; this message warrants a profile update.\n'
+        if force_update
+        else '- If no durable semantic update is warranted from this turn, return {"noop": true}.\n'
+    )
 
     raw = sync_session.call(
         f"Task: deterministically maintain the bound Discord contact profile after a no-gap turn.\n"
@@ -2052,7 +2109,7 @@ def _run_no_gap_discord_profile_sync(
         f"Latest message: \"{user_message}\"\n\n"
         "Rules:\n"
         "- Return JSON only.\n"
-        "- If no durable semantic update is warranted from this turn, return {\"noop\": true}.\n"
+        f"{noop_rule}"
         "- Otherwise return a semantic_skeleton.v1 entity update for this existing contact entity.\n"
         "- Use existing_ref and update the current entity in place.\n"
         "- Preserve trigger, identity bindings, access_rules, init, refs, and entity shape.\n"
@@ -2065,6 +2122,13 @@ def _run_no_gap_discord_profile_sync(
     )
     print(f"  LLM sync: {raw[:150]}...")
     intent = _extract_json(raw)
+    if force_update and isinstance(intent, dict) and intent.get("noop") is True:
+        raw = sync_session.call(
+            "The latest message contained durable self-description. No noop allowed. "
+            "Return only a semantic_skeleton.v1 entity update for the current bound contact entity."
+        )
+        print(f"  LLM sync retry: {raw[:150]}...")
+        intent = _extract_json(raw)
     if not isinstance(intent, dict) or intent.get("noop") is True:
         print("  → no durable profile update warranted")
         return None
