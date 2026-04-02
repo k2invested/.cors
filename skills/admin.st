@@ -16,6 +16,14 @@
     "lineage": "admin",
     "version_strategy": "hash_pinned"
   },
+  "identity": {
+    "name": "Kenny",
+    "role": "architect",
+    "username": "k2authorized",
+    "discord_user_id": "784778107013431296",
+    "email": "krepchequesupply@gmail.com",
+    "context": "Built this system from scratch. Thinks in primitives and recursive structures. Prefers composable solutions over constructions. Will push back hard on overengineering. Speaks fast, thinks in analogies."
+  },
   "preferences": {
     "communication": {
       "style": "direct, concise, no filler",
@@ -53,14 +61,6 @@
         "desc": "Whenever I refer to 'my business', interpret it as referring to the entity Top Rate Estates LTD."
       }
     }
-  },
-  "identity": {
-    "name": "Kenny",
-    "role": "architect",
-    "username": "k2authorized",
-    "discord_user_id": "784778107013431296",
-    "email": "krepchequesupply@gmail.com",
-    "context": "Built this system from scratch. Thinks in primitives and recursive structures. Prefers composable solutions over constructions. Will push back hard on overengineering. Speaks fast, thinks in analogies."
   },
   "steps": [
     {
