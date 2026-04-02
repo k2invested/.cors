@@ -1273,6 +1273,89 @@ def test_p12_find_dangling_gaps_dedupes_by_hash():
     assert dangling[0].hash == gap.hash
 
 
+def test_p12_collect_clarify_frontier_merges_current_and_active_deduped():
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    current = make_gap("question one", vocab="clarify_needed")
+    other = make_gap("question two", vocab="clarify_needed")
+    dup = Gap(
+        hash=current.hash,
+        desc=current.desc,
+        content_refs=list(current.content_refs),
+        step_refs=list(current.step_refs),
+        vocab="clarify_needed",
+    )
+    compiler.ledger.stack.append(SimpleNamespace(gap=other))
+    compiler.ledger.stack.append(SimpleNamespace(gap=dup))
+
+    merged = execution_engine_module._collect_clarify_frontier(compiler, current)
+    assert [gap.desc for gap in merged] == ["question one", "question two"]
+
+
+def test_p12_clarify_iteration_emits_single_merged_step():
+    class FakeSession:
+        def inject(self, content: str, role: str = "user"):
+            pass
+
+        def call(self, user_content: str = None) -> str:
+            return ""
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("question one", content_refs=["a"], vocab="clarify_needed")
+    extra = make_gap("question two", content_refs=["b"], vocab="clarify_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    compiler.ledger.stack.append(SimpleNamespace(gap=extra))
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=lambda raw, step_refs, content_refs, chain_id=None: (make_step("noop"), []),
+        extract_json=lambda raw: None,
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: None,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.control == "break"
+    assert outcome.step_result is not None
+    assert len(outcome.step_result.gaps) == 2
+    assert outcome.step_result.content_refs == ["a", "b"]
+    assert "question one" in outcome.step_result.desc
+    assert "question two" in outcome.step_result.desc
+
+
 def test_p12_persist_forced_synth_frontier_clones_active_ledger_gaps():
     traj = Trajectory()
     compiler = Compiler(traj, current_turn=3)

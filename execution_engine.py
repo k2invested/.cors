@@ -258,6 +258,29 @@ def _inject_chain_spec(
         session.inject(f"{heading}\n{rendered}")
 
 
+def _collect_clarify_frontier(compiler: Any, current_gap: Gap) -> list[Gap]:
+    merged: list[Gap] = []
+    seen: set[str] = set()
+    for gap in [current_gap] + [entry.gap for entry in compiler.ledger.active_gaps() if entry.gap.vocab == "clarify_needed"]:
+        if gap.hash in seen:
+            continue
+        seen.add(gap.hash)
+        merged.append(gap)
+    return merged
+
+
+def _merged_clarify_desc(gaps: list[Gap]) -> str:
+    descs: list[str] = []
+    for gap in gaps:
+        if gap.desc not in descs:
+            descs.append(gap.desc)
+    if not descs:
+        return "clarification needed"
+    if len(descs) == 1:
+        return f"clarification needed: {descs[0]}"
+    return "clarification needed:\n- " + "\n- ".join(descs)
+
+
 def _reprogramme_mode_for_source(path: str | None) -> str | None:
     if not path:
         return None
@@ -335,11 +358,12 @@ def execute_iteration(
 
     if gap.vocab == "clarify_needed":
         print("  → clarify needed: halting iteration")
+        merged_gaps = _collect_clarify_frontier(compiler, gap)
         clarify_step = Step.create(
-            desc=f"clarification needed: {gap.desc}",
+            desc=_merged_clarify_desc(merged_gaps),
             step_refs=[origin_step.hash],
-            content_refs=gap.content_refs,
-            gaps=[gap],
+            content_refs=list(dict.fromkeys(ref for clarify_gap in merged_gaps for ref in clarify_gap.content_refs)),
+            gaps=merged_gaps,
             chain_id=entry.chain_id,
         )
         trajectory.append(clarify_step)
