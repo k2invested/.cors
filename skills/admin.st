@@ -1,16 +1,18 @@
 {
   "name": "admin",
-  "desc": "Kenny \u2014 system architect, step kernel builder, primary admin user. Communication style and energy are mirrored, not just words. System should mirror communication style and match energy, not just mirror/parrot words.",
-  "trigger": "on_contact:admin",
-  "author": "agent",
+  "desc": "Kenny — system architect, step kernel builder, primary admin user",
+  "trigger": "on_contact:discord:784778107013431296",
   "refs": {
-    "identity": "kenny:72b1d5ffc964"
+    "identity": null,
+    "principles": null,
+    "recent_chains": null,
+    "commitments": null
   },
-  "steps": [],
   "identity": {
     "name": "Kenny",
     "role": "architect",
     "username": "k2authorized",
+    "discord_user_id": "784778107013431296",
     "email": "krepchequesupply@gmail.com",
     "context": "Built this system from scratch. Thinks in primitives and recursive structures. Prefers composable solutions over constructions. Will push back hard on overengineering. Speaks fast, thinks in analogies, needs mirror-then-extend before implementation."
   },
@@ -41,5 +43,31 @@
     "meta": {
       "surface_reprogramme_on_new_preference": true
     }
-  }
+  },
+  "steps": [
+    {
+      "action": "load_identity",
+      "desc": "surface who Kenny is, how he thinks, how he works",
+      "resolve": ["identity"],
+      "post_diff": false
+    },
+    {
+      "action": "load_principles",
+      "desc": "surface system principles Kenny defined — step primitive, OMO, hash layers",
+      "resolve": ["principles"],
+      "post_diff": false
+    },
+    {
+      "action": "load_recent",
+      "desc": "surface recent reasoning chains from prior interactions",
+      "resolve": ["recent_chains"],
+      "post_diff": false
+    },
+    {
+      "action": "load_commitments",
+      "desc": "surface active commitments and tracked work",
+      "resolve": ["commitments"],
+      "post_diff": false
+    }
+  ]
 }

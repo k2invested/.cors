@@ -158,6 +158,34 @@ def find_existing_skill_path(existing_ref: str, output_dir: str) -> str | None:
     return None
 
 
+def find_existing_contact_path(trigger: str, output_dir: str) -> str | None:
+    output_root = Path(output_dir)
+    if not output_root.exists():
+        return None
+
+    matches: list[tuple[int, int, str]] = []
+    for path in output_root.rglob("*.st"):
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if data.get("trigger") != trigger:
+            continue
+        steps = data.get("steps", [])
+        name = str(data.get("name", "")).lower()
+        matches.append((
+            len(steps) if isinstance(steps, list) else 0,
+            1 if name == "admin" else 0,
+            str(path),
+        ))
+
+    if not matches:
+        return None
+
+    matches.sort(reverse=True)
+    return matches[0][2]
+
+
 # ── Builder ──────────────────────────────────────────────────────────────
 
 def build_st(intent: dict) -> dict:
@@ -205,6 +233,10 @@ def write_st(st: dict, output_dir: str = None, existing_ref: str | None = None) 
     existing_path = find_existing_skill_path(existing_ref, output_dir) if existing_ref else None
     if existing_ref and not existing_path:
         raise FileNotFoundError(f"existing_ref not found: {existing_ref}")
+    if not existing_path:
+        trigger = st.get("trigger", "")
+        if isinstance(trigger, str) and trigger.startswith("on_contact:"):
+            existing_path = find_existing_contact_path(trigger, output_dir)
 
     if existing_path:
         path = existing_path

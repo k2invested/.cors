@@ -106,6 +106,14 @@ def _pattern_tool_params(gap: Gap) -> dict[str, str] | None:
     return params
 
 
+def _entity_target_for_reprogramme(gap: Gap, registry: Any) -> Any | None:
+    for ref in gap.content_refs:
+        skill = registry.resolve(ref)
+        if skill is not None:
+            return skill
+    return None
+
+
 def execute_iteration(
     *,
     entry: Any,
@@ -642,6 +650,7 @@ def execute_iteration(
 
     elif vocab == "reprogramme_needed":
         print(f"  → reprogramme ({vocab})")
+        target_entity = _entity_target_for_reprogramme(gap, registry)
         entity_data = hooks.resolve_entity(gap.content_refs, registry, trajectory)
         if entity_data:
             session.inject(f"## Existing entity data\n{entity_data}")
@@ -702,6 +711,17 @@ def execute_iteration(
             "- Domain/compliance: constraints + sources + scope\n"
             "- Concepts: refs linking to related entity or chain hashes\n"
             "- Existing action updates: preserve explicit steps and refs; do not invent new workflow vocab\n\n"
+            "### Entity format continuity\n"
+            "When updating an existing entity, preserve its established file shape unless the user explicitly asked to change structure.\n"
+            "- Preserve trigger, refs, and deterministic steps by default.\n"
+            "- Preserve access_rules, init state, and other scaffolding fields that already exist.\n"
+            "- Prefer additive semantic updates over rewriting desc or collapsing structure.\n"
+            "- Do not replace a structured entity with steps: [] unless the user explicitly wants that simplification.\n"
+            "- If you are updating an existing entity package, keep its manifestation pattern stable.\n\n"
+            "### Contact identity continuity\n"
+            "- If this gap is about updating an existing user/contact identity, update that existing entity in place.\n"
+            "- Do not create a second on_contact entity for the same external contact.\n"
+            "- Reuse the existing trigger and include existing_ref when you are updating a known entity.\n\n"
             "### Composition rule\n"
             "Compose from existing entities and workflows first. Reuse known hashes where possible.\n"
             "If you need executable structure, reference an existing action or chain package by hash.\n"
@@ -734,6 +754,9 @@ def execute_iteration(
         )
         print(f"  LLM compose: {raw[:150]}...")
         intent = hooks.extract_json(raw)
+        if isinstance(intent, dict) and target_entity is not None:
+            intent.setdefault("existing_ref", target_entity.hash)
+            intent.setdefault("trigger", target_entity.trigger)
         if hooks.is_reprogramme_intent(intent):
             output, code = hooks.execute_tool("tools/st_builder.py", intent)
             print(f"  st_builder: {output[:150]}")
@@ -743,7 +766,6 @@ def execute_iteration(
                 paths=[written_path] if written_path else None,
             )
             if commit_sha:
-                compiler.record_background_trigger(entry.chain_id)
                 print(f"  → committed: {commit_sha}")
                 step_result = Step.create(
                     desc=f"reprogrammed: {gap.desc}",

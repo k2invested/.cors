@@ -1,1 +1,341 @@
 /opt/homebrew/Cellar/python@3.14/3.14.2_1/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python: can't open file '/Users/k2invested/Desktop/cors/discord_bot.py': [Errno 2] No such file or directory
+2026-04-02 01:42:20,698 WARNING PyNaCl is not installed, voice will NOT be supported
+2026-04-02 01:42:20,698 WARNING davey is not installed, voice will NOT be supported
+2026-04-02 01:42:20,699 INFO logging in using static token
+2026-04-02 01:42:23,937 INFO Shard ID None has connected to Gateway (Session ID: 0d4db8e9f0b0a4d0942197123d1a95bf).
+2026-04-02 01:42:25,972 INFO Discord bot logged in as CORS#3301 (1485671996435202128)
+2026-04-02 01:47:09,944 WARNING PyNaCl is not installed, voice will NOT be supported
+2026-04-02 01:47:09,944 WARNING davey is not installed, voice will NOT be supported
+2026-04-02 01:47:09,944 INFO logging in using static token
+2026-04-02 01:47:12,989 INFO Shard ID None has connected to Gateway (Session ID: 6b73e9a6a91f4cf22d4cfca42ce81b58).
+2026-04-02 01:47:14,992 INFO Discord bot logged in as CORS#3301 (1485671996435202128)
+2026-04-02 01:47:14,992 INFO Discord bot config require_mention=True allowed_channel_ids=[]
+2026-04-02 01:47:26,224 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=2
+2026-04-02 01:47:26,225 INFO discord inbound ignored author=784778107013431296 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=True allowed_channel_ids=[]
+2026-04-02 01:48:47,231 WARNING PyNaCl is not installed, voice will NOT be supported
+2026-04-02 01:48:47,231 WARNING davey is not installed, voice will NOT be supported
+2026-04-02 01:48:47,231 INFO logging in using static token
+2026-04-02 01:48:50,434 INFO Shard ID None has connected to Gateway (Session ID: eca9fcd6d361cdcf743adab1e2e9e002).
+2026-04-02 01:48:52,438 INFO Discord bot logged in as CORS#3301 (1485671996435202128)
+2026-04-02 01:48:52,438 INFO Discord bot config require_mention=False allowed_channel_ids=[]
+2026-04-02 01:49:00,296 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=3
+2026-04-02 01:49:00,296 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='Hey'
+2026-04-02 01:49:00,736 ERROR discord turn failed for discord:784778107013431296
+Traceback (most recent call last):
+  File "/Users/k2invested/Desktop/cors/discord_bot.py", line 182, in on_message
+    response = await asyncio.to_thread(run_turn, prompt, contact_id)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 86, in run
+    result = ctx.run(self.task)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 73, in run
+    return fn(*args, **kwargs)
+  File "/Users/k2invested/Desktop/cors/loop.py", line 890, in run_turn
+    raw = session.call(first_input)
+  File "/Users/k2invested/Desktop/cors/loop.py", line 552, in call
+    from openai import OpenAI
+ModuleNotFoundError: No module named 'openai'
+2026-04-02 01:49:01,211 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=31
+2026-04-02 01:49:01,211 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 01:51:12,053 WARNING PyNaCl is not installed, voice will NOT be supported
+2026-04-02 01:51:12,053 WARNING davey is not installed, voice will NOT be supported
+2026-04-02 01:51:12,053 INFO logging in using static token
+2026-04-02 01:51:15,071 INFO Shard ID None has connected to Gateway (Session ID: 82bb71ac55f7b53d1e9f8b5d605fc6fc).
+2026-04-02 01:51:17,074 INFO Discord bot logged in as CORS#3301 (1485671996435202128)
+2026-04-02 01:51:17,074 INFO Discord bot config require_mention=False allowed_channel_ids=[]
+2026-04-02 01:51:25,584 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=3
+2026-04-02 01:51:25,584 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='Hey'
+2026-04-02 01:51:31,326 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+2026-04-02 01:51:31,328 ERROR discord turn failed for discord:784778107013431296
+Traceback (most recent call last):
+  File "/Users/k2invested/Desktop/cors/discord_bot.py", line 182, in on_message
+    response = await asyncio.to_thread(run_turn, prompt, contact_id)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 86, in run
+    result = ctx.run(self.task)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 73, in run
+    return fn(*args, **kwargs)
+  File "/Users/k2invested/Desktop/cors/loop.py", line 890, in run_turn
+    raw = session.call(first_input)
+  File "/Users/k2invested/Desktop/cors/loop.py", line 555, in call
+    response = client.chat.completions.create(
+        model=self.model,
+        messages=self.messages,
+        temperature=0,
+    )
+  File "/Users/k2invested/Desktop/cors/.venv/lib/python3.14/site-packages/openai/_utils/_utils.py", line 286, in wrapper
+    return func(*args, **kwargs)
+  File "/Users/k2invested/Desktop/cors/.venv/lib/python3.14/site-packages/openai/resources/chat/completions/completions.py", line 1211, in create
+    return self._post(
+           ~~~~~~~~~~^
+        "/chat/completions",
+        ^^^^^^^^^^^^^^^^^^^^
+    ...<47 lines>...
+        stream_cls=Stream[ChatCompletionChunk],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/k2invested/Desktop/cors/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1297, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/k2invested/Desktop/cors/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1070, in request
+    raise self._make_status_error_from_response(err.response) from None
+openai.AuthenticationError: Error code: 401 - {'error': {'message': 'Incorrect API key provided: sk-...yo**********y.... You can find your API key at https://platform.openai.com/account/api-keys.', 'type': 'invalid_request_error', 'code': 'invalid_api_key', 'param': None}, 'status': 401}
+2026-04-02 01:51:32,380 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=31
+2026-04-02 01:51:32,381 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 01:53:11,610 WARNING PyNaCl is not installed, voice will NOT be supported
+2026-04-02 01:53:11,610 WARNING davey is not installed, voice will NOT be supported
+2026-04-02 01:53:11,610 INFO logging in using static token
+2026-04-02 01:53:14,763 INFO Shard ID None has connected to Gateway (Session ID: 98539c61d163b262305aa28cc18f778b).
+2026-04-02 01:53:16,766 INFO Discord bot logged in as CORS#3301 (1485671996435202128)
+2026-04-02 01:53:16,767 INFO Discord bot config require_mention=False allowed_channel_ids=[]
+2026-04-02 01:53:21,127 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=3
+2026-04-02 01:53:21,128 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='Hey'
+2026-04-02 01:53:23,494 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+2026-04-02 01:53:23,495 ERROR discord turn failed for discord:784778107013431296
+Traceback (most recent call last):
+  File "/Users/k2invested/Desktop/cors/discord_bot.py", line 182, in on_message
+    response = await asyncio.to_thread(run_turn, prompt, contact_id)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 86, in run
+    result = ctx.run(self.task)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 73, in run
+    return fn(*args, **kwargs)
+  File "/Users/k2invested/Desktop/cors/loop.py", line 890, in run_turn
+    raw = session.call(first_input)
+  File "/Users/k2invested/Desktop/cors/loop.py", line 555, in call
+    response = client.chat.completions.create(
+        model=self.model,
+        messages=self.messages,
+        temperature=0,
+    )
+  File "/Users/k2invested/Desktop/cors/.venv/lib/python3.14/site-packages/openai/_utils/_utils.py", line 286, in wrapper
+    return func(*args, **kwargs)
+  File "/Users/k2invested/Desktop/cors/.venv/lib/python3.14/site-packages/openai/resources/chat/completions/completions.py", line 1211, in create
+    return self._post(
+           ~~~~~~~~~~^
+        "/chat/completions",
+        ^^^^^^^^^^^^^^^^^^^^
+    ...<47 lines>...
+        stream_cls=Stream[ChatCompletionChunk],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/k2invested/Desktop/cors/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1297, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/k2invested/Desktop/cors/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1070, in request
+    raise self._make_status_error_from_response(err.response) from None
+openai.AuthenticationError: Error code: 401 - {'error': {'message': 'Incorrect API key provided: sk-...yo**********y.... You can find your API key at https://platform.openai.com/account/api-keys.', 'type': 'invalid_request_error', 'code': 'invalid_api_key', 'param': None}, 'status': 401}
+2026-04-02 01:53:23,902 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=31
+2026-04-02 01:53:23,903 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 01:55:16,502 WARNING PyNaCl is not installed, voice will NOT be supported
+2026-04-02 01:55:16,502 WARNING davey is not installed, voice will NOT be supported
+2026-04-02 01:55:16,502 INFO logging in using static token
+2026-04-02 01:55:19,710 INFO Shard ID None has connected to Gateway (Session ID: ae5526bbef94e6ab52c3f7d7a6684ad0).
+2026-04-02 01:55:21,713 INFO Discord bot logged in as CORS#3301 (1485671996435202128)
+2026-04-02 01:55:21,713 INFO Discord bot config require_mention=False allowed_channel_ids=[]
+2026-04-02 01:55:27,201 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=2
+2026-04-02 01:55:27,201 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='Hi'
+2026-04-02 01:55:30,363 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 01:55:38,067 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 01:55:42,363 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 01:55:45,718 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 01:55:48,383 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 01:55:53,900 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 01:55:59,833 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 01:56:04,934 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 01:56:05,454 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=29
+2026-04-02 01:56:05,454 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:00:45,141 WARNING PyNaCl is not installed, voice will NOT be supported
+2026-04-02 02:00:45,141 WARNING davey is not installed, voice will NOT be supported
+2026-04-02 02:00:45,141 INFO logging in using static token
+2026-04-02 02:00:46,284 INFO Shard ID None has connected to Gateway (Session ID: afd2ef55293a2f10d7b471eec8574e7f).
+2026-04-02 02:00:48,286 INFO Discord bot logged in as CORS#3301 (1485671996435202128)
+2026-04-02 02:00:48,287 INFO Discord bot config require_mention=False allowed_channel_ids=[]
+2026-04-02 02:01:09,206 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=5
+2026-04-02 02:01:09,206 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='/wipe'
+2026-04-02 02:01:11,982 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:01:13,031 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:01:13,268 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=151
+2026-04-02 02:01:13,268 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:03:03,942 WARNING PyNaCl is not installed, voice will NOT be supported
+2026-04-02 02:03:03,942 WARNING davey is not installed, voice will NOT be supported
+2026-04-02 02:03:03,943 INFO logging in using static token
+2026-04-02 02:03:05,042 INFO Shard ID None has connected to Gateway (Session ID: 321030247e68f5adf1f7a887b59c42a0).
+2026-04-02 02:03:07,045 INFO Discord bot logged in as CORS#3301 (1485671996435202128)
+2026-04-02 02:03:07,046 INFO Discord bot config require_mention=False allowed_channel_ids=[]
+2026-04-02 02:03:14,560 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=3
+2026-04-02 02:03:14,561 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='Hey'
+2026-04-02 02:03:16,406 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:03:17,327 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:03:17,521 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=21
+2026-04-02 02:03:17,521 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:03:30,639 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=24
+2026-04-02 02:03:30,639 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='What are my preferences?'
+2026-04-02 02:03:33,916 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:03:35,657 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:03:35,823 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=500
+2026-04-02 02:03:35,824 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:04:25,934 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=43
+2026-04-02 02:04:25,934 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='can you please remove the mirror and extend'
+2026-04-02 02:04:29,215 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:04:30,647 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:04:30,828 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=158
+2026-04-02 02:04:30,828 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:06:23,020 WARNING PyNaCl is not installed, voice will NOT be supported
+2026-04-02 02:06:23,020 WARNING davey is not installed, voice will NOT be supported
+2026-04-02 02:06:23,020 INFO logging in using static token
+2026-04-02 02:06:24,312 INFO Shard ID None has connected to Gateway (Session ID: 3a109d9307ad93cb80eb87c0aa08996b).
+2026-04-02 02:06:26,314 INFO Discord bot logged in as CORS#3301 (1485671996435202128)
+2026-04-02 02:06:26,314 INFO Discord bot config require_mention=False allowed_channel_ids=[]
+2026-04-02 02:06:43,207 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=5
+2026-04-02 02:06:43,208 INFO discord transport command user=discord:784778107013431296 command='/wipe'
+2026-04-02 02:06:43,451 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=16
+2026-04-02 02:06:43,451 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:06:47,375 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=3
+2026-04-02 02:06:47,375 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='Hey'
+2026-04-02 02:06:48,210 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+2026-04-02 02:06:48,212 ERROR discord turn failed for discord:784778107013431296
+Traceback (most recent call last):
+  File "/Users/k2invested/Desktop/cors/discord_bot.py", line 224, in on_message
+    response = await asyncio.to_thread(
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 86, in run
+    result = ctx.run(self.task)
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/thread.py", line 73, in run
+    return fn(*args, **kwargs)
+  File "/Users/k2invested/Desktop/cors/loop.py", line 918, in run_turn
+    raw = session.call(first_input)
+  File "/Users/k2invested/Desktop/cors/loop.py", line 575, in call
+    response = client.chat.completions.create(
+        model=self.model,
+        messages=self.messages,
+        temperature=0,
+    )
+  File "/Users/k2invested/Desktop/cors/.venv/lib/python3.14/site-packages/openai/_utils/_utils.py", line 286, in wrapper
+    return func(*args, **kwargs)
+  File "/Users/k2invested/Desktop/cors/.venv/lib/python3.14/site-packages/openai/resources/chat/completions/completions.py", line 1211, in create
+    return self._post(
+           ~~~~~~~~~~^
+        "/chat/completions",
+        ^^^^^^^^^^^^^^^^^^^^
+    ...<47 lines>...
+        stream_cls=Stream[ChatCompletionChunk],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/k2invested/Desktop/cors/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1297, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/k2invested/Desktop/cors/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1070, in request
+    raise self._make_status_error_from_response(err.response) from None
+openai.AuthenticationError: Error code: 401 - {'error': {'message': 'Incorrect API key provided: sk-...yo**********y.... You can find your API key at https://platform.openai.com/account/api-keys.', 'type': 'invalid_request_error', 'code': 'invalid_api_key', 'param': None}, 'status': 401}
+2026-04-02 02:06:48,436 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=31
+2026-04-02 02:06:48,436 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:07:48,577 WARNING PyNaCl is not installed, voice will NOT be supported
+2026-04-02 02:07:48,577 WARNING davey is not installed, voice will NOT be supported
+2026-04-02 02:07:48,578 INFO logging in using static token
+2026-04-02 02:07:49,663 INFO Shard ID None has connected to Gateway (Session ID: 17cc34adc0b469c4fce0e24df386fd2a).
+2026-04-02 02:07:51,665 INFO Discord bot logged in as CORS#3301 (1485671996435202128)
+2026-04-02 02:07:51,666 INFO Discord bot config require_mention=False allowed_channel_ids=[]
+2026-04-02 02:07:55,447 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=3
+2026-04-02 02:07:55,448 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='Hey'
+2026-04-02 02:07:57,189 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:07:58,519 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:07:58,825 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=21
+2026-04-02 02:07:58,825 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:08:07,539 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=24
+2026-04-02 02:08:07,539 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='What are my preferences?'
+2026-04-02 02:08:10,502 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:08:13,081 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:08:13,273 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=838
+2026-04-02 02:08:13,273 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:09:06,316 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=65
+2026-04-02 02:09:06,316 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='please remove the mirror then extend approach from my preferences'
+2026-04-02 02:09:10,199 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:09:11,223 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:09:11,420 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=73
+2026-04-02 02:09:11,420 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:12:06,646 WARNING PyNaCl is not installed, voice will NOT be supported
+2026-04-02 02:12:06,646 WARNING davey is not installed, voice will NOT be supported
+2026-04-02 02:12:06,646 INFO logging in using static token
+2026-04-02 02:12:07,517 INFO Shard ID None has connected to Gateway (Session ID: fddd9321f8d67f6dc1bd9f3966f50688).
+2026-04-02 02:12:09,519 INFO Discord bot logged in as CORS#3301 (1485671996435202128)
+2026-04-02 02:12:09,519 INFO Discord bot config require_mention=False allowed_channel_ids=[]
+2026-04-02 02:12:49,129 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=142
+2026-04-02 02:12:49,129 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content="why wouldn't you surface reprogramme when its already in my preference to update my preferecne and i after i explicityl told you to update it?"
+2026-04-02 02:12:55,961 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:13:01,727 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:13:03,569 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:13:03,748 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=350
+2026-04-02 02:13:03,748 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:19:58,559 WARNING PyNaCl is not installed, voice will NOT be supported
+2026-04-02 02:19:58,559 WARNING davey is not installed, voice will NOT be supported
+2026-04-02 02:19:58,559 INFO logging in using static token
+2026-04-02 02:19:59,721 INFO Shard ID None has connected to Gateway (Session ID: 70d909cf61414a64c8a47f07d775a63a).
+2026-04-02 02:20:01,723 INFO Discord bot logged in as CORS#3301 (1485671996435202128)
+2026-04-02 02:20:01,724 INFO Discord bot config require_mention=False allowed_channel_ids=[]
+2026-04-02 02:20:08,870 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=5
+2026-04-02 02:20:08,871 INFO discord transport command user=discord:784778107013431296 command='/wipe'
+2026-04-02 02:20:09,098 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=16
+2026-04-02 02:20:09,098 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:20:12,832 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=3
+2026-04-02 02:20:12,833 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='Hey'
+2026-04-02 02:20:14,881 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:20:15,699 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:20:16,007 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=21
+2026-04-02 02:20:16,007 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:20:25,677 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=24
+2026-04-02 02:20:25,677 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='What are my preferences?'
+2026-04-02 02:20:29,113 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:20:31,775 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:20:32,082 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=607
+2026-04-02 02:20:32,082 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:20:55,121 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=64
+2026-04-02 02:20:55,122 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='lease remove the mirror then extend approach from my preferences'
+2026-04-02 02:20:58,679 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:21:05,056 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:21:06,797 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:21:06,982 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=196
+2026-04-02 02:21:06,982 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:22:30,825 WARNING PyNaCl is not installed, voice will NOT be supported
+2026-04-02 02:22:30,825 WARNING davey is not installed, voice will NOT be supported
+2026-04-02 02:22:30,825 INFO logging in using static token
+2026-04-02 02:22:32,002 INFO Shard ID None has connected to Gateway (Session ID: 750975a534b841d7a527822f8e208dfe).
+2026-04-02 02:22:34,005 INFO Discord bot logged in as CORS#3301 (1485671996435202128)
+2026-04-02 02:22:34,006 INFO Discord bot config require_mention=False allowed_channel_ids=[]
+2026-04-02 02:22:40,595 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=5
+2026-04-02 02:22:40,598 INFO discord transport command user=discord:784778107013431296 command='/wipe'
+2026-04-02 02:22:40,774 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=16
+2026-04-02 02:22:40,774 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:22:43,562 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=3
+2026-04-02 02:22:43,562 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='Hey'
+2026-04-02 02:22:45,307 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:22:46,495 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:22:46,841 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=21
+2026-04-02 02:22:46,841 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:23:10,189 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=24
+2026-04-02 02:23:10,189 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='What are my preferences?'
+2026-04-02 02:23:12,237 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:23:14,083 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:23:14,273 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=514
+2026-04-02 02:23:14,274 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:23:28,005 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=65
+2026-04-02 02:23:28,005 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='please remove the mirror then extend approach from my preferences'
+2026-04-02 02:23:30,669 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:23:32,608 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
