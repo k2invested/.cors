@@ -41,11 +41,12 @@ from pathlib import Path
 from env_loader import load_env
 from step import Step, Gap, Epistemic, Trajectory, TREE_LANGUAGE_KEY
 from compile import (
-    Compiler, GovernorSignal, is_mutate,
+    Compiler, GovernorSignal, is_mutate, is_observe,
 )
 from skills.loader import load_all, SkillRegistry, Skill
 import manifest_engine as me
 from execution_engine import ExecutionConfig, ExecutionHooks, execute_iteration
+from tools import st_builder as st_builder_module
 
 
 # ── Configuration ────────────────────────────────────────────────────────
@@ -1337,6 +1338,17 @@ def run_turn(
     for g in origin_gaps:
         g.turn_id = current_turn
 
+    discord_contact = contact_id.startswith("discord:")
+    if discord_contact and origin_gaps:
+        origin_gaps, pruned_origin = _filter_discord_gaps(origin_gaps)
+        origin_step.gaps = origin_gaps
+        if pruned_origin:
+            print(f"  → pruned {pruned_origin} non-observation gap(s) for discord contact")
+    if discord_contact and dangling:
+        dangling, pruned_dangling = _filter_discord_gaps(dangling)
+        if pruned_dangling:
+            print(f"  → dropped {pruned_dangling} non-observation dangling gap(s) for discord contact")
+
     # Re-admit dangling cross-turn gaps (higher threshold: 0.6)
     if dangling:
         readmitted = compiler.readmit_cross_turn(dangling, origin_step.hash)
@@ -1344,6 +1356,20 @@ def run_turn(
             print(f"  → {readmitted} cross-turn gap(s) re-admitted")
 
     if not origin_gaps and not dangling:
+        if contact_id.startswith("discord:"):
+            sync_step = _run_no_gap_discord_profile_sync(
+                contact_id,
+                user_message,
+                identity_skill=identity_skill,
+                registry=registry,
+                trajectory=trajectory,
+                origin_step=origin_step,
+            )
+            if sync_step and sync_step.commit:
+                turn_facts["commits"].append(sync_step.commit)
+                turn_facts["successful_mutations"].append(
+                    f"reprogramme_needed: deterministic no-gap discord profile sync for {identity_skill.display_name}"
+                )
         # No gaps → auto-synthesize
         print("\n── AUTO-SYNTH (no gaps) ──")
         response = _synthesize(session, user_message, turn_facts)
@@ -1394,6 +1420,11 @@ def run_turn(
         if outcome.control == "break":
             forced_synth = False
             break
+
+        if discord_contact:
+            pruned_runtime = _prune_discord_ledger(compiler)
+            if pruned_runtime:
+                print(f"  → pruned {pruned_runtime} non-observation runtime gap(s) for discord contact")
 
         if gap.vocab == "reprogramme_needed" or (gap.vocab and is_mutate(gap.vocab)):
             descriptor = f"{gap.vocab}: {gap.desc}"
@@ -1788,6 +1819,35 @@ def _clone_gap_for_carry_forward(gap: Gap, *, current_turn: int) -> Gap:
     return cloned
 
 
+def _discord_gap_is_allowed(gap: Gap) -> bool:
+    return bool(gap.vocab) and is_observe(gap.vocab)
+
+
+def _filter_discord_gaps(gaps: list[Gap]) -> tuple[list[Gap], int]:
+    kept: list[Gap] = []
+    pruned = 0
+    for gap in gaps:
+        if _discord_gap_is_allowed(gap):
+            kept.append(gap)
+        else:
+            gap.dormant = True
+            pruned += 1
+    return kept, pruned
+
+
+def _prune_discord_ledger(compiler: Compiler) -> int:
+    kept = []
+    pruned = 0
+    for entry in compiler.ledger.stack:
+        if _discord_gap_is_allowed(entry.gap):
+            kept.append(entry)
+        else:
+            entry.gap.dormant = True
+            pruned += 1
+    compiler.ledger.stack = kept
+    return pruned
+
+
 def _persist_forced_synth_frontier(trajectory: Trajectory, compiler: Compiler, origin_step: Step, current_turn: int) -> Step | None:
     pending = [entry.gap for entry in compiler.ledger.active_gaps() if not entry.gap.resolved and not entry.gap.dormant]
     if not pending:
@@ -1931,6 +1991,119 @@ def _build_init_user_intent(contact_id: str, user_message: str, *, contact_profi
             },
         ],
     }
+
+
+def _run_no_gap_discord_profile_sync(
+    contact_id: str,
+    user_message: str,
+    *,
+    identity_skill: Skill | None,
+    registry: SkillRegistry,
+    trajectory: Trajectory,
+    origin_step: Step,
+) -> Step | None:
+    """Deterministically attempt an in-place profile sync for Discord contacts on no-gap turns.
+
+    This path is narrow by design:
+    - only runs for bound Discord contact entities
+    - only runs when the natural first step surfaced no gaps
+    - does not emit new live gaps; it either commits an in-place update or no-ops
+    """
+    if not contact_id.startswith("discord:"):
+        return None
+    if identity_skill is None or not _is_entity_source(identity_skill.source):
+        return None
+    if identity_skill.trigger != f"on_contact:{contact_id}":
+        return None
+    if not identity_skill.payload:
+        return None
+
+    print("\n── NO-GAP DISCORD PROFILE SYNC ──")
+    sync_session = Session(model=os.environ.get("KERNEL_COMPOSE_MODEL", "gpt-4.1"))
+    sync_session.set_system(PRE_DIFF_SYSTEM)
+
+    entity_data = _resolve_entity([identity_skill.hash], registry, trajectory)
+    if entity_data:
+        sync_session.inject(f"## Bound Contact Entity\n{entity_data}")
+    sync_session.inject(
+        "## Recent Trajectory\n"
+        f"{trajectory.render_recent(TRAJECTORY_WINDOW, registry=registry)}"
+    )
+
+    frame = st_builder_module.semantic_skeleton_from_st(
+        identity_skill.payload,
+        existing_ref=identity_skill.hash,
+    )
+    sync_session.inject(
+        "## Editable Semantic Frame\n"
+        "Update this bound contact entity in place only if this turn established durable semantic state.\n"
+        f"{json.dumps(frame, indent=2)}"
+    )
+
+    raw = sync_session.call(
+        f"Task: deterministically maintain the bound Discord contact profile after a no-gap turn.\n"
+        f"Contact: {contact_id}\n"
+        f"Latest message: \"{user_message}\"\n\n"
+        "Rules:\n"
+        "- Return JSON only.\n"
+        "- If no durable semantic update is warranted from this turn, return {\"noop\": true}.\n"
+        "- Otherwise return a semantic_skeleton.v1 entity update for this existing contact entity.\n"
+        "- Use existing_ref and update the current entity in place.\n"
+        "- Preserve trigger, identity bindings, access_rules, init, refs, and entity shape.\n"
+        "- Persist only stable facts, corrections, preferences, goals, or durable context learned from this turn.\n"
+        "- Do not ask questions.\n"
+        "- Do not emit gaps.\n"
+    )
+    print(f"  LLM sync: {raw[:150]}...")
+    intent = _extract_json(raw)
+    if not isinstance(intent, dict) or intent.get("noop") is True:
+        print("  → no durable profile update warranted")
+        return None
+
+    intent.setdefault("existing_ref", identity_skill.hash)
+    intent.setdefault("trigger", identity_skill.trigger)
+    if not _is_reprogramme_intent(intent):
+        print("  → no valid reprogramme intent extracted")
+        return None
+
+    output, code = execute_tool("tools/st_builder.py", intent)
+    print(f"  st_builder: {output[:150]}")
+    written_path = _extract_written_path(output)
+    if code != 0 or not written_path:
+        print("  → profile sync skipped (builder produced no writable update)")
+        return None
+
+    commit_sha, _ = auto_commit(
+        f"reprogramme discord profile: {identity_skill.display_name}",
+        paths=[written_path],
+    )
+    if not commit_sha:
+        print("  → no profile changes to commit")
+        return None
+
+    print(f"  → committed: {commit_sha}")
+    step_result = Step.create(
+        desc=f"reprogrammed discord profile: {identity_skill.display_name}",
+        step_refs=[origin_step.hash],
+        content_refs=[identity_skill.hash],
+        commit=commit_sha,
+    )
+    trajectory.append(step_result)
+
+    commit_path = None
+    try:
+        commit_path = str(Path(written_path).resolve().relative_to(CORS_ROOT))
+    except ValueError:
+        commit_path = written_path
+    assessment_refs = [f"{commit_sha}:{commit_path}"] if commit_path else [commit_sha]
+    assessment_step = Step.create(
+        desc=f"observed discord profile sync: {identity_skill.display_name}",
+        step_refs=[step_result.hash],
+        content_refs=assessment_refs,
+        assessment=_commit_assessment_for_commit(commit_sha),
+    )
+    trajectory.append(assessment_step)
+    return step_result
 
 
 def _render_identity(skill: Skill) -> str:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import tempfile
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -119,6 +120,43 @@ def skill(name: str) -> Skill:
     resolved = registry().resolve_by_name(name)
     assert resolved is not None, f"missing skill: {name}"
     return resolved
+
+
+def bootstrap_identity_skill(contact_id: str = "discord:123", user_message: str = "hi", username: str = "courtney") -> Skill:
+    intent = loop._build_init_user_intent(contact_id, user_message, contact_profile={"username": username})
+    return Skill(
+        hash="boot_hash",
+        name=intent["name"],
+        desc=intent["desc"],
+        steps=[SkillStep(**step) for step in intent["steps"]],
+        source=str(SKILLS_DIR / "entities" / f"{intent['name']}.st"),
+        display_name=intent["name"],
+        trigger=intent["trigger"],
+        artifact_kind="entity",
+        payload=intent,
+    )
+
+
+def render_bootstrap_identity(contact_id: str = "discord:123", user_message: str = "hi", username: str = "courtney") -> str:
+    intent = loop._build_init_user_intent(contact_id, user_message, contact_profile={"username": username})
+    with tempfile.NamedTemporaryFile("w", suffix=".st", delete=False) as tmp:
+        json.dump(intent, tmp)
+        tmp_path = Path(tmp.name)
+    try:
+        skill_obj = Skill(
+            hash="boot_hash",
+            name=intent["name"],
+            desc=intent["desc"],
+            steps=[SkillStep(**step) for step in intent["steps"]],
+            source=str(tmp_path),
+            display_name=intent["name"],
+            trigger=intent["trigger"],
+            artifact_kind="entity",
+            payload=intent,
+        )
+        return loop._render_identity(skill_obj)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def seed_trajectory(*refs: str, count: int = 3) -> Trajectory:
@@ -478,7 +516,7 @@ P5_CASES = [
     ("find_identity_skill_returns_admin", lambda: loop._find_identity_skill("discord:784778107013431296", registry()) == skill("admin")),
     ("render_identity_has_preferences", lambda: "## Preferences" in loop._render_identity(skill("admin"))),
     ("render_identity_has_access_rules_when_present", lambda: "## Access Rules" in loop._render_identity(skill("admin")) if "access_rules" in skill_data("admin") else True),
-    ("render_identity_pending_bootstrap_shows_initiation", lambda: "## Initiation" in loop._render_identity(load_skill(str(SKILLS_DIR / "entities" / "user_discord_1132422022144729158.st")))),
+    ("render_identity_pending_bootstrap_shows_initiation", lambda: "## Initiation" in render_bootstrap_identity()),
     ("reprogramme_skill_trigger_is_vocab", lambda: skill("reprogramme").trigger == "on_vocab:reprogramme_needed"),
     ("reprogramme_skill_all_steps_loaded", lambda: skill("reprogramme").step_count() == 3),
     ("reason_skill_mentions_background_subagent", lambda: "background sub-agent" in skill_data("reason")["desc"].lower()),
@@ -1389,6 +1427,73 @@ def test_p12_run_turn_bootstraps_before_identity_lookup(monkeypatch, tmp_path):
 
     assert response == "hello"
     assert seen_identity["value"] is True
+
+
+def test_p12_filter_discord_gaps_keeps_only_observation_and_clarify():
+    observe_gap = make_gap("observe", vocab="hash_resolve_needed")
+    clarify_gap = make_gap("clarify", vocab="clarify_needed")
+    reason_gap = make_gap("reason", vocab="reason_needed")
+    mutate_gap = make_gap("mutate", vocab="content_needed")
+
+    kept, pruned = loop._filter_discord_gaps([observe_gap, clarify_gap, reason_gap, mutate_gap])
+
+    assert [gap.hash for gap in kept] == [observe_gap.hash, clarify_gap.hash]
+    assert pruned == 2
+    assert reason_gap.dormant is True
+    assert mutate_gap.dormant is True
+
+
+def test_p12_run_turn_no_gap_discord_turn_triggers_profile_sync(monkeypatch, tmp_path):
+    class FakeSession:
+        def set_system(self, content: str):
+            pass
+
+        def inject(self, content: str, role: str = "user"):
+            pass
+
+        def call(self, user_content: str = None) -> str:
+            return "No gaps."
+
+    synth_facts = {}
+    identity = bootstrap_identity_skill()
+
+    monkeypatch.setattr(loop, "Session", lambda model=None: FakeSession())
+    monkeypatch.setattr(loop, "load_all", lambda path: registry())
+    monkeypatch.setattr(loop, "git_head", lambda: "abc123")
+    monkeypatch.setattr(loop, "git_tree", lambda: "head tree")
+    monkeypatch.setattr(loop, "_find_dangling_gaps", lambda trajectory: [])
+    monkeypatch.setattr(loop, "_parse_step_output", lambda raw, step_refs, content_refs: (make_step("origin"), []))
+    monkeypatch.setattr(loop, "_find_identity_skill", lambda contact_id, registry_obj: identity)
+    monkeypatch.setattr(loop, "_render_identity", lambda skill_obj: "## Identity")
+    monkeypatch.setattr(loop, "_save_turn", lambda trajectory, state=None: None)
+    monkeypatch.setattr(loop, "_bootstrap_contact_entity", lambda registry_obj, contact_id, user_message, contact_profile=None: None)
+
+    def fake_sync(contact_id, user_message, *, identity_skill, registry, trajectory, origin_step):
+        assert contact_id == "discord:123"
+        assert user_message == "Hey"
+        assert identity_skill == identity
+        return make_step("reprogrammed discord profile: courtney", commit="sync123")
+
+    def fake_synth(session, user_message, turn_facts=None):
+        synth_facts.update(turn_facts or {})
+        return "hello"
+
+    monkeypatch.setattr(loop, "_run_no_gap_discord_profile_sync", fake_sync)
+    monkeypatch.setattr(loop, "_synthesize", fake_synth)
+
+    response = loop.run_turn(
+        "Hey",
+        "discord:123",
+        traj_file=tmp_path / "trajectory.json",
+        chains_file=tmp_path / "chains.json",
+        chains_dir=tmp_path / "chains",
+    )
+
+    assert response == "hello"
+    assert synth_facts["commits"] == ["sync123"]
+    assert synth_facts["successful_mutations"] == [
+        "reprogramme_needed: deterministic no-gap discord profile sync for courtney"
+    ]
 
 
 def test_p12_inline_reprogramme_does_not_trigger_heartbeat():
