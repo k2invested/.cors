@@ -284,6 +284,18 @@ def test_st_builder_detects_skeleton_input():
     assert st_builder_module.looks_like_skeleton({"name": "entity", "desc": "d", "actions": []}) is False
 
 
+def test_st_builder_detects_semantic_skeleton_input():
+    assert st_builder_module.looks_like_semantic_skeleton({
+        "version": "semantic_skeleton.v1",
+        "artifact": {"kind": "entity"},
+        "name": "entity",
+        "desc": "d",
+        "trigger": "manual",
+        "refs": {},
+        "semantics": {},
+    }) is True
+
+
 def test_st_builder_cli_rejects_skeleton_input():
     payload = json.dumps(example_skeleton())
     result = subprocess.run(
@@ -313,6 +325,69 @@ def test_st_builder_cli_rejects_new_action_origination():
     )
     assert result.returncode == 1
     assert "new action or hybrid workflow origination belongs to skeleton.v1" in result.stdout
+
+
+def test_lower_semantic_skeleton_to_entity_intent():
+    doc = {
+        "version": "semantic_skeleton.v1",
+        "artifact": {
+            "kind": "entity",
+            "protected_kind": "entity",
+            "lineage": "admin",
+            "version_strategy": "hash_pinned",
+        },
+        "name": "admin",
+        "desc": "admin identity",
+        "trigger": "on_contact:discord:1",
+        "refs": {"architect": "abc123"},
+        "existing_ref": "deadbeefcafe",
+        "semantics": {
+            "identity": {"name": "Kenny"},
+            "preferences": {"communication": {"style": "direct"}},
+            "init": {"status": "pending"},
+        },
+    }
+
+    lowered, artifact_kind, existing_ref = st_builder_module.lower_semantic_skeleton(doc)
+    assert artifact_kind == "entity"
+    assert existing_ref == "deadbeefcafe"
+    assert lowered["identity"]["name"] == "Kenny"
+    assert lowered["preferences"]["communication"]["style"] == "direct"
+    assert lowered["init"]["status"] == "pending"
+
+
+def test_semantic_skeleton_from_st_derives_flow_from_steps():
+    st = {
+        "name": "review_flow",
+        "desc": "review flow",
+        "trigger": "manual",
+        "refs": {"target": "blob:abc123"},
+        "steps": [
+            {
+                "action": "inspect_target",
+                "desc": "inspect current target state",
+                "vocab": "hash_resolve_needed",
+                "post_diff": False,
+                "resolve": ["@target"],
+            },
+            {
+                "action": "persist_update",
+                "desc": "persist updated semantic state",
+                "vocab": "reprogramme_needed",
+                "post_diff": False,
+            },
+        ],
+        "preferences": {"workflow": {"bridge_first": True}},
+    }
+
+    frame = st_builder_module.semantic_skeleton_from_st(st, existing_ref="abc123def456")
+    assert frame["version"] == "semantic_skeleton.v1"
+    assert frame["artifact"]["kind"] == "hybrid"
+    assert frame["existing_ref"] == "abc123def456"
+    assert frame["root"].startswith("phase_")
+    assert len(frame["phases"]) == 3
+    assert frame["phases"][0]["gap_template"]["desc"] == "inspect current target state"
+    assert frame["phases"][1]["manifestation"]["runtime_vocab"] == "reprogramme_needed"
 
 
 def test_st_builder_writes_existing_ref_in_place(tmp_path):

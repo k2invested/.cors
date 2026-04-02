@@ -39,6 +39,10 @@
         "minLength": 1
       }
     },
+    "existing_ref": {
+      "type": "string",
+      "minLength": 1
+    },
     "semantics": {
       "$ref": "#/$defs/semantics"
     },
@@ -130,6 +134,9 @@
           "type": "array"
         },
         "domain_knowledge": {
+          "type": "object"
+        },
+        "init": {
           "type": "object"
         },
         "entity_refs": {

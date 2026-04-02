@@ -12,8 +12,8 @@
       "post_diff": false
     },
     {
-      "action": "compose_st",
-      "desc": "compose the .st file from semantic intent. reuse existing entities before building new. for entities: identity, preferences, constraints, sources, scope. for workflows: steps with action/desc/vocab/relevance/post_diff. for /commands: trigger command:name. the compose is guided by PRINCIPLES.md — composition over construction.",
+      "action": "edit_semantic_skeleton",
+      "desc": "surface an editable semantic_skeleton.v1 frame. if an entity or workflow already exists, edit that frame in place; otherwise fill a bootstrap frame. use the same primitive flow shape as reason-built chains (root, phases, closure) so reprogramme can update semantics and existing flows without collapsing structure.",
       "vocab": "hash_edit_needed",
       "relevance": 0.9,
       "post_diff": false

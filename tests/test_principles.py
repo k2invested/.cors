@@ -410,6 +410,15 @@ P5_CASES = [
     ("init_user_intent_bootstrap_is_only_deterministic_reprogramme", lambda: loop._build_init_user_intent("discord:123", "hi")["preferences"]["onboarding"]["deterministic_reprogramme_mode"] == "bootstrap_only"),
     ("init_user_intent_passive_reprogramme_is_optional", lambda: loop._build_init_user_intent("discord:123", "hi")["preferences"]["onboarding"]["passive_reprogramme_optional"] is True),
     ("init_user_intent_loads_onboarding_preferences", lambda: any(step["action"] == "load_onboarding_preferences" for step in loop._build_init_user_intent("discord:123", "hi")["steps"])),
+    ("reprogramme_intent_accepts_semantic_skeleton", lambda: loop._is_reprogramme_intent({
+        "version": "semantic_skeleton.v1",
+        "artifact": {"kind": "entity"},
+        "name": "admin",
+        "desc": "admin entity",
+        "trigger": "manual",
+        "refs": {},
+        "semantics": {},
+    })),
 ]
 
 
@@ -830,6 +839,98 @@ def test_p12_bootstrap_contact_entity_creates_first_contact_step(monkeypatch):
     assert step.commit == "abc123"
     assert step.desc == "reprogrammed bootstrap: user_discord_123"
     assert step.content_refs == ["abc123"]
+
+
+def test_p12_inline_reprogramme_does_not_trigger_heartbeat():
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps({
+                "artifact_kind": "entity",
+                "name": "admin",
+                "desc": "updated admin preferences",
+            })
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("persist admin preference", content_refs=[skill("admin").hash], vocab="reprogramme_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("Written: /Users/k2invested/Desktop/cors/skills/admin.st", 0),
+        auto_commit=lambda message, paths=None: ("abc123", None),
+        parse_step_output=lambda raw, step_refs, content_refs, chain_id=None: (make_step("noop"), []),
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: "/Users/k2invested/Desktop/cors/skills/admin.st",
+        is_reprogramme_intent=lambda intent: True,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert outcome.step_result.commit == "abc123"
+    assert compiler.needs_heartbeat() is False
+
+
+def test_p12_st_builder_reuses_existing_contact_trigger_path(tmp_path):
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    admin_path = skills_dir / "admin.st"
+    admin_path.write_text(json.dumps({
+        "name": "admin",
+        "desc": "canonical admin",
+        "trigger": "on_contact:discord:784778107013431296",
+        "steps": [{"action": "load_identity", "desc": "load", "post_diff": False}],
+        "identity": {"discord_user_id": "784778107013431296"},
+    }))
+
+    path = st_builder_module.write_st(
+        {
+            "name": "Kenny",
+            "desc": "updated",
+            "trigger": "on_contact:discord:784778107013431296",
+            "steps": [],
+            "identity": {"discord_user_id": "784778107013431296"},
+        },
+        output_dir=str(skills_dir),
+    )
+
+    assert path == str(admin_path)
+    rewritten = json.loads(admin_path.read_text())
+    assert len(rewritten["steps"]) == 1
 
 
 def test_p12_resolve_hash_supports_skill_source_path(monkeypatch):

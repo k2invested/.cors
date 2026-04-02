@@ -1181,6 +1181,9 @@ def _is_reprogramme_intent(intent: dict | None) -> bool:
         return False
     if "gaps" in intent:
         return False
+    if intent.get("version") == "semantic_skeleton.v1":
+        artifact = intent.get("artifact", {}) or {}
+        return artifact.get("kind") in {"entity", "action", "hybrid"}
     if "version" in intent:
         return False
     if "name" not in intent or "desc" not in intent:

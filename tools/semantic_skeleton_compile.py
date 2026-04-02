@@ -69,6 +69,9 @@ def compile_semantic_skeleton(doc: dict) -> dict:
         },
     }
 
+    if "existing_ref" in doc:
+        result["package"]["existing_ref"] = doc["existing_ref"]
+
     if "semantics" in doc:
         result["package"]["semantics"] = doc["semantics"]
 

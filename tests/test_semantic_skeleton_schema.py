@@ -133,6 +133,8 @@ def test_semantic_schema_declares_unified_artifact_kinds():
     schema = load_schema()
     assert schema["properties"]["version"]["const"] == "semantic_skeleton.v1"
     assert schema["$defs"]["artifactKind"]["enum"] == ["entity", "action", "hybrid"]
+    assert schema["properties"]["existing_ref"]["type"] == "string"
+    assert "init" in schema["$defs"]["semantics"]["properties"]
 
 
 def test_semantic_compile_accepts_entity_only_doc():

@@ -26,6 +26,7 @@ from typing import Any, Callable
 from compile import GovernorSignal, is_mutate, is_observe
 from step import Epistemic, Gap, Step
 import manifest_engine as me
+from tools import st_builder as st_builder_module
 
 
 @dataclass
@@ -104,6 +105,14 @@ def _pattern_tool_params(gap: Gap) -> dict[str, str] | None:
     if path:
         params["path"] = path
     return params
+
+
+def _entity_target_for_reprogramme(gap: Gap, registry: Any) -> Any | None:
+    for ref in gap.content_refs:
+        skill = registry.resolve(ref)
+        if skill is not None:
+            return skill
+    return None
 
 
 def execute_iteration(
@@ -650,6 +659,7 @@ def execute_iteration(
 
     elif vocab == "reprogramme_needed":
         print(f"  → reprogramme ({vocab})")
+        target_entity = _entity_target_for_reprogramme(gap, registry)
         entity_data = hooks.resolve_entity(gap.content_refs, registry, trajectory)
         if entity_data:
             session.inject(f"## Existing entity data\n{entity_data}")
@@ -683,21 +693,46 @@ def execute_iteration(
             )
         cmd_list = "\n".join(cmd_lines) if cmd_lines else "  (none)"
         session.inject(f"## Step Network\n{hooks.render_step_network(registry)}")
+        if target_entity is not None and target_entity.payload:
+            frame = st_builder_module.semantic_skeleton_from_st(
+                target_entity.payload,
+                existing_ref=target_entity.hash,
+            )
+        else:
+            inferred_kind = "hybrid" if any(token in gap.desc.lower() for token in ("workflow", "flow", "command", ".st package")) else "entity"
+            frame = st_builder_module.blank_semantic_skeleton(
+                name=(target_entity.name if target_entity is not None else "entity_name"),
+                desc=gap.desc,
+                trigger=(target_entity.trigger if target_entity is not None else "manual"),
+                artifact_kind=inferred_kind,
+            )
+        session.inject(
+            "## Editable semantic frame\n"
+            "Edit this frame in place. Keep structure unless the user explicitly asked to change it.\n"
+            f"{json.dumps(frame, indent=2)}"
+        )
         raw = session.call(
             f"You need to reprogramme your knowledge: gap:{gap.hash} \"{gap.desc}\"\n\n"
             "## Known entities (reference by hash, use as building blocks)\n"
             f"{entity_list}\n\n"
             "## Available /command workflows\n"
             f"{cmd_list}\n\n"
-            "## Compose semantic state for a .st package\n\n"
+            "## Edit the semantic frame\n\n"
             "Treat .st as step manifestation, not as plain file content.\n"
-            "Your job here is to persist semantic state that keeps the system informed over time.\n\n"
+            "Your job here is to edit the surfaced semantic frame so the persisted state stays structurally stable over time.\n\n"
             "### Structural distinction\n"
             "- entity.st: manifests primarily as semantic/context injection.\n"
             "- action.st: manifests primarily as executable step flow.\n"
             "- In this branch you may create or update entity state directly.\n"
             "- You may only edit an existing action package if the user explicitly asked.\n"
             "- You may not originate a new action workflow here.\n\n"
+            "### Frame contract\n"
+            "- Return JSON only.\n"
+            "- Use semantic_skeleton.v1 as the author-time frame.\n"
+            "- This uses the same primitive flow shape as reason-built chains: root + phases + closure.\n"
+            "- For semantic-only entity updates, edit semantics and keep artifact.kind = entity.\n"
+            "- For packages that also carry flow, edit root/phases/closure rather than freehand step blobs.\n"
+            "- The persistence layer will lower this frame back into the current .st runtime format.\n\n"
             "### What reprogramme is for\n"
             "Use this branch to persist:\n"
             "- people, identities, preferences, communication style\n"
@@ -710,6 +745,17 @@ def execute_iteration(
             "- Domain/compliance: constraints + sources + scope\n"
             "- Concepts: refs linking to related entity or chain hashes\n"
             "- Existing action updates: preserve explicit steps and refs; do not invent new workflow vocab\n\n"
+            "### Entity format continuity\n"
+            "When updating an existing entity, preserve its established file shape unless the user explicitly asked to change structure.\n"
+            "- Preserve trigger, refs, and deterministic steps by default.\n"
+            "- Preserve access_rules, init state, and other scaffolding fields that already exist.\n"
+            "- Prefer additive semantic updates over rewriting desc or collapsing structure.\n"
+            "- Do not replace a structured entity with an empty flow unless the user explicitly wants that simplification.\n"
+            "- If you are updating an existing entity package, keep its manifestation pattern stable.\n\n"
+            "### Contact identity continuity\n"
+            "- If this gap is about updating an existing user/contact identity, update that existing entity in place.\n"
+            "- Do not create a second on_contact entity for the same external contact.\n"
+            "- Reuse the existing trigger and include existing_ref when you are updating a known entity.\n\n"
             "### Composition rule\n"
             "Compose from existing entities and workflows first. Reuse known hashes where possible.\n"
             "If you need executable structure, reference an existing action or chain package by hash.\n"
@@ -717,7 +763,7 @@ def execute_iteration(
             "### Runtime note\n"
             "Entity-like packages usually manifest as semantic injection when resolved.\n"
             "Action-like packages belong to the structural workflow side of the system.\n"
-            "Current persistence path still writes JSON .st files through st_builder.\n\n"
+            "Current persistence path writes JSON .st files through st_builder after lowering the semantic frame.\n\n"
             "### Entity references\n"
             "Reference other entities by hash, not name.\n"
             'Use refs to map names to hashes: {"admin": "72b1d5ffc964"}\n\n'
@@ -726,22 +772,23 @@ def execute_iteration(
             "- on_contact:X: fires when user X messages\n"
             "- command:X: hidden from LLM, triggered via /X command only\n\n"
             "```json\n"
-            '{"artifact_kind": "entity | action_update | hybrid_update",\n'
+            '{"version": "semantic_skeleton.v1",\n'
+            ' "artifact": {"kind": "entity | action | hybrid", "protected_kind": "entity | action", "lineage": "stable_name", "version_strategy": "hash_pinned"},\n'
             ' "name": "entity_name", "desc": "what this semantic package is",\n'
             ' "trigger": "manual | on_contact:X | command:X",\n'
             ' "refs": {"entity_name": "entity_hash", "chain_name": "chain_hash"},\n'
-            ' "existing_ref": "required only for action_update/hybrid_update",\n'
-            ' "steps": [\n'
-            '   {"action": "step_name", "desc": "what this existing step does",\n'
-            '    "vocab": "hash_resolve_needed", "post_diff": false, "resolve": ["hash"]}\n'
-            ' ],\n'
-            ' "identity": {}, "preferences": {}, "constraints": {}, "sources": [], "scope": ""}\n'
+            ' "existing_ref": "include when updating a known entity",\n'
+            ' "semantics": {"identity": {}, "preferences": {}, "constraints": {}, "sources": [], "scope": ""},\n'
+            ' "root": "phase_root", "phases": [], "closure": {}}\n'
             "```\n"
             "Only include fields relevant to this semantic package. Omit empty fields.\n"
-            "Do not invent new action workflows here. For executable updates, include existing_ref."
+            "Do not invent new action workflows here. For executable updates, include existing_ref and edit the existing flow."
         )
         print(f"  LLM compose: {raw[:150]}...")
         intent = hooks.extract_json(raw)
+        if isinstance(intent, dict) and target_entity is not None:
+            intent.setdefault("existing_ref", target_entity.hash)
+            intent.setdefault("trigger", target_entity.trigger)
         if hooks.is_reprogramme_intent(intent):
             output, code = hooks.execute_tool("tools/st_builder.py", intent)
             print(f"  st_builder: {output[:150]}")
@@ -751,7 +798,6 @@ def execute_iteration(
                 paths=[written_path] if written_path else None,
             )
             if commit_sha:
-                compiler.record_background_trigger(entry.chain_id)
                 print(f"  → committed: {commit_sha}")
                 step_result = Step.create(
                     desc=f"reprogrammed: {gap.desc}",
