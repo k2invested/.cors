@@ -1,9 +1,15 @@
 {
   "name": "clinton",
-  "desc": "Cyber security developer who worked with admin (kenny) on v3. Previously based in Lagos, now based in London and currently staying in Northampton while studying. Prefers async communication.",
+  "desc": "Cyber security developer who worked with admin (kenny) on v3. Previously based in Lagos, now lives in London and is currently staying in Northampton while studying. Prefers async communication.",
   "trigger": "on_contact:admin | manual",
   "refs": {
     "admin": "72b1d5ffc964"
+  },
+  "artifact": {
+    "kind": "entity",
+    "protected_kind": "entity",
+    "lineage": "clinton",
+    "version_strategy": "hash_pinned"
   },
   "identity": {
     "role": "cyber security developer",
