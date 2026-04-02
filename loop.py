@@ -1338,7 +1338,7 @@ def run_turn(
     for g in origin_gaps:
         g.turn_id = current_turn
 
-    discord_contact = contact_id.startswith("discord:")
+    discord_contact = _is_bound_discord_profile(contact_id, identity_skill)
     if discord_contact and origin_gaps:
         origin_gaps, pruned_origin = _filter_discord_gaps(origin_gaps)
         origin_step.gaps = origin_gaps
@@ -1356,7 +1356,7 @@ def run_turn(
             print(f"  → {readmitted} cross-turn gap(s) re-admitted")
 
     if not origin_gaps and not dangling:
-        if contact_id.startswith("discord:"):
+        if discord_contact:
             sync_step = _run_no_gap_discord_profile_sync(
                 contact_id,
                 user_message,
@@ -1823,6 +1823,16 @@ def _discord_gap_is_allowed(gap: Gap) -> bool:
     return bool(gap.vocab) and is_observe(gap.vocab)
 
 
+def _is_bound_discord_profile(contact_id: str, identity_skill: Skill | None) -> bool:
+    if not contact_id.startswith("discord:"):
+        return False
+    if identity_skill is None or not _is_entity_source(identity_skill.source):
+        return False
+    if Path(identity_skill.source).name == "admin.st" or identity_skill.name == "admin":
+        return False
+    return identity_skill.trigger == f"on_contact:{contact_id}"
+
+
 def _filter_discord_gaps(gaps: list[Gap]) -> tuple[list[Gap], int]:
     kept: list[Gap] = []
     pruned = 0
@@ -2009,11 +2019,7 @@ def _run_no_gap_discord_profile_sync(
     - only runs when the natural first step surfaced no gaps
     - does not emit new live gaps; it either commits an in-place update or no-ops
     """
-    if not contact_id.startswith("discord:"):
-        return None
-    if identity_skill is None or not _is_entity_source(identity_skill.source):
-        return None
-    if identity_skill.trigger != f"on_contact:{contact_id}":
+    if not _is_bound_discord_profile(contact_id, identity_skill):
         return None
     if not identity_skill.payload:
         return None
@@ -2051,6 +2057,9 @@ def _run_no_gap_discord_profile_sync(
         "- Use existing_ref and update the current entity in place.\n"
         "- Preserve trigger, identity bindings, access_rules, init, refs, and entity shape.\n"
         "- Persist only stable facts, corrections, preferences, goals, or durable context learned from this turn.\n"
+        "- Prefer the latest explicit first-person statement over stale historical ambiguity.\n"
+        "- If the latest message states identity, role, work history, health context, goals, or preferences in first person, treat those as durable unless clearly temporary.\n"
+        "- If the latest message fills a pending profile field, update the entity instead of returning noop.\n"
         "- Do not ask questions.\n"
         "- Do not emit gaps.\n"
     )

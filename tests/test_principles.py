@@ -543,6 +543,8 @@ P5_CASES = [
     ("init_user_intent_sets_identity_name_from_profile", lambda: loop._build_init_user_intent("discord:123", "hi", contact_profile={"username": "courtney"})["identity"]["name"] == "courtney"),
     ("contact_trigger_filename_uses_username", lambda: st_builder_module.contact_filename_for_st({"trigger": "on_contact:discord:123", "identity": {"username": "courtney"}, "name": "courtney"}) == "courtney.st"),
     ("init_user_intent_sets_discord_id_as_identifier", lambda: loop._build_init_user_intent("discord:123", "hi", contact_profile={"username": "courtney"})["identity"]["discord_user_id"] == "123"),
+    ("bound_discord_profile_requires_on_contact_entity", lambda: loop._is_bound_discord_profile("discord:123", bootstrap_identity_skill())),
+    ("bound_discord_profile_excludes_admin", lambda: loop._is_bound_discord_profile("discord:784778107013431296", skill("admin")) is False),
     ("reprogramme_intent_accepts_semantic_skeleton", lambda: loop._is_reprogramme_intent({
         "version": "semantic_skeleton.v1",
         "artifact": {"kind": "entity"},
