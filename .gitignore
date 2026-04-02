@@ -5,3 +5,5 @@ trajectory.json
 chains/
 trajectory.json
 chains.json
+.env
+.env.*
