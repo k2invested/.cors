@@ -293,6 +293,26 @@ def _inject_reason_parent_context(*, session: Any, reason_skill: Any) -> None:
     )
 
 
+def _inferred_action_name_from_gap(gap: Gap) -> str:
+    lowered = gap.desc.lower()
+    path_match = re.search(r"skills/actions/([a-z0-9_]+)\.st", lowered)
+    if path_match:
+        return path_match.group(1)
+    trigger_match = re.search(r"triggered by(?: the vocab(?: term)?)? ([a-z_]+)", lowered)
+    if trigger_match:
+        name = trigger_match.group(1)
+        if name.endswith("_needed"):
+            return name[:-7]
+        return name
+    words = re.findall(r"[a-z0-9_]+", lowered)
+    for token in words:
+        if token in {"workflow", "step", "package", "semantic", "triggered", "research_needed"}:
+            continue
+        if token.endswith("_needed"):
+            return token[:-7]
+    return "new_action"
+
+
 def _collect_clarify_frontier(compiler: Any, current_gap: Gap, *, current_turn: int | None = None) -> list[Gap]:
     merged: list[Gap] = []
     seen: set[str] = set()
@@ -840,25 +860,121 @@ def execute_iteration(
             )
         if resolved_data:
             session.inject(f"## Context\n{resolved_data}")
+        if author_actions:
+            inferred_name = _inferred_action_name_from_gap(gap)
+            inferred_trigger = "manual"
+            trigger_match = re.search(r"\b([a-z_]+_needed)\b", gap.desc.lower())
+            if trigger_match:
+                inferred_trigger = f"on_vocab:{trigger_match.group(1)}"
+            frame = st_builder_module.blank_semantic_skeleton(
+                name=inferred_name,
+                desc=gap.desc,
+                trigger=inferred_trigger,
+                artifact_kind="action",
+            )
+            session.inject(
+                "## Editable Action Skeleton\n"
+                "Return JSON only. Author the new action/workflow directly through this semantic_skeleton.v1 frame.\n"
+                f"{json.dumps(frame, indent=2)}"
+            )
         raw = session.call(
             f"Reason inline about: gap:{gap.hash} \"{gap.desc}\".\n"
             "Choose the next lawful move in the current turn.\n"
             "- If judgment is enough, emit the next clarified gap(s) or no gaps.\n"
-            f"- {'If this is new skills/actions/*.st origination, you own workflow authoring. Actualize it through the semantic_skeleton/reprogramme path; do not emit another generic create/write file gap.' if author_actions else 'If new reusable workflow structure is needed, author the concrete creation/update gap(s) needed to actualize it.'}\n"
+            f"- {'If this is new skills/actions/*.st origination, you own workflow authoring. Return a concrete semantic_skeleton.v1 action package and actualize it now; do not emit another generic create/write file gap.' if author_actions else 'If new reusable workflow structure is needed, author the concrete creation/update gap(s) needed to actualize it.'}\n"
             "- If an existing workflow should be triggered, emit the activation gap(s) for that path.\n"
-            f"{'- For new action/workflow packages, emit a concrete reprogramme_needed actualization gap that carries the authored structure forward. Do not restate the request as content_needed or hash_edit_needed.\n' if author_actions else ''}"
+            f"{'- For new action/workflow packages, return only semantic_skeleton.v1 JSON with artifact.kind=action or hybrid. Do not restate the request as content_needed, hash_edit_needed, or reprogramme_needed.\n' if author_actions else ''}"
             "Keep reasoning stateful and current-turn; do not defer by scheduling background work unless a later gap explicitly does so."
         )
-        step_result, child_gaps = hooks.parse_step_output(
-            raw,
-            step_refs=[origin_step.hash],
-            content_refs=gap.content_refs,
-            chain_id=entry.chain_id,
-        )
-        if child_gaps:
-            compiler.emit(step_result)
+        intent = hooks.extract_json(raw)
+        if author_actions and isinstance(intent, dict):
+            artifact = intent.get("artifact", {}) or {}
+            if intent.get("version") == "semantic_skeleton.v1" and artifact.get("kind") in {"action", "hybrid"}:
+                output, code = hooks.execute_tool("tools/st_builder.py", intent)
+                print(f"  st_builder: {output[:150]}")
+                written_path = hooks.extract_written_path(output)
+                commit_sha = None
+                if code == 0 and written_path:
+                    commit_sha, _ = hooks.auto_commit(
+                        f"reason actualized workflow: {gap.desc[:50]}",
+                        paths=[written_path],
+                    )
+                if commit_sha:
+                    print(f"  → committed: {commit_sha}")
+                    step_result = Step.create(
+                        desc=f"reason actualized workflow: {gap.desc}",
+                        step_refs=[origin_step.hash],
+                        content_refs=gap.content_refs,
+                        commit=commit_sha,
+                        chain_id=entry.chain_id,
+                    )
+                    commit_path = None
+                    try:
+                        commit_path = str(Path(written_path).resolve().relative_to(config.cors_root))
+                    except ValueError:
+                        commit_path = written_path
+                    postcond_refs = [f"{commit_sha}:{commit_path}"] if commit_path else [commit_sha]
+                    postcond = Gap.create(
+                        desc=f"observe workflow actualization commit:{commit_sha}",
+                        content_refs=postcond_refs,
+                        step_refs=[step_result.hash],
+                    )
+                    postcond.scores = Epistemic(relevance=1.0, confidence=1.0, grounded=0.0)
+                    postcond.vocab = "hash_resolve_needed"
+                    assessment_lines = hooks.commit_assessment(commit_sha)
+                    postcond_step = Step.create(
+                        desc=f"postcondition: {gap.desc}",
+                        step_refs=[step_result.hash],
+                        content_refs=postcond_refs,
+                        gaps=[postcond],
+                        chain_id=entry.chain_id,
+                        assessment=assessment_lines,
+                    )
+                    trajectory.append(postcond_step)
+                    compiler.emit(postcond_step)
+                    compiler.resolve_current_gap(gap.hash)
+                    print(f"  → postcondition gap injected: hash_resolve_needed → {postcond_refs}")
+                    if assessment_lines:
+                        print("  → postcondition assessment:")
+                        for line in assessment_lines:
+                            print(f"    {line}")
+                else:
+                    if code != 0:
+                        session.inject(f"## ST BUILDER FAILED\n{output}")
+                    step_result = _emit_rogue_with_diagnosis(
+                        desc=f"reason actualization failed: {gap.desc}",
+                        origin_step=origin_step,
+                        gap=gap,
+                        chain_id=entry.chain_id,
+                        rogue_kind="validation_error" if code != 0 else "manifest_failure",
+                        failure_source="st_builder",
+                        trajectory=trajectory,
+                        compiler=compiler,
+                        failure_detail=output[:500] if output else None,
+                    )
+                    compiler.resolve_current_gap(gap.hash)
+            else:
+                step_result, child_gaps = hooks.parse_step_output(
+                    raw,
+                    step_refs=[origin_step.hash],
+                    content_refs=gap.content_refs,
+                    chain_id=entry.chain_id,
+                )
+                if child_gaps:
+                    compiler.emit(step_result)
+                else:
+                    compiler.resolve_current_gap(gap.hash)
         else:
-            compiler.resolve_current_gap(gap.hash)
+            step_result, child_gaps = hooks.parse_step_output(
+                raw,
+                step_refs=[origin_step.hash],
+                content_refs=gap.content_refs,
+                chain_id=entry.chain_id,
+            )
+            if child_gaps:
+                compiler.emit(step_result)
+            else:
+                compiler.resolve_current_gap(gap.hash)
 
     elif vocab == "await_needed":
         print("  → await (pause codon)")

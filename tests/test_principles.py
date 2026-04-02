@@ -1903,6 +1903,97 @@ def test_p12_reason_needed_runs_inline_and_emits_child_gaps():
     assert compiler.ledger.stack[-1].gap.vocab == "content_needed"
 
 
+def test_p12_reason_needed_can_actualize_new_action_skeleton():
+    class FakeSession:
+        def __init__(self):
+            self.calls = 0
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            self.calls += 1
+            return json.dumps({
+                "version": "semantic_skeleton.v1",
+                "artifact": {"kind": "action", "protected_kind": "action", "lineage": "research", "version_strategy": "hash_pinned"},
+                "name": "research",
+                "desc": "Research workflow",
+                "trigger": "on_vocab:research_needed",
+                "refs": {},
+                "root": "phase_root",
+                "phases": [
+                    {
+                        "id": "phase_root",
+                        "label": "Observe request",
+                        "source_step": {
+                            "action": "observe_request",
+                            "desc": "Observe the research request and scope it.",
+                            "vocab": "hash_resolve_needed",
+                            "relevance": 1.0,
+                            "post_diff": False,
+                        },
+                    }
+                ],
+                "closure": {"success": {}},
+            })
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap(
+        "Create a new workflow file at skills/actions/research.st that implements a research workflow triggered by the vocab research_needed.",
+        vocab="reason_needed",
+    )
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("Written: /Users/k2invested/Desktop/cors/skills/actions/research.st", 0),
+        auto_commit=lambda message, paths=None: ("abc123", None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=loop._is_reprogramme_intent,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=loop._emit_reason_skill,
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: ["skills/actions/research.st [step] +10 -0"],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert outcome.step_result.commit == "abc123"
+    assert outcome.step_result.desc.startswith("reason actualized workflow:")
+    assert compiler.ledger.stack[-1].gap.vocab == "hash_resolve_needed"
+    assert any("Editable Action Skeleton" in content for content in session.injected)
+
+
 def test_p12_reprogramme_failure_does_not_commit_without_written_path():
     class FakeSession:
         def __init__(self):

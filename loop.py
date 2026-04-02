@@ -1421,6 +1421,9 @@ def run_turn(
             forced_synth = False
             break
 
+        if outcome.step_result and outcome.step_result.commit and outcome.step_result.commit not in turn_facts["commits"]:
+            turn_facts["commits"].append(outcome.step_result.commit)
+
         if discord_contact:
             pruned_runtime = _prune_discord_ledger(compiler)
             if pruned_runtime:
