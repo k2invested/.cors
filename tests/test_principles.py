@@ -940,7 +940,7 @@ P13_CASES = [
 P13_CASES += [
     ("root_skills_only_admin", lambda: sorted(path.name for path in SKILLS_DIR.glob("*.st")) == ["admin.st"]),
     ("action_tree_contains_curated_actions", lambda: sorted(path.name for path in (SKILLS_DIR / "actions").glob("*.st")) == ["architect.st", "debug.st", "hash_edit.st"]),
-    ("entity_tree_contains_runtime_entities", lambda: sorted(path.name for path in (SKILLS_DIR / "entities").glob("*.st")) == ["clinton.st", "cors_ui.st", "top_rate_estates_ltd.st"]),
+    ("entity_tree_contains_runtime_entities", lambda: {"clinton.st", "cors_ui.st", "top_rate_estates_ltd.st"}.issubset({path.name for path in (SKILLS_DIR / "entities").glob("*.st")})),
     ("codon_tree_contains_bridge_and_spec", lambda: sorted(path.name for path in (SKILLS_DIR / "codons").glob("*.st")) == ["await.st", "commit.st", "commitment_chain_construction_spec.st", "reason.st", "reprogramme.st"]),
     ("loader_treats_admin_as_entity", lambda: skill("admin").artifact_kind == "entity"),
     ("loader_treats_hash_edit_as_action", lambda: skill("hash_edit").artifact_kind == "action"),
@@ -1269,6 +1269,53 @@ def test_p12_bootstrap_contact_entity_creates_first_contact_step(monkeypatch):
     assert step.commit == "abc123"
     assert step.desc == "reprogrammed bootstrap: user_discord_123"
     assert step.content_refs == ["abc123"]
+
+
+def test_p12_run_turn_bootstraps_unknown_contact_even_on_no_gap_turn(monkeypatch, tmp_path):
+    class FakeSession:
+        def set_system(self, content: str):
+            pass
+
+        def inject(self, content: str, role: str = "user"):
+            pass
+
+        def call(self, user_content: str = None) -> str:
+            return "No gaps."
+
+    synth_facts = {}
+
+    monkeypatch.setattr(loop, "Session", lambda model=None: FakeSession())
+    monkeypatch.setattr(loop, "load_all", lambda path: registry())
+    monkeypatch.setattr(loop, "git_head", lambda: "abc123")
+    monkeypatch.setattr(loop, "git_tree", lambda: "head tree")
+    monkeypatch.setattr(loop, "_find_dangling_gaps", lambda trajectory: [])
+    monkeypatch.setattr(loop, "_parse_step_output", lambda raw, step_refs, content_refs: (make_step("origin"), []))
+    monkeypatch.setattr(loop, "_find_identity_skill", lambda contact_id, registry_obj: None)
+    monkeypatch.setattr(loop, "_save_turn", lambda trajectory, state=None: None)
+
+    def fake_bootstrap(registry_obj, contact_id, user_message):
+        assert contact_id == "discord:123"
+        assert user_message == "Hey"
+        return make_step("reprogrammed bootstrap: user_discord_123", commit="boot123", content_refs=["boot123"])
+
+    def fake_synth(session, user_message, turn_facts=None):
+        synth_facts.update(turn_facts or {})
+        return "hello"
+
+    monkeypatch.setattr(loop, "_bootstrap_contact_entity", fake_bootstrap)
+    monkeypatch.setattr(loop, "_synthesize", fake_synth)
+
+    response = loop.run_turn(
+        "Hey",
+        "discord:123",
+        traj_file=tmp_path / "trajectory.json",
+        chains_file=tmp_path / "chains.json",
+        chains_dir=tmp_path / "chains",
+    )
+
+    assert response == "hello"
+    assert synth_facts["commits"] == ["boot123"]
+    assert synth_facts["successful_mutations"] == ["reprogrammed bootstrap: user_discord_123"]
 
 
 def test_p12_inline_reprogramme_does_not_trigger_heartbeat():

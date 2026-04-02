@@ -1333,6 +1333,12 @@ def run_turn(
             print(f"  → {readmitted} cross-turn gap(s) re-admitted")
 
     if not origin_gaps and not dangling:
+        reprogramme_step = _bootstrap_contact_entity(registry, contact_id, user_message)
+        if reprogramme_step:
+            trajectory.append(reprogramme_step)
+            if reprogramme_step.commit:
+                turn_facts["commits"].append(reprogramme_step.commit)
+                turn_facts["successful_mutations"].append(reprogramme_step.desc)
         # No gaps → auto-synthesize
         print("\n── AUTO-SYNTH (no gaps) ──")
         response = _synthesize(session, user_message, turn_facts)
@@ -1413,6 +1419,9 @@ def run_turn(
     reprogramme_step = _bootstrap_contact_entity(registry, contact_id, user_message)
     if reprogramme_step:
         trajectory.append(reprogramme_step)
+        if reprogramme_step.commit:
+            turn_facts["commits"].append(reprogramme_step.commit)
+            turn_facts["successful_mutations"].append(reprogramme_step.desc)
 
     # ── 7. SYNTHESIS ─────────────────────────────────────────────────
 
