@@ -1,14 +1,13 @@
 {
   "name": "admin",
-  "desc": "Kenny's identity and preferences for system orchestration, communication, architecture, and workflow. Includes explicit preferences for reasoning and clarification handling.",
+  "desc": "Kenny — system architect, step kernel builder, primary admin user",
   "trigger": "on_contact:discord:784778107013431296",
-  "author": "agent",
   "refs": {
-    "commitment_chain_construction_spec": "eefcf9ff7e17",
-    "clinton": "e4ac2f28e8bc",
-    "cors_ui": "052eee58c273"
+    "identity": null,
+    "principles": null,
+    "recent_chains": null,
+    "commitments": null
   },
-  "steps": [],
   "identity": {
     "name": "Kenny",
     "role": "architect",
@@ -64,5 +63,39 @@
       ],
       "do_not_ask_for_clarification_without_reasoning_first": true
     }
-  }
+  },
+  "steps": [
+    {
+      "action": "load_identity",
+      "desc": "surface who Kenny is, how he thinks, how he works",
+      "resolve": [
+        "identity"
+      ],
+      "post_diff": false
+    },
+    {
+      "action": "load_principles",
+      "desc": "surface system principles Kenny defined — step primitive, OMO, hash layers",
+      "resolve": [
+        "principles"
+      ],
+      "post_diff": false
+    },
+    {
+      "action": "load_recent",
+      "desc": "surface recent reasoning chains from prior interactions",
+      "resolve": [
+        "recent_chains"
+      ],
+      "post_diff": false
+    },
+    {
+      "action": "load_commitments",
+      "desc": "surface active commitments and tracked work",
+      "resolve": [
+        "commitments"
+      ],
+      "post_diff": false
+    }
+  ]
 }

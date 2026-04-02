@@ -1,1 +1,36 @@
 /opt/homebrew/Cellar/python@3.14/3.14.2_1/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python: can't open file '/Users/k2invested/Desktop/cors/discord_bot.py': [Errno 2] No such file or directory
+2026-04-02 02:37:38,582 WARNING PyNaCl is not installed, voice will NOT be supported
+2026-04-02 02:37:38,582 WARNING davey is not installed, voice will NOT be supported
+2026-04-02 02:37:38,582 INFO logging in using static token
+2026-04-02 02:37:39,514 INFO Shard ID None has connected to Gateway (Session ID: e94e18fcd2e431386e9714317ce8a354).
+2026-04-02 02:37:41,518 INFO Discord bot logged in as CORS#3301 (1485671996435202128)
+2026-04-02 02:37:41,519 INFO Discord bot config require_mention=False allowed_channel_ids=[]
+2026-04-02 02:37:47,280 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=5
+2026-04-02 02:37:47,282 INFO discord transport command command='/wipe'
+2026-04-02 02:37:47,439 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=16
+2026-04-02 02:37:47,439 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:37:50,283 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=3
+2026-04-02 02:37:50,283 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='Hey'
+2026-04-02 02:37:52,884 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:37:54,524 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:37:54,710 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=10
+2026-04-02 02:37:54,710 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:38:04,863 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=24
+2026-04-02 02:38:04,863 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='What are my preferences?'
+2026-04-02 02:38:08,242 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:38:11,213 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:38:11,423 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=613
+2026-04-02 02:38:11,423 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:41:33,145 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=198
+2026-04-02 02:41:33,145 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content="Can you please add a preference saying that you should surface reprogram proactively when you learn preferences I may have and update them on my admin.st file even whenI don't explicitly tell you to"
+2026-04-02 02:41:36,193 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:41:38,163 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:41:38,333 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=328
+2026-04-02 02:41:38,333 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 02:43:36,848 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=548
+2026-04-02 02:43:36,848 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='Can you also add a preference that says you should surface reason_needed for open decisions, planning, and judgement under uncertainty/complexity. If ambiguity can be reduced by traversing available c'
+2026-04-02 02:43:42,113 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:43:48,213 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:43:51,796 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 02:43:51,982 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=547
+2026-04-02 02:43:51,982 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
