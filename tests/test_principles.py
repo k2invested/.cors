@@ -393,6 +393,7 @@ P4_CASES = [
 P5_CASES = [
     ("registry_loads_admin", lambda: registry().resolve_by_name("admin") is not None),
     ("registry_loads_hash_edit", lambda: registry().resolve_by_name("hash_edit") is not None),
+    ("registry_treats_chain_spec_as_entity", lambda: skill("commitment_chain_construction_spec").artifact_kind == "entity"),
     ("admin_display_name_is_canonical_admin", lambda: skill("admin").display_name == "admin"),
     ("resolve_by_hash_returns_skill", lambda: registry().resolve(skill("admin").hash) == skill("admin")),
     ("hash_edit_skill_exists", lambda: skill("hash_edit").name == "hash_edit"),
@@ -719,6 +720,7 @@ P12_CASES = [
     ("match_policy_exact_path", lambda: loop._match_policy("loop.py", loop._load_tree_policy())["immutable"] is True),
     ("match_policy_prefix_path", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
     ("match_policy_longest_prefix", lambda: loop._match_policy("skills/codons/await.st", loop._load_tree_policy())["on_reject"] == "reason_needed"),
+    ("chain_spec_in_codon_tree_still_resolves_as_entity_source", lambda: loop._is_entity_source("skills/codons/commitment_chain_construction_spec.st")),
     ("execute_tool_missing_file_nonzero", lambda: loop.execute_tool("tools/does_not_exist.py", {})[1] == 1),
     ("find_identity_skill_admin", lambda: loop._find_identity_skill("discord:784778107013431296", registry()) == skill("admin")),
     ("render_identity_has_username", lambda: "username:" in loop._render_identity(skill("admin"))),

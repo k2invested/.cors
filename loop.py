@@ -561,7 +561,7 @@ ENTITY_MANIFEST_FIELDS = {
 
 def _is_entity_source(path: str | Path) -> bool:
     candidate = Path(path)
-    return "entities" in candidate.parts or candidate.name == "admin.st"
+    return "entities" in candidate.parts or candidate.name in {"admin.st", "commitment_chain_construction_spec.st"}
 
 
 def _render_skill_package(skill: Skill) -> str:

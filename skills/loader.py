@@ -30,6 +30,11 @@ SEMANTIC_FIELDS = {
     "entity_refs",
 }
 
+IMMUTABLE_ENTITY_FILES = {
+    "admin.st",
+    "commitment_chain_construction_spec.st",
+}
+
 BASE_SKILL_FIELDS = {
     "name",
     "desc",
@@ -256,9 +261,11 @@ def infer_artifact_kind(data: dict, path: str, is_command: bool) -> str:
     explicit = data.get("artifact_kind")
     if isinstance(explicit, str) and explicit:
         return explicit
+    if Path(path).name in IMMUTABLE_ENTITY_FILES:
+        return "entity"
     if "codons" in Path(path).parts:
         return "codon"
-    if "entities" in Path(path).parts or Path(path).name == "admin.st":
+    if "entities" in Path(path).parts:
         return "entity"
     if "actions" in Path(path).parts:
         return "action"
@@ -363,8 +370,8 @@ def load_all(skills_dir: str = None) -> SkillRegistry:
             skill = load_skill(path)
             if skill:
                 registry.register(skill)
-                # Tag codons for display
-                is_codon = "codons" in root
+                # Tag true codons for display.
+                is_codon = skill.artifact_kind == "codon"
                 tag = " [codon]" if is_codon else ""
                 print(f"  [skills] loaded {skill.name} [{skill.hash}] ({skill.step_count()} steps){tag}")
 

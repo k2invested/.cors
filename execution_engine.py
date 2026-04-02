@@ -227,6 +227,37 @@ def _new_action_origination_requires_reason(
     return route_mode == "action_editor" and target_entity is None and gap.vocab != "reason_needed"
 
 
+def _should_inject_chain_spec_for_reason(gap: Gap) -> bool:
+    lowered = gap.desc.lower()
+    return any(token in lowered for token in (
+        "workflow",
+        "stepchain",
+        "step chain",
+        "chain",
+        "skeleton",
+        "plan",
+        "planning",
+        "manifest",
+        "research",
+    ))
+
+
+def _inject_chain_spec(
+    *,
+    session: Any,
+    registry: Any,
+    trajectory: Any,
+    hooks: ExecutionHooks,
+    heading: str,
+) -> None:
+    spec = registry.resolve_by_name("commitment_chain_construction_spec")
+    if spec is None:
+        return
+    rendered = hooks.resolve_entity([spec.hash], registry, trajectory)
+    if rendered:
+        session.inject(f"{heading}\n{rendered}")
+
+
 def _reprogramme_mode_for_source(path: str | None) -> str | None:
     if not path:
         return None
@@ -712,6 +743,14 @@ def execute_iteration(
             if resolved_data:
                 session.inject(f"## Existing context\n{resolved_data}")
             session.inject(f"## Step Network\n{hooks.render_step_network(registry)}")
+            if _should_inject_chain_spec_for_reason(gap):
+                _inject_chain_spec(
+                    session=session,
+                    registry=registry,
+                    trajectory=trajectory,
+                    hooks=hooks,
+                    heading="## Chain Construction Spec",
+                )
             raw = session.call(
                 "Choose one manifestation for this reason_needed activation.\n"
                 "Return JSON only.\n\n"
@@ -905,6 +944,14 @@ def execute_iteration(
             gap.vocab = "reason_needed"
             compiler.ledger.stack.append(entry)
             return ExecutionOutcome(control="continue")
+        if route_mode == "action_editor":
+            _inject_chain_spec(
+                session=session,
+                registry=registry,
+                trajectory=trajectory,
+                hooks=hooks,
+                heading="## Chain Construction Spec",
+            )
         entity_data = hooks.resolve_entity(gap.content_refs, registry, trajectory)
         if entity_data:
             session.inject(f"## Existing entity data\n{entity_data}")
