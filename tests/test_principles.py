@@ -388,7 +388,7 @@ P4_CASES = [
 P5_CASES = [
     ("registry_loads_admin", lambda: registry().resolve_by_name("admin") is not None),
     ("registry_loads_hash_edit", lambda: registry().resolve_by_name("hash_edit") is not None),
-    ("admin_display_name_is_identity_name", lambda: skill("admin").display_name == "kenny"),
+    ("admin_display_name_is_canonical_admin", lambda: skill("admin").display_name == "admin"),
     ("resolve_by_hash_returns_skill", lambda: registry().resolve(skill("admin").hash) == skill("admin")),
     ("hash_edit_skill_exists", lambda: skill("hash_edit").name == "hash_edit"),
     ("render_for_prompt_has_header", lambda: registry().render_for_prompt().startswith("## Available Skills")),
@@ -440,9 +440,9 @@ P6_CASES = [
     ("unsourced_gap_at_threshold_can_enter", lambda: build_origin_context(relevance=0.5, refs=[]).compiler.gap_count() == 1),
     ("tag_ref_prefixes_step_layer", lambda: Trajectory()._tag_ref("abc123", "step") == "step:abc123"),
     ("tag_ref_leaves_content_bare", lambda: Trajectory()._tag_ref("abc123", "content") == "abc123"),
-    ("tag_ref_uses_registry_name", lambda: build_chain_context().traj._tag_ref(skill("admin").hash, "content", registry()).startswith("kenny:")),
+    ("tag_ref_uses_registry_name", lambda: build_chain_context().traj._tag_ref(skill("admin").hash, "content", registry()).startswith("admin:")),
     ("render_refs_combines_layers", lambda: "step:parent" in Trajectory()._render_refs(["parent"], ["blob"], None) and "blob" in Trajectory()._render_refs(["parent"], ["blob"], None)),
-    ("render_recent_names_skill_hashes", lambda: "kenny:" in build_chain_context().traj.render_recent(5, registry())),
+    ("render_recent_names_skill_hashes", lambda: "admin:" in build_chain_context().traj.render_recent(5, registry())),
     ("resolve_hash_renders_step_branch", lambda: (lambda ctx: "step:" in loop.resolve_hash(ctx.step1.hash, ctx.traj))(build_chain_context())),
     ("resolve_hash_renders_gap_tree", lambda: (lambda ctx: "gap:" in loop.resolve_hash(ctx.gap.hash, ctx.traj))(build_chain_context())),
     ("resolve_hash_returns_none_for_unknown", lambda: loop.resolve_hash("not_a_real_hash", Trajectory()) is None),
@@ -862,7 +862,7 @@ def test_p12_auto_commit_contract_success(monkeypatch):
         ("rev-parse", "--short", "HEAD"): "abc123",
         ("add", "-A"): "",
         ("commit", "-m", "ok"): "",
-        ("diff", "--name-only", "abc123", "abc123"): "",
+        ("diff", "--numstat", "abc123", "abc123"): "5\t4\tloop.py",
     }
 
     def fake_git(cmd, cwd=None):
@@ -884,6 +884,8 @@ def test_p12_auto_commit_scopes_to_selected_paths(monkeypatch):
             return " M skills/admin.st"
         if cmd[:3] == ["rev-parse", "--short", "HEAD"]:
             return "abc123"
+        if cmd == ["diff", "--numstat", "abc123", "abc123"]:
+            return "5\t4\tskills/admin.st"
         return ""
 
     monkeypatch.setattr(loop, "git", fake_git)
@@ -912,6 +914,54 @@ def test_p12_auto_commit_contract_rejection(monkeypatch):
 
     assert loop.auto_commit("bad") == (None, "reason_needed")
     assert ("revert", "--no-commit", "HEAD") in calls
+
+
+def test_p12_auto_commit_notifications_formats_step_and_regular_files(monkeypatch):
+    monkeypatch.setattr(
+        loop,
+        "git",
+        lambda cmd, cwd=None: "5\t4\tloop.py\n8\t2\tskills/admin.st" if cmd == ["diff", "--numstat", "a1", "b2"] else "",
+    )
+    monkeypatch.setattr(
+        loop,
+        "git_show",
+        lambda ref: json.dumps({
+            "name": "admin",
+            "trigger": "on_contact:discord:784778107013431296",
+            "steps": [{"action": "load_identity", "desc": "load", "resolve": ["identity"], "post_diff": False}],
+        }) if ref == "a1:skills/admin.st" else json.dumps({
+            "name": "admin",
+            "trigger": "on_contact:discord:784778107013431296",
+            "steps": [
+                {"action": "load_identity", "desc": "load", "resolve": ["identity"], "post_diff": False},
+                {"action": "persist_pref", "desc": "persist", "vocab": "reprogramme_needed", "post_diff": False},
+            ],
+        }),
+    )
+    assert loop._auto_commit_notifications("a1", "b2") == [
+        "loop.py +5 -4",
+        "skills/admin.st [step] +8 -2",
+        "  structure: artifact=action, steps 1->2, trigger preserved",
+        "  gap-config: persist_pref added surface=reprogramme_needed post_diff=false refs=0",
+    ]
+
+
+def test_p12_step_assessment_notification_reports_unchanged_gap_config():
+    before = {
+        "name": "admin",
+        "trigger": "manual",
+        "steps": [{"action": "load_identity", "desc": "load", "resolve": ["identity"], "post_diff": False}],
+    }
+    after = {
+        "name": "admin",
+        "trigger": "manual",
+        "steps": [{"action": "load_identity", "desc": "load", "resolve": ["identity"], "post_diff": False}],
+        "preferences": {"communication": {"plain_text_only": True}},
+    }
+    assert loop._step_assessment_notification("skills/admin.st", before, after) == [
+        "  structure: artifact=hybrid, steps 1->1, trigger preserved",
+        "  gap-config: unchanged",
+    ]
 
 
 def test_p12_reprogramme_intent_rejects_gap_payload():
@@ -1102,6 +1152,9 @@ def test_p12_st_builder_reuses_existing_contact_trigger_path(tmp_path):
 
     assert path == str(admin_path)
     rewritten = json.loads(admin_path.read_text())
+    assert rewritten["name"] == "admin"
+    assert rewritten["desc"] == "canonical admin"
+    assert rewritten["trigger"] == "on_contact:discord:784778107013431296"
     assert len(rewritten["steps"]) == 1
 
 
@@ -1109,7 +1162,7 @@ def test_p12_resolve_hash_supports_skill_source_path(monkeypatch):
     monkeypatch.setattr(loop, "_skill_registry", registry())
     rendered = loop.resolve_hash("skills/admin.st", Trajectory())
     assert rendered is not None
-    assert "## Entity: kenny:" in rendered
+    assert "## Entity: admin:" in rendered
 
 
 def test_p12_pattern_tool_params_include_path_when_pattern_is_quoted():
@@ -1129,6 +1182,13 @@ def test_p12_canonicalize_content_ref_maps_skill_source_to_hash(monkeypatch):
     skill = registry().resolve_by_name("admin")
     assert skill is not None
     assert loop._canonicalize_content_ref("skills/admin.st") == skill.hash
+
+
+def test_p12_canonicalize_content_ref_maps_named_hash_alias_to_hash(monkeypatch):
+    monkeypatch.setattr(loop, "_skill_registry", registry())
+    skill = registry().resolve_by_name("admin")
+    assert skill is not None
+    assert loop._canonicalize_content_ref(f"kenny:{skill.hash}") == skill.hash
 
 
 def test_p12_canonicalize_content_ref_maps_repo_path_to_head_object_hash(monkeypatch):

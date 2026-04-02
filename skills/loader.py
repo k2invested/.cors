@@ -307,7 +307,10 @@ def load_skill(path: str) -> Skill | None:
         skill_hash = compute_skill_hash(raw)
 
         identity = data.get("identity", {})
-        display = identity.get("name", data["name"]).lower() if identity else data["name"]
+        if Path(path).name == "admin.st" or data["name"] == "admin":
+            display = "admin"
+        else:
+            display = identity.get("name", data["name"]).lower() if identity else data["name"]
 
         trigger = data.get("trigger", "manual")
         is_command = trigger.startswith("command:")

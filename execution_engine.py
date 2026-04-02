@@ -819,6 +819,15 @@ def execute_iteration(
             "Edit this frame in place. Keep structure unless the user explicitly asked to change it.\n"
             f"{json.dumps(frame, indent=2)}"
         )
+        if target_entity is not None and Path(target_entity.source).name == "admin.st":
+            session.inject(
+                "## Canonical admin continuity\n"
+                "admin.st is the official operator init package for this system.\n"
+                "- Do not rename it away from admin.\n"
+                "- Preserve its trigger, deterministic init steps, refs scaffold, and stable init role.\n"
+                "- Treat requested preference changes as additive semantic updates, not a license to rewrite the package shape.\n"
+                "- Do not rewrite desc, lineage, or package identity unless the user explicitly asked.\n"
+            )
         raw = session.call(
             f"You need to reprogramme your knowledge: gap:{gap.hash} \"{gap.desc}\"\n\n"
             "## Known entities (reference by hash, use as building blocks)\n"
@@ -864,6 +873,10 @@ def execute_iteration(
             "- If this gap is about updating an existing user/contact identity, update that existing entity in place.\n"
             "- Do not create a second on_contact entity for the same external contact.\n"
             "- Reuse the existing trigger and include existing_ref when you are updating a known entity.\n\n"
+            "### Canonical admin rule\n"
+            "- admin.st is the official operator init package, not a generic personal note.\n"
+            "- If you are updating admin.st, preserve its package identity as admin and keep the init scaffold stable.\n"
+            "- Limit admin.st changes to additive semantic updates unless the user explicitly requested a structural rewrite.\n\n"
             "### Composition rule\n"
             "Compose from existing entities and workflows first. Reuse known hashes where possible.\n"
             "If you need executable structure, reference an existing action or chain package by hash.\n"

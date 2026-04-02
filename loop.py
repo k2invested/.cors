@@ -237,7 +237,158 @@ def auto_commit(message: str, paths: list[str] | None = None) -> tuple[str | Non
         git(["commit", "-m", f"auto-revert: protected path violation ({', '.join(violations)})"])
         return None, on_reject  # mutation rejected, with optional rejection vocab
 
+    notifications = _auto_commit_notifications(pre_sha, post_sha)
+    if notifications:
+        print("  → commit notification:")
+        for line in notifications:
+            print(f"    {line}")
+
     return post_sha, None
+
+
+def _format_numstat_line(path: str, added: str, removed: str) -> str:
+    marker = " [step]" if path.endswith(".st") else ""
+    return f"{path}{marker} +{added} -{removed}"
+
+
+def _git_show_path(commit_sha: str, path: str) -> str | None:
+    content = git_show(f"{commit_sha}:{path}")
+    if not content or content.startswith("(unresolvable"):
+        return None
+    return content
+
+
+def _load_step_file_at_commit(commit_sha: str, path: str) -> dict | None:
+    raw = _git_show_path(commit_sha, path)
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def _infer_artifact_kind_from_st(data: dict) -> str:
+    artifact = data.get("artifact", {})
+    kind = artifact.get("kind")
+    if kind in {"entity", "action", "hybrid"}:
+        return kind
+    has_flow = bool(data.get("steps")) or bool(data.get("root") and data.get("phases") and data.get("closure"))
+    has_semantics = any(k in data for k in (
+        "identity", "preferences", "constraints", "sources", "scope", "schema",
+        "access_rules", "principles", "boundaries", "domain_knowledge", "entity_refs",
+        "init", "reasoning",
+    ))
+    if has_flow and has_semantics:
+        return "hybrid"
+    if has_flow:
+        return "action"
+    return "entity"
+
+
+def _derive_step_gap_surface(step: dict) -> str:
+    vocab = step.get("vocab")
+    if isinstance(vocab, str) and vocab:
+        return vocab
+    if step.get("resolve"):
+        return "hash_resolve_needed"
+    return "internal"
+
+
+def _derive_step_file_assessment(data: dict) -> dict:
+    steps = data.get("steps", [])
+    if not isinstance(steps, list):
+        steps = []
+    signatures: dict[str, dict] = {}
+    for idx, step in enumerate(steps):
+        action = step.get("action") or f"step_{idx + 1}"
+        signatures[action] = {
+            "surface": _derive_step_gap_surface(step),
+            "post_diff": bool(step.get("post_diff", True)),
+            "resolve_count": len(step.get("resolve", []) or []),
+            "relevance": step.get("relevance"),
+        }
+    return {
+        "name": data.get("name"),
+        "trigger": data.get("trigger"),
+        "artifact_kind": _infer_artifact_kind_from_st(data),
+        "step_count": len(steps),
+        "signatures": signatures,
+    }
+
+
+def _step_assessment_notification(path: str, before: dict | None, after: dict | None) -> list[str]:
+    if after is None:
+        return [f"  assessment: unavailable"]
+
+    before_assessment = _derive_step_file_assessment(before or {})
+    after_assessment = _derive_step_file_assessment(after)
+
+    structure_bits: list[str] = [
+        f"artifact={after_assessment['artifact_kind']}",
+        f"steps {before_assessment['step_count']}->{after_assessment['step_count']}",
+    ]
+    if before is None:
+        structure_bits.append("trigger=new")
+    elif before_assessment["trigger"] == after_assessment["trigger"]:
+        structure_bits.append("trigger preserved")
+    else:
+        structure_bits.append(f"trigger {before_assessment['trigger']}->{after_assessment['trigger']}")
+    lines = [f"  structure: {', '.join(structure_bits)}"]
+
+    before_sigs = before_assessment["signatures"]
+    after_sigs = after_assessment["signatures"]
+    changes: list[str] = []
+    for action in sorted(set(before_sigs) | set(after_sigs)):
+        old = before_sigs.get(action)
+        new = after_sigs.get(action)
+        if old is None and new is not None:
+            changes.append(
+                f"{action} added surface={new['surface']} post_diff={str(new['post_diff']).lower()} refs={new['resolve_count']}"
+            )
+        elif old is not None and new is None:
+            changes.append(f"{action} removed")
+        elif old != new:
+            if old["surface"] != new["surface"]:
+                changes.append(f"{action} surface {old['surface']}->{new['surface']}")
+            if old["post_diff"] != new["post_diff"]:
+                changes.append(f"{action} post_diff {str(old['post_diff']).lower()}->{str(new['post_diff']).lower()}")
+            if old["resolve_count"] != new["resolve_count"]:
+                changes.append(f"{action} refs {old['resolve_count']}->{new['resolve_count']}")
+            if old["relevance"] != new["relevance"] and (old["relevance"] is not None or new["relevance"] is not None):
+                changes.append(f"{action} relevance {old['relevance']}->{new['relevance']}")
+    if changes:
+        lines.extend([f"  gap-config: {change}" for change in changes[:4]])
+        if len(changes) > 4:
+            lines.append(f"  gap-config: +{len(changes) - 4} more changes")
+    else:
+        lines.append("  gap-config: unchanged")
+    return lines
+
+
+def _auto_commit_notifications(pre_commit_sha: str, post_commit_sha: str) -> list[str]:
+    """Render compact post-commit notifications similar to a file diff UI.
+
+    Ordinary files render as `path +N -M`. Step-native files keep the same
+    compact shape but get a `[step]` marker so later layers can replace that
+    branch with validator-derived assessments without changing the envelope.
+    """
+    output = git(["diff", "--numstat", pre_commit_sha, post_commit_sha]).strip()
+    if not output:
+        return []
+
+    notifications: list[str] = []
+    for raw_line in output.splitlines():
+        parts = raw_line.split("\t")
+        if len(parts) != 3:
+            continue
+        added, removed, path = parts
+        notifications.append(_format_numstat_line(path, added, removed))
+        if path.endswith(".st"):
+            before = _load_step_file_at_commit(pre_commit_sha, path)
+            after = _load_step_file_at_commit(post_commit_sha, path)
+            notifications.extend(_step_assessment_notification(path, before, after))
+    return notifications
 
 
 # ── Hash resolution ──────────────────────────────────────────────────────
@@ -413,6 +564,28 @@ def _normalize_repo_ref(ref: str) -> str | None:
         return candidate
 
 
+def _strip_named_hash_alias(ref: str) -> str:
+    """Normalize display aliases like kenny:abcd1234ef56 to the raw hash.
+
+    These aliases are render sugar for humans, not stable identity forms.
+    The deterministic resolver should accept them anywhere a raw content
+    hash would be accepted.
+    """
+    if not isinstance(ref, str):
+        return ref
+    candidate = ref.strip()
+    if not candidate:
+        return candidate
+    if candidate.startswith(("step:", "gap:", "commit:", "blob:", "tree:", "HEAD:")):
+        return candidate
+    if ":" not in candidate:
+        return candidate
+    suffix = candidate.rsplit(":", 1)[1].strip()
+    if re.fullmatch(r"[0-9a-f]{7,64}", suffix):
+        return suffix
+    return candidate
+
+
 def _skill_source_ref_map() -> dict[str, str]:
     mapping: dict[str, str] = {}
     if not _skill_registry:
@@ -434,7 +607,7 @@ def _skill_source_ref_map() -> dict[str, str]:
 def _canonicalize_content_ref(ref: str) -> str:
     if not isinstance(ref, str):
         return ref
-    candidate = ref.strip()
+    candidate = _strip_named_hash_alias(ref.strip())
     if not candidate:
         return candidate
 

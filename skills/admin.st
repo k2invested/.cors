@@ -1,6 +1,6 @@
 {
-  "name": "kenny",
-  "desc": "Identity and preferences for Kenny, system architect and primary admin. Includes communication preferences for Discord/TTS: shape replies for listening, use natural spoken phrasing, short sentences, smooth cadence, minimal formatting, and avoid robotic or overly formal language.",
+  "name": "admin",
+  "desc": "Canonical admin identity, preferences, and init script for Kenny.",
   "trigger": "on_contact:discord:784778107013431296",
   "refs": {
     "identity": null,
@@ -12,7 +12,7 @@
   "artifact": {
     "kind": "entity",
     "protected_kind": "entity",
-    "lineage": "kenny",
+    "lineage": "admin",
     "version_strategy": "hash_pinned"
   },
   "identity": {

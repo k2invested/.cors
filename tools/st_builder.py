@@ -45,6 +45,10 @@ SEMANTIC_FIELDS = {
     "init",
 }
 HEX_REF_RE = re.compile(r"^[0-9a-f]{12}$")
+PRESERVED_MERGE_FIELDS = {
+    *SEMANTIC_FIELDS,
+    "reasoning",
+}
 
 
 def slugify(text: str) -> str:
@@ -66,6 +70,16 @@ def normalize_existing_ref(existing_ref: str | None) -> str | None:
         if HEX_REF_RE.fullmatch(suffix):
             return suffix
     return candidate
+
+
+def _deep_merge_dict(base: dict, overlay: dict) -> dict:
+    merged = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            merged[key] = _deep_merge_dict(base[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 # ── Schema validation ────────────────────────────────────────────────────
@@ -606,8 +620,9 @@ def write_st(st: dict, output_dir: str = None, existing_ref: str | None = None) 
             existing_data = json.loads(Path(existing_path).read_text())
         except (OSError, json.JSONDecodeError):
             existing_data = {}
+        is_canonical_admin = Path(existing_path).name == "admin.st" or existing_data.get("name") == "admin"
 
-        if isinstance(existing_data.get("steps"), list) and existing_data.get("steps") and not st.get("steps"):
+        if isinstance(existing_data.get("steps"), list) and existing_data.get("steps") and (is_canonical_admin or not st.get("steps")):
             st["steps"] = existing_data["steps"]
         if isinstance(existing_data.get("refs"), dict):
             merged_refs = dict(existing_data.get("refs", {}))
@@ -616,9 +631,17 @@ def write_st(st: dict, output_dir: str = None, existing_ref: str | None = None) 
         for key in ("artifact", "root", "phases", "closure"):
             if key in existing_data and key not in st:
                 st[key] = existing_data[key]
-        for key in SEMANTIC_FIELDS:
-            if key in existing_data and key not in st:
+        for key in PRESERVED_MERGE_FIELDS:
+            if key in existing_data and key in st and isinstance(existing_data[key], dict) and isinstance(st[key], dict):
+                st[key] = _deep_merge_dict(existing_data[key], st[key])
+            elif key in existing_data and key not in st:
                 st[key] = existing_data[key]
+        if is_canonical_admin:
+            st["name"] = "admin"
+            if "trigger" in existing_data:
+                st["trigger"] = existing_data["trigger"]
+            if "desc" in existing_data:
+                st["desc"] = existing_data["desc"]
     else:
         name = st.get("name", "untitled")
         filename = re.sub(r'[^a-z0-9_]', '_', name.lower()) + ".st"
