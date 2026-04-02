@@ -347,6 +347,7 @@ P3_CASES = [
     ("priority_await_before_commit", lambda: vocab_priority("await_needed") < vocab_priority("commit_needed")),
     ("priority_commit_before_reprogramme", lambda: vocab_priority("commit_needed") < vocab_priority("reprogramme_needed")),
     ("tree_policy_skills_reroutes_reprogramme", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
+    ("tree_policy_entities_reroutes_reprogramme", lambda: loop._match_policy("skills/entities/clinton.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
     ("tree_policy_exact_match_compile_immutable", lambda: loop._match_policy("compile.py", loop._load_tree_policy())["immutable"] is True),
     ("tree_policy_longest_prefix_wins", lambda: loop._match_policy("skills/codons/reason.st", loop._load_tree_policy())["on_reject"] == "reason_needed"),
 ]
@@ -415,6 +416,7 @@ P5_CASES = [
     ("validate_st_rejects_unknown_runtime_vocab", lambda: any("invalid runtime vocab" in e for e in st_builder_module.validate_st({"name": "x", "desc": "d", "steps": [{"action": "inspect", "desc": "inspect file", "vocab": "research_needed"}]}))),
     ("slugify_trims_to_four_words", lambda: st_builder_module.slugify("Update the very important config file") == "update_the_very_important"),
     ("resolve_entity_renders_known_skill", lambda: skill("admin").hash in loop._resolve_entity([skill("admin").hash], registry(), Trajectory())),
+    ("resolve_entity_reads_action_package_when_not_entity", lambda: '"name": "hash_edit"' in loop._resolve_entity([skill("hash_edit").hash], registry(), Trajectory())),
     ("render_entity_has_identity_block", lambda: "identity:" in loop._render_entity(skill("admin"))),
     ("render_entity_has_steps_summary", lambda: "steps:" in loop._render_entity(skill("admin"))),
     ("find_identity_skill_returns_admin", lambda: loop._find_identity_skill("discord:784778107013431296", registry()) == skill("admin")),

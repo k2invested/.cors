@@ -107,7 +107,7 @@ def test_new_assessment_notifications_only_collects_new_assessment_steps(tmp_pat
     traj = Trajectory()
     traj.append(Step.create("seed"))
     traj.append(Step.create("postcondition: persist", assessment=["skills/admin.st [step] +1 -0"]))
-    traj.append(Step.create("later", assessment=["skills/top_rate_estates_ltd.st [step] +35 -0"]))
+    traj.append(Step.create("later", assessment=["skills/entities/top_rate_estates_ltd.st [step] +35 -0"]))
     traj.save(traj_path)
 
     lines = discord_bot.new_assessment_notifications(contact_id, 1)
@@ -115,7 +115,7 @@ def test_new_assessment_notifications_only_collects_new_assessment_steps(tmp_pat
         "postcondition: persist",
         "skills/admin.st [step] +1 -0",
         "later",
-        "skills/top_rate_estates_ltd.st [step] +35 -0",
+        "skills/entities/top_rate_estates_ltd.st [step] +35 -0",
     ]
 
 

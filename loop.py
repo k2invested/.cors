@@ -132,6 +132,7 @@ def git_diff(from_ref: str, to_ref: str = "HEAD") -> str:
 TREE_POLICY_FILE = CORS_ROOT / "tree_policy.json"
 DEFAULT_TREE_POLICY = {
     "skills/codons/":   {"immutable": True, "on_reject": "reason_needed"},
+    "skills/entities/": {"on_mutate": "reprogramme_needed"},
     "skills/":          {"on_mutate": "reprogramme_needed"},
     "ui_output/":       {"on_mutate": "stitch_needed"},
     "logs/":            {"immutable": True},
@@ -547,6 +548,18 @@ ENTITY_MANIFEST_FIELDS = {
     "schema", "access_rules", "principles", "boundaries", "domain_knowledge",
 }
 
+
+def _is_entity_source(path: str | Path) -> bool:
+    candidate = Path(path)
+    return "entities" in candidate.parts or candidate.name == "admin.st"
+
+
+def _render_skill_package(skill: Skill) -> str:
+    data = skill.payload
+    if not data:
+        return f"## Package: {skill.display_name}:{skill.hash}\n(unreadable)"
+    return json.dumps(data, indent=2)
+
 def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
     """Resolve any hash to its content as a semantic tree.
 
@@ -563,14 +576,14 @@ def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
     if _skill_registry:
         skill = _skill_registry.resolve(ref)
         if skill:
-            return _render_entity(skill)
+            return _render_entity(skill) if _is_entity_source(skill.source) else _render_skill_package(skill)
         for candidate in _skill_registry.all_skills():
             try:
                 rel_source = str(Path(candidate.source).resolve().relative_to(CORS_ROOT))
             except ValueError:
                 rel_source = str(Path(candidate.source))
             if ref == rel_source or ref == Path(rel_source).name:
-                return _render_entity(candidate)
+                return _render_entity(candidate) if _is_entity_source(candidate.source) else _render_skill_package(candidate)
 
     # Try trajectory step — render as semantic tree branch
     step = trajectory.resolve(ref)
@@ -1545,7 +1558,7 @@ def _resolve_entity(content_refs: list[str], registry: SkillRegistry,
         # Check if this hash is a known skill/entity
         skill = registry.resolve(ref)
         if skill:
-            blocks.append(_render_entity(skill))
+            blocks.append(_render_entity(skill) if _is_entity_source(skill.source) else _render_skill_package(skill))
             continue
         # Try trajectory
         data = resolve_hash(ref, trajectory)
@@ -1561,10 +1574,7 @@ def _skill_payload(skill: Skill) -> dict | None:
 def _is_entity_skill(skill: Skill) -> bool:
     if skill.artifact_kind == "codon":
         return False
-    if skill.artifact_kind in {"entity", "hybrid"}:
-        return True
-    payload = _skill_payload(skill) or {}
-    return len(payload.get("steps", [])) == 0
+    return _is_entity_source(skill.source)
 
 
 def _render_entity_tree(registry: SkillRegistry) -> str:

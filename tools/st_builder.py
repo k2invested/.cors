@@ -27,6 +27,7 @@ from compile import OBSERVE_VOCAB, MUTATE_VOCAB, BRIDGE_VOCAB
 from skills.loader import compute_skill_hash
 
 SKILLS_DIR = str(ROOT / "skills")
+ENTITY_SKILLS_DIR = str(ROOT / "skills" / "entities")
 
 VALID_RUNTIME_VOCAB = set(OBSERVE_VOCAB) | set(MUTATE_VOCAB) | set(BRIDGE_VOCAB)
 VALID_ARTIFACT_KINDS = {"entity", "action_update", "hybrid_update"}
@@ -579,6 +580,10 @@ def find_existing_skill_path(existing_ref: str, output_dir: str) -> str | None:
     return None
 
 
+def entity_output_dir(output_dir: str) -> str:
+    return str(Path(output_dir) / "entities")
+
+
 def find_existing_contact_path(trigger: str, output_dir: str) -> str | None:
     output_root = Path(output_dir)
     if not output_root.exists():
@@ -652,8 +657,9 @@ def build_st(intent: dict) -> dict:
 def write_st(st: dict, output_dir: str = None, existing_ref: str | None = None) -> str:
     """Write a .st file and return its path."""
     output_dir = output_dir or SKILLS_DIR
-    os.makedirs(output_dir, exist_ok=True)
     existing_ref = normalize_existing_ref(existing_ref)
+    artifact = st.get("artifact", {}) if isinstance(st.get("artifact"), dict) else {}
+    artifact_kind = artifact.get("kind") or ("entity" if has_entity_semantics(st) else "action")
 
     existing_path = find_existing_skill_path(existing_ref, output_dir) if existing_ref else None
     if existing_ref and not existing_path:
@@ -692,9 +698,13 @@ def write_st(st: dict, output_dir: str = None, existing_ref: str | None = None) 
             if "desc" in existing_data:
                 st["desc"] = existing_data["desc"]
     else:
+        target_dir = output_dir
+        if artifact_kind == "entity" and st.get("name") != "admin":
+            target_dir = entity_output_dir(output_dir)
+        os.makedirs(target_dir, exist_ok=True)
         name = st.get("name", "untitled")
         filename = re.sub(r'[^a-z0-9_]', '_', name.lower()) + ".st"
-        path = os.path.join(output_dir, filename)
+        path = os.path.join(target_dir, filename)
 
     with open(path, "w") as f:
         json.dump(st, f, indent=2)

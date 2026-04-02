@@ -28,12 +28,32 @@ def test_entity_skill_detection_distinguishes_entity_from_action_and_codon():
     assert reason is not None and loop._is_entity_skill(reason) is False
 
 
+def test_resolve_hash_injects_entity_but_reads_action_package():
+    reg = registry()
+    loop._skill_registry = reg
+    traj = Trajectory()
+
+    admin = reg.resolve_by_name("admin")
+    hash_edit = reg.resolve_by_name("hash_edit")
+
+    assert admin is not None
+    assert hash_edit is not None
+
+    admin_rendered = loop.resolve_hash(admin.hash, traj)
+    action_rendered = loop.resolve_hash(hash_edit.hash, traj)
+
+    assert admin_rendered is not None and admin_rendered.startswith("## Entity:")
+    assert action_rendered is not None and '"name": "hash_edit"' in action_rendered
+    assert not action_rendered.startswith("## Entity:")
+
+
 def test_render_entity_tree_shows_entity_space():
     reg = registry()
     tree = loop._render_entity_tree(reg)
     assert tree.startswith("entity_tree")
-    assert "kenny:" in tree
+    assert "admin:" in tree
     assert "admin.st" in tree
+    assert "clinton.st" in tree
 
 
 def test_render_step_network_shows_entities_packages_and_commands(tmp_path):

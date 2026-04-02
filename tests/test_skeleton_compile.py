@@ -446,6 +446,22 @@ def test_st_builder_writes_existing_ref_in_place(tmp_path):
     assert written["desc"] == "new"
 
 
+def test_st_builder_writes_new_entity_under_entities_subdir(tmp_path):
+    entity = {
+        "name": "entity_a",
+        "desc": "entity",
+        "trigger": "manual",
+        "artifact": {"kind": "entity"},
+        "identity": {"name": "Ada"},
+        "steps": [
+            {"action": "load_identity", "desc": "surface identity context for entity_a", "resolve": ["identity"], "post_diff": False}
+        ],
+    }
+
+    path = st_builder_module.write_st(entity, output_dir=str(tmp_path))
+    assert path == str(tmp_path / "entities" / "entity_a.st")
+
+
 def test_skeleton_compile_cli_outputs_json():
     payload = json.dumps(example_skeleton())
     result = subprocess.run(
