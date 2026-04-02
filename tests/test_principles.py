@@ -1277,19 +1277,35 @@ def test_p12_collect_clarify_frontier_merges_current_and_active_deduped():
     traj = Trajectory()
     compiler = Compiler(traj)
     current = make_gap("question one", vocab="clarify_needed")
+    current.turn_id = 5
     other = make_gap("question two", vocab="clarify_needed")
+    other.turn_id = 5
     dup = Gap(
         hash=current.hash,
         desc=current.desc,
         content_refs=list(current.content_refs),
         step_refs=list(current.step_refs),
         vocab="clarify_needed",
+        turn_id=5,
     )
     compiler.ledger.stack.append(SimpleNamespace(gap=other))
     compiler.ledger.stack.append(SimpleNamespace(gap=dup))
 
-    merged = execution_engine_module._collect_clarify_frontier(compiler, current)
+    merged = execution_engine_module._collect_clarify_frontier(compiler, current, current_turn=5)
     assert [gap.desc for gap in merged] == ["question one", "question two"]
+
+
+def test_p12_collect_clarify_frontier_is_turn_bounded():
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    current = make_gap("current question", vocab="clarify_needed", turn_id=9)
+    same_turn = make_gap("same turn question", vocab="clarify_needed", turn_id=9)
+    old_turn = make_gap("old turn question", vocab="clarify_needed", turn_id=8)
+    compiler.ledger.stack.append(SimpleNamespace(gap=same_turn))
+    compiler.ledger.stack.append(SimpleNamespace(gap=old_turn))
+
+    merged = execution_engine_module._collect_clarify_frontier(compiler, current, current_turn=9)
+    assert [gap.desc for gap in merged] == ["current question", "same turn question"]
 
 
 def test_p12_build_clarify_frontier_step_has_single_canonical_desc_and_refs():

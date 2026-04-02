@@ -258,10 +258,19 @@ def _inject_chain_spec(
         session.inject(f"{heading}\n{rendered}")
 
 
-def _collect_clarify_frontier(compiler: Any, current_gap: Gap) -> list[Gap]:
+def _collect_clarify_frontier(compiler: Any, current_gap: Gap, *, current_turn: int | None = None) -> list[Gap]:
     merged: list[Gap] = []
     seen: set[str] = set()
-    for gap in [current_gap] + [entry.gap for entry in compiler.ledger.active_gaps() if entry.gap.vocab == "clarify_needed"]:
+    candidate_gaps = [current_gap]
+    for entry in compiler.ledger.active_gaps():
+        gap = entry.gap
+        if gap.vocab != "clarify_needed":
+            continue
+        if current_turn is not None and gap.turn_id not in (None, current_turn):
+            continue
+        candidate_gaps.append(gap)
+
+    for gap in candidate_gaps:
         if gap.hash in seen:
             continue
         seen.add(gap.hash)
@@ -379,7 +388,7 @@ def execute_iteration(
 
     if gap.vocab == "clarify_needed":
         print("  → clarify needed: halting iteration")
-        merged_gaps = _collect_clarify_frontier(compiler, gap)
+        merged_gaps = _collect_clarify_frontier(compiler, gap, current_turn=current_turn)
         clarify_step = _build_clarify_frontier_step(
             origin_step=origin_step,
             merged_gaps=merged_gaps,
