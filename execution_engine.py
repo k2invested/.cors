@@ -241,12 +241,19 @@ def execute_iteration(
         executed = False
         exec_failed = False
         output = ""
+        intent = None
+        written_path = None
 
         if vocab == "hash_edit_needed":
             intent = hooks.extract_json(raw)
             if intent:
                 output, code = hooks.execute_tool("tools/hash_manifest.py", intent)
                 print(f"  → hash_manifest: {output[:100]}")
+                written_path = hooks.extract_written_path(output)
+                if not written_path and isinstance(intent, dict):
+                    path = intent.get("path")
+                    if isinstance(path, str) and path:
+                        written_path = path
                 executed = True
                 exec_failed = code != 0
             else:
@@ -286,7 +293,8 @@ def execute_iteration(
             return ExecutionOutcome(control="continue", step_result=step_result)
 
         if executed:
-            commit_sha, on_reject = hooks.auto_commit(f"step: {gap.desc[:50]}")
+            commit_paths = [written_path] if written_path else None
+            commit_sha, on_reject = hooks.auto_commit(f"step: {gap.desc[:50]}", paths=commit_paths)
             if commit_sha:
                 print(f"  → committed: {commit_sha}")
                 step_result = Step.create(

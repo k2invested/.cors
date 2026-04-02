@@ -1122,8 +1122,11 @@ def _extract_command(raw: str) -> str | None:
 
 def _extract_written_path(tool_output: str) -> str | None:
     for line in tool_output.splitlines():
-        if line.startswith("Written: "):
-            return line.split("Written: ", 1)[1].strip()
+        lowered = line.lower()
+        if lowered.startswith("written: "):
+            return line.split(":", 1)[1].strip()
+        if lowered.startswith("patched: "):
+            return line.split(":", 1)[1].split("(", 1)[0].strip()
     return None
 
 
@@ -1337,18 +1340,42 @@ def _find_dangling_gaps(trajectory: Trajectory) -> list[Gap]:
 
 
 def _find_identity_skill(contact_id: str, registry: SkillRegistry) -> Skill | None:
-    """Find the .st file that triggers for this contact."""
+    """Find the canonical .st identity bound to this contact."""
+    bound_matches: list[Skill] = []
+    trigger_matches: list[Skill] = []
+
     for skill in registry.all_skills():
-        # Read the .st file to check trigger
-        try:
-            with open(skill.source) as f:
-                data = json.load(f)
-            trigger = data.get("trigger", "")
-            if trigger == f"on_contact:{contact_id}":
-                return skill
-        except (json.JSONDecodeError, FileNotFoundError):
+        payload = skill.payload or {}
+        identity = payload.get("identity", {}) or {}
+        if identity.get("external_id") == contact_id:
+            bound_matches.append(skill)
+        if contact_id.startswith("discord:"):
+            discord_user_id = contact_id.split(":", 1)[1]
+            if str(identity.get("discord_user_id", "")).strip() == discord_user_id:
+                bound_matches.append(skill)
+        if skill.trigger == f"on_contact:{contact_id}":
+            trigger_matches.append(skill)
+
+    matches = bound_matches or trigger_matches
+    if not matches:
+        return None
+
+    deduped: list[Skill] = []
+    seen_hashes: set[str] = set()
+    for skill in matches:
+        if skill.hash in seen_hashes:
             continue
-    return None
+        seen_hashes.add(skill.hash)
+        deduped.append(skill)
+    deduped.sort(
+        key=lambda skill: (
+            skill.name == "admin",
+            len(skill.steps),
+            skill.trigger == f"on_contact:{contact_id}",
+        ),
+        reverse=True,
+    )
+    return deduped[0]
 
 
 def _slug_contact_id(contact_id: str) -> str:
