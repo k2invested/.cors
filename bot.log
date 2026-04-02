@@ -90,3 +90,30 @@
 2026-04-02 07:59:06,380 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
 2026-04-02 07:59:06,555 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=221
 2026-04-02 07:59:06,555 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 08:03:11,867 WARNING PyNaCl is not installed, voice will NOT be supported
+2026-04-02 08:03:11,867 WARNING davey is not installed, voice will NOT be supported
+2026-04-02 08:03:11,868 INFO logging in using static token
+2026-04-02 08:03:12,954 INFO Shard ID None has connected to Gateway (Session ID: 63de5fffc541d405925def4cedfd7216).
+2026-04-02 08:03:14,956 INFO Discord bot logged in as CORS#3301 (1485671996435202128)
+2026-04-02 08:03:14,956 INFO Discord bot config require_mention=False allowed_channel_ids=[]
+2026-04-02 08:03:22,716 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=5
+2026-04-02 08:03:22,718 INFO discord transport command command='/wipe'
+2026-04-02 08:03:22,919 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=16
+2026-04-02 08:03:22,920 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 08:03:26,251 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=3
+2026-04-02 08:03:26,251 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='Hey'
+2026-04-02 08:03:28,317 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 08:03:29,954 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 08:03:30,163 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=4
+2026-04-02 08:03:30,163 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 08:03:43,874 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=24
+2026-04-02 08:03:43,875 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='What are my preferences?'
+2026-04-02 08:03:46,339 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 08:03:49,614 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 08:03:49,797 INFO discord inbound author=1485671996435202128 bot=True guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=905
+2026-04-02 08:03:49,797 INFO discord inbound ignored author=1485671996435202128 guild=1485670663233470587 channel=1485670664051490918 mentioned=False require_mention=False allowed_channel_ids=[]
+2026-04-02 08:03:55,042 INFO discord inbound author=784778107013431296 bot=False guild=1485670663233470587 channel=1485670664051490918 mentioned=False content_len=372
+2026-04-02 08:03:55,042 INFO discord turn start user=discord:784778107013431296 channel=1485670664051490918 guild=1485670663233470587 content='When responding to me on Discord, assume the response may be heard through TTS. Shape replies for listening, not just reading. Use natural spoken phrasing, short sentences, smooth cadence, and clear t'
+2026-04-02 08:03:59,243 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 08:04:00,982 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-04-02 08:04:10,197 INFO HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
