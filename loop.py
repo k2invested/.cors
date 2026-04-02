@@ -295,74 +295,211 @@ def _derive_step_gap_surface(step: dict) -> str:
     return "internal"
 
 
-def _derive_step_file_assessment(data: dict) -> dict:
+def _step_action_label(node: dict, fallback_index: int) -> str:
+    source_step = node.get("source_step", {}) or {}
+    action = source_step.get("action")
+    if isinstance(action, str) and action:
+        return action
+    node_id = node.get("id", "")
+    match = re.fullmatch(r"phase_(.+)_\d+", node_id)
+    if match:
+        return match.group(1)
+    return node_id or f"step_{fallback_index + 1}"
+
+
+def _validator_assess_step_file(data: dict) -> dict:
+    from tools import st_builder as st_builder_module
+    from tools.security_compile import security_compile
+    from tools.semantic_skeleton_compile import compile_semantic_skeleton
+    from tools.trace_tree_build import build_from_stepchain
+
     steps = data.get("steps", [])
     if not isinstance(steps, list):
         steps = []
+
+    frame = st_builder_module.semantic_skeleton_from_st(data)
+    compiled = compile_semantic_skeleton(frame)
+    status = compiled.get("status", "error")
+    errors = compiled.get("errors", []) if status != "ok" else []
+
     signatures: dict[str, dict] = {}
-    for idx, step in enumerate(steps):
-        action = step.get("action") or f"step_{idx + 1}"
-        signatures[action] = {
-            "surface": _derive_step_gap_surface(step),
-            "post_diff": bool(step.get("post_diff", True)),
-            "resolve_count": len(step.get("resolve", []) or []),
-            "relevance": step.get("relevance"),
+    if status == "ok":
+        stepchain = (compiled.get("package") or {}).get("stepchain")
+        if stepchain:
+            for idx, node in enumerate(stepchain.get("nodes", [])):
+                if node.get("terminal"):
+                    continue
+                action = _step_action_label(node, idx)
+                manifestation = node.get("manifestation", {}) or {}
+                runtime_vocab = manifestation.get("runtime_vocab")
+                gap_template = node.get("gap_template", {}) or {}
+                signatures[action] = {
+                    "surface": runtime_vocab or _derive_step_gap_surface(node.get("source_step", {}) or {}),
+                    "post_diff": bool(node.get("post_diff", False)),
+                    "resolve_count": len(gap_template.get("content_refs", []) or []),
+                    "relevance": node.get("relevance"),
+                }
+            trace = build_from_stepchain(stepchain, source_type="stepchain", source_ref=data.get("name"))
+            trace_summary = trace.get("summary", {})
+        else:
+            trace_summary = {}
+    else:
+        trace_summary = {}
+
+    if not signatures:
+        for idx, step in enumerate(steps):
+            action = step.get("action") or f"step_{idx + 1}"
+            signatures[action] = {
+                "surface": _derive_step_gap_surface(step),
+                "post_diff": bool(step.get("post_diff", True)),
+                "resolve_count": len(step.get("resolve", []) or []),
+                "relevance": step.get("relevance"),
+            }
+
+    security_result = security_compile({
+        "input": {
+            "artifact_type": "st_package",
+            "candidate": data,
+            "context": {"mode": "post_observe", "source": "runtime"},
         }
+    })
+    sec = security_result.get("result", {})
+    sec_normalized = sec.get("normalized", {})
+
     return {
         "name": data.get("name"),
         "trigger": data.get("trigger"),
+        "identity_binding": (
+            (data.get("identity", {}) or {}).get("discord_user_id")
+            or (data.get("identity", {}) or {}).get("external_id")
+        ),
         "artifact_kind": _infer_artifact_kind_from_st(data),
         "step_count": len(steps),
+        "validator_status": status,
+        "validator_errors": errors,
+        "trace_summary": trace_summary,
         "signatures": signatures,
+        "security_status": sec.get("status"),
+        "security_summary": sec.get("summary"),
+        "security_projection": sec.get("projection", {}),
+        "security_hash_ref_count": len(sec_normalized.get("hash_refs", []) or []),
+        "security_violations": sec.get("violations", []),
+        "security_risks": sec.get("risks", []),
+        "semantic_drift": next(
+            (float(note.split("=", 1)[1]) for check in sec.get("checks", []) if check.get("domain") == "semantic_integrity"
+             for note in check.get("notes", []) if isinstance(note, str) and note.startswith("semantic_drift=")),
+            0.0,
+        ),
     }
+
+
+def _surface_counts(assessment: dict) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for sig in assessment.get("signatures", {}).values():
+        surface = sig.get("surface") or "internal"
+        counts[surface] = counts.get(surface, 0) + 1
+    return counts
+
+
+def _surface_change_label(before: int, after: int) -> str:
+    if before == after:
+        return "unchanged"
+    if before == 0 and after > 0:
+        return "added"
+    if before > 0 and after == 0:
+        return "removed"
+    if after > before:
+        return "widened"
+    return "narrowed"
+
+
+def _continuity_label(before, after, *, missing: str = "none") -> str:
+    if before in (None, "") and after in (None, ""):
+        return missing
+    if before in (None, "") and after not in (None, ""):
+        return "new"
+    if before == after:
+        return "preserved"
+    return "changed"
+
+
+def _policy_drift_flag(assessment: dict) -> bool:
+    violations = assessment.get("security_violations", []) or []
+    risks = assessment.get("security_risks", []) or []
+    domains = {
+        item.get("domain")
+        for item in [*violations, *risks]
+        if isinstance(item, dict)
+    }
+    codes = {
+        item.get("code")
+        for item in [*violations, *risks]
+        if isinstance(item, dict)
+    }
+    if "protected_surfaces" in domains:
+        return True
+    if {"codon_mutation_attempt", "protected_surface_touch", "indirect_protected_activation"} & codes:
+        return True
+    return False
 
 
 def _step_assessment_notification(path: str, before: dict | None, after: dict | None) -> list[str]:
     if after is None:
-        return [f"  assessment: unavailable"]
+        return ["  validator.status: unavailable"]
 
-    before_assessment = _derive_step_file_assessment(before or {})
-    after_assessment = _derive_step_file_assessment(after)
+    before_assessment = _validator_assess_step_file(before or {})
+    after_assessment = _validator_assess_step_file(after)
 
-    structure_bits: list[str] = [
-        f"artifact={after_assessment['artifact_kind']}",
-        f"steps {before_assessment['step_count']}->{after_assessment['step_count']}",
+    lines = [
+        f"  validator.status: {after_assessment['validator_status']}",
+        f"  structure.artifact_kind: {before_assessment['artifact_kind']}->{after_assessment['artifact_kind']}",
+        f"  structure.step_count: {before_assessment['step_count']}->{after_assessment['step_count']}",
+        f"  continuity.trigger: {_continuity_label(before_assessment['trigger'], after_assessment['trigger'], missing='none')}",
+        f"  continuity.identity_binding: {_continuity_label(before_assessment['identity_binding'], after_assessment['identity_binding'], missing='none')}",
+        f"  projection.bridge_count: {before_assessment['security_projection'].get('bridge_count', 0)}->{after_assessment['security_projection'].get('bridge_count', 0)}",
+        f"  projection.mutation_count: {before_assessment['security_projection'].get('mutation_count', 0)}->{after_assessment['security_projection'].get('mutation_count', 0)}",
+        f"  projection.post_diff_reentry_points: {before_assessment['security_projection'].get('post_diff_reentry_points', 0)}->{after_assessment['security_projection'].get('post_diff_reentry_points', 0)}",
+        f"  grounding.hash_refs: {before_assessment['security_hash_ref_count']}->{after_assessment['security_hash_ref_count']}",
+        f"  policy.status: {after_assessment['security_status']}",
+        f"  policy.drift: {'true' if _policy_drift_flag(after_assessment) else 'false'}",
+        f"  semantic.drift: {'true' if after_assessment['semantic_drift'] > 0 else 'false'}",
     ]
-    if before is None:
-        structure_bits.append("trigger=new")
-    elif before_assessment["trigger"] == after_assessment["trigger"]:
-        structure_bits.append("trigger preserved")
-    else:
-        structure_bits.append(f"trigger {before_assessment['trigger']}->{after_assessment['trigger']}")
-    lines = [f"  structure: {', '.join(structure_bits)}"]
+    if after_assessment["validator_status"] != "ok":
+        error_note = after_assessment["validator_errors"][0] if after_assessment["validator_errors"] else "unknown validation error"
+        lines.append(f"  validator.error: {error_note}")
 
     before_sigs = before_assessment["signatures"]
     after_sigs = after_assessment["signatures"]
-    changes: list[str] = []
+    for surface in sorted(set(_surface_counts(before_assessment)) | set(_surface_counts(after_assessment))):
+        before_count = _surface_counts(before_assessment).get(surface, 0)
+        after_count = _surface_counts(after_assessment).get(surface, 0)
+        lines.append(
+            f"  surface.{surface}: {_surface_change_label(before_count, after_count)} ({before_count}->{after_count})"
+        )
+
+    step_changes: list[str] = []
     for action in sorted(set(before_sigs) | set(after_sigs)):
         old = before_sigs.get(action)
         new = after_sigs.get(action)
         if old is None and new is not None:
-            changes.append(
+            step_changes.append(
                 f"{action} added surface={new['surface']} post_diff={str(new['post_diff']).lower()} refs={new['resolve_count']}"
             )
         elif old is not None and new is None:
-            changes.append(f"{action} removed")
+            step_changes.append(f"{action} removed")
         elif old != new:
             if old["surface"] != new["surface"]:
-                changes.append(f"{action} surface {old['surface']}->{new['surface']}")
+                step_changes.append(f"{action} surface {old['surface']}->{new['surface']}")
             if old["post_diff"] != new["post_diff"]:
-                changes.append(f"{action} post_diff {str(old['post_diff']).lower()}->{str(new['post_diff']).lower()}")
+                step_changes.append(f"{action} post_diff {str(old['post_diff']).lower()}->{str(new['post_diff']).lower()}")
             if old["resolve_count"] != new["resolve_count"]:
-                changes.append(f"{action} refs {old['resolve_count']}->{new['resolve_count']}")
+                step_changes.append(f"{action} refs {old['resolve_count']}->{new['resolve_count']}")
             if old["relevance"] != new["relevance"] and (old["relevance"] is not None or new["relevance"] is not None):
-                changes.append(f"{action} relevance {old['relevance']}->{new['relevance']}")
-    if changes:
-        lines.extend([f"  gap-config: {change}" for change in changes[:4]])
-        if len(changes) > 4:
-            lines.append(f"  gap-config: +{len(changes) - 4} more changes")
-    else:
-        lines.append("  gap-config: unchanged")
+                step_changes.append(f"{action} relevance {old['relevance']}->{new['relevance']}")
+    if step_changes:
+        lines.extend([f"  step_delta: {change}" for change in step_changes[:3]])
+        if len(step_changes) > 3:
+            lines.append(f"  step_delta.more: {len(step_changes) - 3}")
     return lines
 
 
@@ -389,6 +526,17 @@ def _auto_commit_notifications(pre_commit_sha: str, post_commit_sha: str) -> lis
             after = _load_step_file_at_commit(post_commit_sha, path)
             notifications.extend(_step_assessment_notification(path, before, after))
     return notifications
+
+
+def _commit_assessment_for_commit(commit_sha: str) -> list[str]:
+    parent = git(["rev-parse", f"{commit_sha}^"]).strip()
+    if not parent:
+        return []
+    return _auto_commit_notifications(parent.splitlines()[0], commit_sha)
+
+
+def _step_assessment_for_docs(before: dict | None, after: dict | None, path: str | None = None) -> list[str]:
+    return _step_assessment_notification(path or "(step)", before, after)
 
 
 # ── Hash resolution ──────────────────────────────────────────────────────
@@ -480,6 +628,8 @@ def _render_step_tree(step, trajectory: Trajectory, depth: int = 0,
         extras = [part for part in [getattr(step, "rogue_kind", None), getattr(step, "failure_source", None)] if part]
         rogue_tag = f" (rogue:{', '.join(extras)})" if extras else " (rogue)"
     lines = [f"{indent}{sig_prefix}step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}{time_tag}{rogue_tag}"]
+    for assessment_line in getattr(step, "assessment", []) or []:
+        lines.append(f"{indent}  assessment: {assessment_line}")
 
     # Gaps as child branches
     for gap in step.gaps:
@@ -1473,6 +1623,8 @@ def _execution_hooks(chains_dir: Path | None = None) -> ExecutionHooks:
         render_step_network=lambda registry: _render_step_network(registry, active_chains_dir),
         emit_reason_skill=_emit_reason_skill,
         git=git,
+        commit_assessment=_commit_assessment_for_commit,
+        step_assessment=_step_assessment_for_docs,
     )
 
 

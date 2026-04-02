@@ -516,6 +516,8 @@ def test_p13_reprogramme_failure_materializes_rogue_step():
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
         git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: ["skills/admin.st [step] +1 -0"],
+        step_assessment=lambda before, after, path=None: ["  validator: ok"],
     )
     config = execution_engine_module.ExecutionConfig(
         cors_root=ROOT,
@@ -938,12 +940,17 @@ def test_p12_auto_commit_notifications_formats_step_and_regular_files(monkeypatc
             ],
         }),
     )
-    assert loop._auto_commit_notifications("a1", "b2") == [
-        "loop.py +5 -4",
-        "skills/admin.st [step] +8 -2",
-        "  structure: artifact=action, steps 1->2, trigger preserved",
-        "  gap-config: persist_pref added surface=reprogramme_needed post_diff=false refs=0",
-    ]
+    lines = loop._auto_commit_notifications("a1", "b2")
+    assert lines[0] == "loop.py +5 -4"
+    assert lines[1] == "skills/admin.st [step] +8 -2"
+    assert "  validator.status: ok" in lines
+    assert "  structure.step_count: 1->2" in lines
+    assert "  continuity.trigger: preserved" in lines
+    assert "  projection.bridge_count: 0->1" in lines
+    assert "  policy.drift: false" in lines
+    assert "  semantic.drift: true" in lines
+    assert "  surface.reprogramme_needed: added (0->1)" in lines
+    assert "  step_delta: persist_pref added surface=reprogramme_needed post_diff=false refs=0" in lines
 
 
 def test_p12_step_assessment_notification_reports_unchanged_gap_config():
@@ -958,9 +965,60 @@ def test_p12_step_assessment_notification_reports_unchanged_gap_config():
         "steps": [{"action": "load_identity", "desc": "load", "resolve": ["identity"], "post_diff": False}],
         "preferences": {"communication": {"plain_text_only": True}},
     }
-    assert loop._step_assessment_notification("skills/admin.st", before, after) == [
-        "  structure: artifact=hybrid, steps 1->1, trigger preserved",
-        "  gap-config: unchanged",
+    lines = loop._step_assessment_notification("skills/admin.st", before, after)
+    assert "  validator.status: ok" in lines
+    assert "  structure.artifact_kind: action->hybrid" in lines
+    assert "  structure.step_count: 1->1" in lines
+    assert "  continuity.trigger: preserved" in lines
+    assert "  policy.drift: false" in lines
+    assert "  semantic.drift: true" in lines
+    assert "  surface.internal: unchanged (1->1)" in lines
+    assert not any(line.startswith("  step_delta:") for line in lines)
+    assert not any(line.startswith("  continuity.init_scaffold:") for line in lines)
+
+
+def test_p12_policy_drift_only_tracks_policy_enforcement_failures():
+    assessment = {
+        "security_violations": [],
+        "security_risks": [{"domain": "semantic_integrity", "code": "semantic_desc_vocab_mismatch"}],
+    }
+    assert loop._policy_drift_flag(assessment) is False
+
+
+def test_p12_policy_drift_detects_protected_surface_policy_failures():
+    assessment = {
+        "security_violations": [{"domain": "protected_surfaces", "code": "codon_mutation_attempt"}],
+        "security_risks": [],
+    }
+    assert loop._policy_drift_flag(assessment) is True
+
+
+def test_p12_commit_assessment_for_commit_uses_parent_diff(monkeypatch):
+    monkeypatch.setattr(loop, "git", lambda cmd, cwd=None: "parent123" if cmd == ["rev-parse", "child456^"] else "")
+    monkeypatch.setattr(loop, "_auto_commit_notifications", lambda pre, post: [f"{pre}->{post}"])
+    assert loop._commit_assessment_for_commit("child456") == ["parent123->child456"]
+
+
+def test_p12_step_serialization_preserves_assessment():
+    step = Step.create("postcondition", assessment=["skills/admin.st [step] +1 -0"])
+    restored = Step.from_dict(step.to_dict())
+    assert restored.assessment == ["skills/admin.st [step] +1 -0"]
+
+
+def test_p12_render_recent_shows_step_assessment():
+    traj = Trajectory()
+    traj.append(Step.create("postcondition", assessment=["skills/admin.st [step] +1 -0"]))
+    rendered = traj.render_recent(5, registry())
+    assert "assessment: skills/admin.st [step] +1 -0" in rendered
+
+
+def test_p12_policy_drift_assessment_marks_tree_policy_revert():
+    lines = execution_engine_module._policy_drift_assessment("tree_policy", "immutable path violation")
+    assert lines == [
+        "policy.status: rejected",
+        "policy.drift: true",
+        "policy.source: tree_policy",
+        "policy.detail: immutable path violation",
     ]
 
 
@@ -1029,6 +1087,8 @@ def test_p12_inline_reprogramme_does_not_trigger_heartbeat():
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
         git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: ["  validator: ok"],
     )
     config = execution_engine_module.ExecutionConfig(
         cors_root=ROOT,
@@ -1099,6 +1159,8 @@ def test_p12_reprogramme_failure_does_not_commit_without_written_path():
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
         git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: ["  validator: ok"],
     )
     config = execution_engine_module.ExecutionConfig(
         cors_root=ROOT,
@@ -1125,6 +1187,7 @@ def test_p12_reprogramme_failure_does_not_commit_without_written_path():
     assert outcome.step_result.commit is None
     assert commit_calls == []
     assert any("ST BUILDER FAILED" in injected for injected in session.injected)
+    assert outcome.step_result.assessment == ["builder-error: existing_ref not found: kenny:47824f077e7d", "  validator: ok"]
 
 
 def test_p12_st_builder_reuses_existing_contact_trigger_path(tmp_path):

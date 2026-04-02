@@ -45,6 +45,8 @@ class ExecutionHooks:
     render_step_network: Callable[[Any], str]
     emit_reason_skill: Callable[[Any, Gap, Step, str], Step]
     git: Callable[[list[str], str | None], str]
+    commit_assessment: Callable[[str], list[str]]
+    step_assessment: Callable[[dict | None, dict | None, str | None], list[str]]
 
 
 @dataclass
@@ -91,6 +93,7 @@ def _make_rogue_step(
     failure_source: str,
     failure_detail: str | None = None,
     commit: str | None = None,
+    assessment: list[str] | None = None,
 ) -> Step:
     return Step.create(
         desc=desc,
@@ -102,6 +105,7 @@ def _make_rogue_step(
         rogue_kind=rogue_kind,
         failure_source=failure_source,
         failure_detail=failure_detail,
+        assessment=assessment or [],
     )
 
 
@@ -117,6 +121,7 @@ def _emit_rogue_with_diagnosis(
     compiler: Any,
     failure_detail: str | None = None,
     commit: str | None = None,
+    assessment: list[str] | None = None,
 ) -> Step:
     diagnose_gap = Gap.create(
         desc=(
@@ -138,12 +143,44 @@ def _emit_rogue_with_diagnosis(
         failure_source=failure_source,
         failure_detail=failure_detail,
         commit=commit,
+        assessment=assessment,
     )
     rogue_step.gaps.append(diagnose_gap)
     trajectory.append(rogue_step)
     compiler.emit(rogue_step)
     compiler.add_step_to_chain(rogue_step.hash)
     return rogue_step
+
+
+def _extract_invalid_generated_json(output: str) -> dict | None:
+    marker = "Generated (invalid):"
+    if marker not in output:
+        return None
+    candidate = output.split(marker, 1)[1].strip()
+    if not candidate:
+        return None
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(candidate):
+        if ch != "{":
+            continue
+        try:
+            obj, _end = decoder.raw_decode(candidate[i:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
+def _policy_drift_assessment(source: str, detail: str | None = None) -> list[str]:
+    lines = [
+        "policy.status: rejected",
+        "policy.drift: true",
+        f"policy.source: {source}",
+    ]
+    if detail:
+        lines.append(f"policy.detail: {detail}")
+    return lines
 
 
 def _pattern_tool_params(gap: Gap) -> dict[str, str] | None:
@@ -401,17 +438,23 @@ def execute_iteration(
                 )
                 postcond.scores = Epistemic(relevance=1.0, confidence=1.0, grounded=0.0)
                 postcond.vocab = "hash_resolve_needed"
+                assessment_lines = hooks.commit_assessment(commit_sha)
                 postcond_step = Step.create(
                     desc=f"postcondition: {gap.desc}",
                     step_refs=[step_result.hash],
                     content_refs=postcond_refs,
                     gaps=[postcond],
                     chain_id=entry.chain_id,
+                    assessment=assessment_lines,
                 )
                 trajectory.append(postcond_step)
                 compiler.emit(postcond_step)
                 compiler.resolve_current_gap(gap.hash)
                 print(f"  → postcondition gap injected: hash_resolve_needed → {postcond_refs}")
+                if assessment_lines:
+                    print("  → postcondition assessment:")
+                    for line in assessment_lines:
+                        print(f"    {line}")
             else:
                 last_msg = hooks.git(["log", "--oneline", "-1"], str(config.cors_root))
                 if "auto-revert: protected path violation" in last_msg:
@@ -441,6 +484,7 @@ def execute_iteration(
                             rogue_kind="auto_reverted_mutation",
                             failure_source="tree_policy",
                             failure_detail=f"immutable path violation → {on_reject}",
+                            assessment=_policy_drift_assessment("tree_policy", f"immutable path violation → {on_reject}"),
                         )
                         trajectory.append(reject_step)
                         compiler.emit(reject_step)
@@ -454,6 +498,7 @@ def execute_iteration(
                             trajectory=trajectory,
                             compiler=compiler,
                             failure_detail=f"immutable path violation → {on_reject}",
+                            assessment=_policy_drift_assessment("tree_policy", f"immutable path violation → {on_reject}"),
                         )
                         compiler.resolve_current_gap(gap.hash)
                         return ExecutionOutcome(control="continue", step_result=diagnose_step)
@@ -474,6 +519,7 @@ def execute_iteration(
                         trajectory=trajectory,
                         compiler=compiler,
                         failure_detail=output[:500] if output else "protected path violation",
+                        assessment=_policy_drift_assessment("tree_policy", output[:500] if output else "protected path violation"),
                     )
                     return ExecutionOutcome(control="continue", step_result=step_result)
 
@@ -821,10 +867,12 @@ def execute_iteration(
         )
         if target_entity is not None and Path(target_entity.source).name == "admin.st":
             session.inject(
-                "## Canonical admin continuity\n"
-                "admin.st is the official operator init package for this system.\n"
+                "## Admin Primitive\n"
+                "admin.st is the admin-user primitive for this system.\n"
+                "- On this machine, operator identity resolves to admin.st with priority over all other entities.\n"
+                "- Entity/profile machinery may exist for others, but admin.st is the canonical operator entity.\n"
                 "- Do not rename it away from admin.\n"
-                "- Preserve its trigger, deterministic init steps, refs scaffold, and stable init role.\n"
+                "- Update admin.st in place when persisting operator preferences or corrections.\n"
                 "- Treat requested preference changes as additive semantic updates, not a license to rewrite the package shape.\n"
                 "- Do not rewrite desc, lineage, or package identity unless the user explicitly asked.\n"
             )
@@ -873,9 +921,9 @@ def execute_iteration(
             "- If this gap is about updating an existing user/contact identity, update that existing entity in place.\n"
             "- Do not create a second on_contact entity for the same external contact.\n"
             "- Reuse the existing trigger and include existing_ref when you are updating a known entity.\n\n"
-            "### Canonical admin rule\n"
-            "- admin.st is the official operator init package, not a generic personal note.\n"
-            "- If you are updating admin.st, preserve its package identity as admin and keep the init scaffold stable.\n"
+            "### Admin primitive rule\n"
+            "- admin.st is the admin-user primitive on this machine and has priority over all other entities for operator identity.\n"
+            "- If the target is the operator, update admin.st in place rather than creating or preferring another entity profile.\n"
             "- Limit admin.st changes to additive semantic updates unless the user explicitly requested a structural rewrite.\n\n"
             "### Composition rule\n"
             "Compose from existing entities and workflows first. Reuse known hashes where possible.\n"
@@ -934,6 +982,14 @@ def execute_iteration(
             else:
                 if code != 0:
                     session.inject(f"## ST BUILDER FAILED\n{output}")
+                invalid_doc = _extract_invalid_generated_json(output) if code != 0 else None
+                assessment_lines = []
+                if code != 0:
+                    first_error = next((line.strip()[2:] for line in output.splitlines() if line.strip().startswith("- ")), None)
+                    if first_error:
+                        assessment_lines.append(f"builder-error: {first_error}")
+                if target_entity is not None:
+                    assessment_lines.extend(hooks.step_assessment(target_entity.payload, invalid_doc or target_entity.payload, target_entity.source))
                 step_result = _emit_rogue_with_diagnosis(
                     desc=f"reprogramme failed: {gap.desc}",
                     origin_step=origin_step,
@@ -944,6 +1000,7 @@ def execute_iteration(
                     trajectory=trajectory,
                     compiler=compiler,
                     failure_detail=output[:500] if output else None,
+                    assessment=assessment_lines,
                 )
                 compiler.resolve_current_gap(gap.hash)
         else:

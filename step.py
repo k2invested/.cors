@@ -236,6 +236,7 @@ class Step:
     rogue_kind:   Optional[str] = None  # policy_violation, codon_failure, compile_invalid, etc.
     failure_source: Optional[str] = None  # which tool/runtime path failed
     failure_detail: Optional[str] = None  # compact machine-visible failure summary
+    assessment:   list[str] = field(default_factory=list)  # deterministic post-observation / commit assessment
 
     @staticmethod
     def create(desc: str,
@@ -248,7 +249,8 @@ class Step:
                rogue: bool = False,
                rogue_kind: str | None = None,
                failure_source: str | None = None,
-               failure_detail: str | None = None) -> "Step":
+               failure_detail: str | None = None,
+               assessment: list[str] | None = None) -> "Step":
         t = time.time()
         srefs = step_refs or []
         crefs = content_refs or []
@@ -267,6 +269,7 @@ class Step:
             rogue_kind=rogue_kind,
             failure_source=failure_source,
             failure_detail=failure_detail,
+            assessment=assessment or [],
         )
 
     def is_mutation(self) -> bool:
@@ -318,6 +321,8 @@ class Step:
             d["failure_source"] = self.failure_source
         if self.failure_detail:
             d["failure_detail"] = self.failure_detail
+        if self.assessment:
+            d["assessment"] = self.assessment
         return d
 
     @staticmethod
@@ -356,6 +361,7 @@ class Step:
             rogue_kind=d.get("rogue_kind"),
             failure_source=d.get("failure_source"),
             failure_detail=d.get("failure_detail"),
+            assessment=d.get("assessment", []),
         )
 
 
@@ -763,6 +769,8 @@ class Trajectory:
                 f"  {branch}─ {self._step_signature(step)} step:{step.hash} "
                 f"\"{step.desc}\"{ref_str}{commit_str}{time_tag}{rogue_tag}"
             )
+            for assessment_line in step.assessment:
+                lines.append(f"  {cont}   assessment: {assessment_line}")
 
             active = [g for g in step.gaps if not g.dormant and not g.resolved]
             resolved = [g for g in step.gaps if g.resolved]
@@ -814,6 +822,8 @@ class Trajectory:
                 f"{branch}─ {self._step_signature(step)} step:{step.hash} "
                 f"\"{step.desc}\"{ref_str}{commit_str}{time_tag}{rogue_tag}"
             )
+            for assessment_line in step.assessment:
+                lines.append(f"{cont}   assessment: {assessment_line}")
 
             for j, gap in enumerate(step.gaps):
                 is_last_gap = (j == len(step.gaps) - 1)
@@ -855,4 +865,6 @@ class Trajectory:
                 f"  {branch}─ {self._step_signature(step)} step:{step.hash} "
                 f"\"{step.desc}\"{rogue_tag}{ref_str}{commit_str}{time_tag}"
             )
+            for assessment_line in step.assessment:
+                lines.append(f"  │   assessment: {assessment_line}")
         return lines
