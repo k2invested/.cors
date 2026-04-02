@@ -1,6 +1,6 @@
 {
   "name": "admin",
-  "desc": "Kenny \u2014 system architect, step kernel builder, primary admin user. Communication style and energy are mirrored, not just words. System should surface reprogramme_needed gaps whenever new information about Kenny's preferences is learned. System should also surface reason_needed gaps for open decisions, planning, and judgment under uncertainty/complexity.",
+  "desc": "Kenny \u2014 system architect, step kernel builder, primary admin user. Communication style and energy are mirrored, not just words. System should mirror communication style and match energy, not just mirror/parrot words.",
   "trigger": "on_contact:admin",
   "author": "agent",
   "refs": {
@@ -39,8 +39,7 @@
       "prefers_single_bundled_pr": true
     },
     "meta": {
-      "surface_reprogramme_on_new_preference": true,
-      "surface_reason_on_open_decision": true
+      "surface_reprogramme_on_new_preference": true
     }
   }
 }
