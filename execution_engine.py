@@ -277,8 +277,29 @@ def _merged_clarify_desc(gaps: list[Gap]) -> str:
     if not descs:
         return "clarification needed"
     if len(descs) == 1:
-        return f"clarification needed: {descs[0]}"
-    return "clarification needed:\n- " + "\n- ".join(descs)
+        return f"clarify frontier: {descs[0]}"
+    return "clarify frontier:\n- " + "\n- ".join(descs)
+
+
+def _build_clarify_frontier_step(
+    *,
+    origin_step: Step,
+    merged_gaps: list[Gap],
+    chain_id: str | None,
+) -> Step:
+    step_refs = list(dict.fromkeys(
+        [origin_step.hash] + [ref for gap in merged_gaps for ref in gap.step_refs]
+    ))
+    content_refs = list(dict.fromkeys(
+        ref for gap in merged_gaps for ref in gap.content_refs
+    ))
+    return Step.create(
+        desc=_merged_clarify_desc(merged_gaps),
+        step_refs=step_refs,
+        content_refs=content_refs,
+        gaps=merged_gaps,
+        chain_id=chain_id,
+    )
 
 
 def _reprogramme_mode_for_source(path: str | None) -> str | None:
@@ -359,11 +380,9 @@ def execute_iteration(
     if gap.vocab == "clarify_needed":
         print("  → clarify needed: halting iteration")
         merged_gaps = _collect_clarify_frontier(compiler, gap)
-        clarify_step = Step.create(
-            desc=_merged_clarify_desc(merged_gaps),
-            step_refs=[origin_step.hash],
-            content_refs=list(dict.fromkeys(ref for clarify_gap in merged_gaps for ref in clarify_gap.content_refs)),
-            gaps=merged_gaps,
+        clarify_step = _build_clarify_frontier_step(
+            origin_step=origin_step,
+            merged_gaps=merged_gaps,
             chain_id=entry.chain_id,
         )
         trajectory.append(clarify_step)

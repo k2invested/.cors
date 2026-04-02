@@ -1292,6 +1292,23 @@ def test_p12_collect_clarify_frontier_merges_current_and_active_deduped():
     assert [gap.desc for gap in merged] == ["question one", "question two"]
 
 
+def test_p12_build_clarify_frontier_step_has_single_canonical_desc_and_refs():
+    origin = make_step("origin")
+    gap1 = make_gap("question one", content_refs=["a"], step_refs=["s1"], vocab="clarify_needed")
+    gap2 = make_gap("question two", content_refs=["b"], step_refs=["s2"], vocab="clarify_needed")
+
+    step = execution_engine_module._build_clarify_frontier_step(
+        origin_step=origin,
+        merged_gaps=[gap1, gap2],
+        chain_id="chain1",
+    )
+
+    assert step.desc.startswith("clarify frontier:")
+    assert step.step_refs == [origin.hash, "s1", "s2"]
+    assert step.content_refs == ["a", "b"]
+    assert len(step.gaps) == 2
+
+
 def test_p12_clarify_iteration_emits_single_merged_step():
     class FakeSession:
         def inject(self, content: str, role: str = "user"):
@@ -1351,6 +1368,7 @@ def test_p12_clarify_iteration_emits_single_merged_step():
     assert outcome.control == "break"
     assert outcome.step_result is not None
     assert len(outcome.step_result.gaps) == 2
+    assert outcome.step_result.desc.startswith("clarify frontier:")
     assert outcome.step_result.content_refs == ["a", "b"]
     assert "question one" in outcome.step_result.desc
     assert "question two" in outcome.step_result.desc
