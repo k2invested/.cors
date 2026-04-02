@@ -50,7 +50,7 @@ from compile import (
     is_observe,
     vocab_priority,
 )
-from skills.loader import Skill, SkillRegistry, load_all, load_skill
+from skills.loader import Skill, SkillRegistry, SkillStep, load_all, load_skill
 from step import Chain, Epistemic, Gap, Step, Trajectory, absolute_time, blob_hash, chain_hash, relative_time
 from tools import chain_to_st as chain_to_st_module
 from tools import st_builder as st_builder_module
@@ -478,6 +478,7 @@ P5_CASES = [
     ("find_identity_skill_returns_admin", lambda: loop._find_identity_skill("discord:784778107013431296", registry()) == skill("admin")),
     ("render_identity_has_preferences", lambda: "## Preferences" in loop._render_identity(skill("admin"))),
     ("render_identity_has_access_rules_when_present", lambda: "## Access Rules" in loop._render_identity(skill("admin")) if "access_rules" in skill_data("admin") else True),
+    ("render_identity_pending_bootstrap_shows_initiation", lambda: "## Initiation" in loop._render_identity(load_skill(str(SKILLS_DIR / "entities" / "user_discord_1132422022144729158.st")))),
     ("reprogramme_skill_trigger_is_vocab", lambda: skill("reprogramme").trigger == "on_vocab:reprogramme_needed"),
     ("reprogramme_skill_all_steps_loaded", lambda: skill("reprogramme").step_count() == 3),
     ("reason_skill_mentions_background_subagent", lambda: "background sub-agent" in skill_data("reason")["desc"].lower()),
@@ -497,7 +498,8 @@ P5_CASES = [
     ("init_user_intent_prefers_get_to_know_questions", lambda: loop._build_init_user_intent("discord:123", "hi")["preferences"]["onboarding"]["get_to_know_entity"] is True),
     ("init_user_intent_bootstrap_is_only_deterministic_reprogramme", lambda: loop._build_init_user_intent("discord:123", "hi")["preferences"]["onboarding"]["deterministic_reprogramme_mode"] == "bootstrap_only"),
     ("init_user_intent_passive_reprogramme_is_optional", lambda: loop._build_init_user_intent("discord:123", "hi")["preferences"]["onboarding"]["passive_reprogramme_optional"] is True),
-    ("init_user_intent_loads_onboarding_preferences", lambda: any(step["action"] == "load_onboarding_preferences" for step in loop._build_init_user_intent("discord:123", "hi")["steps"])),
+    ("init_user_intent_has_single_initiation_step", lambda: [step["action"] for step in loop._build_init_user_intent("discord:123", "hi")["steps"]] == ["initiate_entity"]),
+    ("init_user_intent_initiation_step_resolves_full_profile", lambda: loop._build_init_user_intent("discord:123", "hi")["steps"][0]["resolve"] == ["identity", "preferences", "access_rules", "init"]),
     ("reprogramme_intent_accepts_semantic_skeleton", lambda: loop._is_reprogramme_intent({
         "version": "semantic_skeleton.v1",
         "artifact": {"kind": "entity"},
@@ -1316,6 +1318,72 @@ def test_p12_run_turn_bootstraps_unknown_contact_even_on_no_gap_turn(monkeypatch
     assert response == "hello"
     assert synth_facts["commits"] == ["boot123"]
     assert synth_facts["successful_mutations"] == ["reprogrammed bootstrap: user_discord_123"]
+
+
+def test_p12_run_turn_bootstraps_before_identity_lookup(monkeypatch, tmp_path):
+    class FakeSession:
+        def set_system(self, content: str):
+            pass
+
+        def inject(self, content: str, role: str = "user"):
+            pass
+
+        def call(self, user_content: str = None) -> str:
+            return "No gaps."
+
+    initial_registry = registry()
+    bootstrapped_skill = Skill(
+        hash="boot_hash",
+        name="user_discord_123",
+        desc="Bootstrap entity for inbound contact discord:123",
+        steps=[SkillStep(action="initiate_entity", desc="initiate", post_diff=False, resolve=["identity", "preferences", "access_rules", "init"])],
+        source=str(SKILLS_DIR / "entities" / "user_discord_123.st"),
+        display_name="user_discord_123",
+        trigger="on_contact:discord:123",
+        artifact_kind="entity",
+        payload={"identity": {"external_id": "discord:123"}, "init": {"status": "pending"}},
+    )
+    refreshed_registry = SkillRegistry()
+    for s in initial_registry.all_skills():
+        refreshed_registry.register(s)
+    refreshed_registry.register(bootstrapped_skill)
+
+    loads = {"count": 0}
+
+    def fake_load_all(path: str):
+        loads["count"] += 1
+        return initial_registry if loads["count"] == 1 else refreshed_registry
+
+    seen_identity = {"value": False}
+
+    def fake_find_identity(contact_id, registry_obj):
+        if registry_obj is refreshed_registry:
+            seen_identity["value"] = True
+            return bootstrapped_skill
+        return None
+
+    monkeypatch.setattr(loop, "Session", lambda model=None: FakeSession())
+    monkeypatch.setattr(loop, "load_all", fake_load_all)
+    monkeypatch.setattr(loop, "git_head", lambda: "abc123")
+    monkeypatch.setattr(loop, "git_tree", lambda: "head tree")
+    monkeypatch.setattr(loop, "_find_dangling_gaps", lambda trajectory: [])
+    monkeypatch.setattr(loop, "_parse_step_output", lambda raw, step_refs, content_refs: (make_step("origin"), []))
+    monkeypatch.setattr(loop, "_find_identity_skill", fake_find_identity)
+    monkeypatch.setattr(loop, "_render_identity", lambda skill_obj: "## Identity")
+    monkeypatch.setattr(loop, "_save_turn", lambda trajectory, state=None: None)
+    monkeypatch.setattr(loop, "_synthesize", lambda session, user_message, turn_facts=None: "hello")
+    monkeypatch.setattr(loop, "_bootstrap_contact_entity", lambda registry_obj, contact_id, user_message: make_step("reprogrammed bootstrap: user_discord_123", commit="boot123"))
+
+    response = loop.run_turn(
+        "Hey",
+        "discord:123",
+        traj_file=tmp_path / "trajectory.json",
+        chains_file=tmp_path / "chains.json",
+        chains_dir=tmp_path / "chains",
+    )
+
+    assert response == "hello"
+    assert seen_identity["value"] is True
 
 
 def test_p12_inline_reprogramme_does_not_trigger_heartbeat():

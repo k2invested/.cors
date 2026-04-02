@@ -1187,6 +1187,11 @@ def run_turn(
     Trajectory.load_chains(str(state.chains_file), trajectory)
     registry = load_all(str(SKILLS_DIR))
     _skill_registry = registry
+    pre_bootstrap_step = _bootstrap_contact_entity(registry, contact_id, user_message)
+    if pre_bootstrap_step:
+        trajectory.append(pre_bootstrap_step)
+        registry = load_all(str(SKILLS_DIR))
+        _skill_registry = registry
     head = git_head()
     head_tree = git_tree()
 
@@ -1321,6 +1326,9 @@ def run_turn(
         "successful_mutations": [],
         "attempted_mutations": [],
     }
+    if pre_bootstrap_step and pre_bootstrap_step.commit:
+        turn_facts["commits"].append(pre_bootstrap_step.commit)
+        turn_facts["successful_mutations"].append(pre_bootstrap_step.desc)
 
     # Tag origin gaps with current turn
     for g in origin_gaps:
@@ -1333,12 +1341,6 @@ def run_turn(
             print(f"  → {readmitted} cross-turn gap(s) re-admitted")
 
     if not origin_gaps and not dangling:
-        reprogramme_step = _bootstrap_contact_entity(registry, contact_id, user_message)
-        if reprogramme_step:
-            trajectory.append(reprogramme_step)
-            if reprogramme_step.commit:
-                turn_facts["commits"].append(reprogramme_step.commit)
-                turn_facts["successful_mutations"].append(reprogramme_step.desc)
         # No gaps → auto-synthesize
         print("\n── AUTO-SYNTH (no gaps) ──")
         response = _synthesize(session, user_message, turn_facts)
@@ -1410,25 +1412,12 @@ def run_turn(
         if forced_step:
             print(f"  → forced frontier persisted with {len(forced_step.gaps)} gap(s)")
 
-    # ── 6. FIRST-CONTACT BOOTSTRAP ──────────────────────────────────
-    #
-    # Only first-seen inbound contacts are auto-bootstrapped here.
-    # Normal semantic updates must surface through explicit
-    # reprogramme_needed gaps rather than an every-turn housekeeping pass.
-
-    reprogramme_step = _bootstrap_contact_entity(registry, contact_id, user_message)
-    if reprogramme_step:
-        trajectory.append(reprogramme_step)
-        if reprogramme_step.commit:
-            turn_facts["commits"].append(reprogramme_step.commit)
-            turn_facts["successful_mutations"].append(reprogramme_step.desc)
-
-    # ── 7. SYNTHESIS ─────────────────────────────────────────────────
+    # ── 6. SYNTHESIS ─────────────────────────────────────────────────
 
     print("\n── SYNTHESIS ──")
     response = _synthesize(session, user_message, turn_facts)
 
-    # ── 8. HEARTBEAT ─────────────────────────────────────────────────
+    # ── 7. HEARTBEAT ─────────────────────────────────────────────────
     #
     # Law 9: the loop always closes.
     #
@@ -1462,7 +1451,7 @@ def run_turn(
         trajectory.append(heartbeat_step)
         print(f"  → heartbeat gap:{heartbeat_gap.hash[:8]} persisted for next turn")
 
-    # ── 9. SAVE ──────────────────────────────────────────────────────
+    # ── 8. SAVE ──────────────────────────────────────────────────────
 
     _save_turn(trajectory, state)
 
@@ -1919,27 +1908,13 @@ def _build_init_user_intent(contact_id: str, user_message: str) -> dict:
         },
         "steps": [
             {
-                "action": "load_identity",
-                "desc": "surface who this inbound contact appears to be from current known metadata",
-                "resolve": ["identity"],
-                "post_diff": False,
-            },
-            {
-                "action": "load_onboarding_preferences",
-                "desc": "surface get-to-know instructions and passive profile-maintenance preferences for this contact",
-                "resolve": ["preferences"],
-                "post_diff": False,
-            },
-            {
-                "action": "load_access_rules",
-                "desc": "surface current access and execution permissions for this contact",
-                "resolve": ["access_rules"],
-                "post_diff": False,
-            },
-            {
-                "action": "load_init_state",
-                "desc": "surface onboarding and init state for this contact",
-                "resolve": ["init"],
+                "action": "initiate_entity",
+                "desc": (
+                    "This is a newly bound contact entity. Ask a small number of concise get-to-know-you questions "
+                    "when useful, learn stable facts and preferences over time, and surface reprogramme_needed when "
+                    "new durable knowledge should be written back to this entity."
+                ),
+                "resolve": ["identity", "preferences", "access_rules", "init"],
                 "post_diff": False,
             },
         ],
@@ -1988,6 +1963,10 @@ def _render_identity(skill: Skill) -> str:
         lines.append("## Init")
         for k, v in init.items():
             lines.append(f"  {k}: {v}")
+
+    if init.get("status") == "pending" and skill.steps:
+        lines.append("## Initiation")
+        lines.append(f"  {skill.steps[0].desc}")
 
     return "\n".join(lines)
 
