@@ -13,6 +13,7 @@ from typing import Any
 
 from env_loader import load_env
 from loop import run_turn
+from step import Trajectory
 
 
 ROOT = Path(__file__).resolve().parent
@@ -130,6 +131,52 @@ def handle_transport_command(prompt: str, contact_id: str) -> str | None:
     return None
 
 
+def trajectory_step_count(contact_id: str) -> int:
+    paths = state_paths_for_contact(contact_id)
+    traj_file = paths["traj_file"]
+    if not traj_file.exists():
+        return 0
+    return len(Trajectory.load(str(traj_file)).order)
+
+
+def new_assessment_notifications(contact_id: str, since_step_count: int) -> list[str]:
+    paths = state_paths_for_contact(contact_id)
+    traj_file = paths["traj_file"]
+    if not traj_file.exists():
+        return []
+    traj = Trajectory.load(str(traj_file))
+    notifications: list[str] = []
+    for step_hash in traj.order[since_step_count:]:
+        step = traj.resolve(step_hash)
+        if not step or not step.assessment:
+            continue
+        notifications.append(step.desc)
+        notifications.extend(step.assessment)
+    return notifications
+
+
+def production_destinations_for_guild(guild: Any, diff_channel_ids: set[int]) -> list[Any]:
+    if guild is None:
+        return []
+    found: list[Any] = []
+    seen: set[int] = set()
+    for attr in ("threads", "text_channels", "channels"):
+        for channel in getattr(guild, attr, []) or []:
+            channel_id = getattr(channel, "id", None)
+            if channel_id in seen:
+                continue
+            name = str(getattr(channel, "name", "") or "").strip().lower()
+            if channel_id in diff_channel_ids or name == "production":
+                seen.add(channel_id)
+                found.append(channel)
+    return found
+
+
+def format_diff_notification(contact_id: str, lines: list[str]) -> str:
+    body = "\n".join(lines)
+    return f"diff notification for {contact_id}\n{body}".strip()
+
+
 def build_client():
     import discord
 
@@ -142,6 +189,7 @@ def build_client():
 
     require_mention = _env_flag("DISCORD_REQUIRE_MENTION", False)
     allowed_channel_ids = _env_id_set("DISCORD_ALLOWED_CHANNEL_IDS")
+    diff_channel_ids = _env_id_set("DISCORD_DIFF_CHANNEL_IDS")
 
     class CorsDiscordClient(discord.Client):
         def __init__(self):
@@ -149,6 +197,7 @@ def build_client():
             self.turn_lock = asyncio.Lock()
             self.require_mention = require_mention
             self.allowed_channel_ids = allowed_channel_ids
+            self.diff_channel_ids = diff_channel_ids
 
         async def on_ready(self):
             logging.info("Discord bot logged in as %s (%s)", self.user, getattr(self.user, "id", "?"))
@@ -203,6 +252,7 @@ def build_client():
             )
 
             try:
+                prior_step_count = trajectory_step_count(contact_id)
                 async with self.turn_lock:
                     async with message.channel.typing():
                         response = await asyncio.to_thread(
@@ -218,6 +268,13 @@ def build_client():
 
             for chunk in split_discord_message(response):
                 await message.channel.send(chunk)
+
+            diff_lines = new_assessment_notifications(contact_id, prior_step_count)
+            if diff_lines and getattr(message, "guild", None) is not None:
+                payload = format_diff_notification(contact_id, diff_lines)
+                for destination in production_destinations_for_guild(message.guild, self.diff_channel_ids):
+                    for chunk in split_discord_message(payload):
+                        await destination.send(chunk)
 
     return CorsDiscordClient()
 

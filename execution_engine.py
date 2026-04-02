@@ -971,6 +971,7 @@ def execute_iteration(
                 commit_sha = None
             if commit_sha:
                 print(f"  → committed: {commit_sha}")
+                compiler.record_execution(vocab, True)
                 step_result = Step.create(
                     desc=f"reprogrammed: {gap.desc}",
                     step_refs=[origin_step.hash],
@@ -978,7 +979,37 @@ def execute_iteration(
                     commit=commit_sha,
                     chain_id=entry.chain_id,
                 )
+                commit_path = None
+                if written_path:
+                    try:
+                        commit_path = str(Path(written_path).resolve().relative_to(config.cors_root))
+                    except ValueError:
+                        commit_path = written_path
+                postcond_refs = [f"{commit_sha}:{commit_path}"] if commit_path else [commit_sha]
+                postcond = Gap.create(
+                    desc=f"observe reprogramme commit:{commit_sha}",
+                    content_refs=postcond_refs,
+                    step_refs=[step_result.hash],
+                )
+                postcond.scores = Epistemic(relevance=1.0, confidence=1.0, grounded=0.0)
+                postcond.vocab = "hash_resolve_needed"
+                assessment_lines = hooks.commit_assessment(commit_sha)
+                postcond_step = Step.create(
+                    desc=f"postcondition: {gap.desc}",
+                    step_refs=[step_result.hash],
+                    content_refs=postcond_refs,
+                    gaps=[postcond],
+                    chain_id=entry.chain_id,
+                    assessment=assessment_lines,
+                )
+                trajectory.append(postcond_step)
+                compiler.emit(postcond_step)
                 compiler.resolve_current_gap(gap.hash)
+                print(f"  → postcondition gap injected: hash_resolve_needed → {postcond_refs}")
+                if assessment_lines:
+                    print("  → postcondition assessment:")
+                    for line in assessment_lines:
+                        print(f"    {line}")
             else:
                 if code != 0:
                     session.inject(f"## ST BUILDER FAILED\n{output}")

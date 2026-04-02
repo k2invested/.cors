@@ -1116,6 +1116,75 @@ def test_p12_inline_reprogramme_does_not_trigger_heartbeat():
     assert compiler.needs_heartbeat() is False
 
 
+def test_p12_inline_reprogramme_emits_postcondition_assessment_before_synth():
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps({
+                "artifact_kind": "entity",
+                "name": "admin",
+                "desc": "updated admin preferences",
+            })
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("persist admin preference", content_refs=[skill("admin").hash], vocab="reprogramme_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("Written: /Users/k2invested/Desktop/cors/skills/admin.st", 0),
+        auto_commit=lambda message, paths=None: ("abc123", None),
+        parse_step_output=lambda raw, step_refs, content_refs, chain_id=None: (make_step("noop"), []),
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: "/Users/k2invested/Desktop/cors/skills/admin.st",
+        is_reprogramme_intent=lambda intent: True,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: ["skills/admin.st [step] +1 -0", "  validator.status: ok"],
+        step_assessment=lambda before, after, path=None: ["  validator: ok"],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    postconditions = [step for step in traj.steps.values() if step.desc == "postcondition: persist admin preference"]
+    assert len(postconditions) == 1
+    assert postconditions[0].assessment == ["skills/admin.st [step] +1 -0", "  validator.status: ok"]
+    assert len(postconditions[0].gaps) == 1
+    assert postconditions[0].gaps[0].vocab == "hash_resolve_needed"
+
+
 def test_p12_reprogramme_failure_does_not_commit_without_written_path():
     class FakeSession:
         def __init__(self):

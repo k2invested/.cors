@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import discord_bot
+from step import Step, Trajectory
 
 
 def fake_message(
@@ -90,3 +91,55 @@ def test_split_discord_message_prefers_boundaries():
     chunks = discord_bot.split_discord_message("a " * 1200, limit=100)
     assert len(chunks) > 1
     assert all(len(chunk) <= 100 for chunk in chunks)
+
+
+def test_trajectory_step_count_returns_zero_when_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(discord_bot, "STATE_ROOT", tmp_path / "state")
+    assert discord_bot.trajectory_step_count("discord:42") == 0
+
+
+def test_new_assessment_notifications_only_collects_new_assessment_steps(tmp_path, monkeypatch):
+    monkeypatch.setattr(discord_bot, "STATE_ROOT", tmp_path / "state")
+    contact_id = "discord:42"
+    traj_path = discord_bot.state_paths_for_contact(contact_id)["traj_file"]
+    traj_path.parent.mkdir(parents=True, exist_ok=True)
+
+    traj = Trajectory()
+    traj.append(Step.create("seed"))
+    traj.append(Step.create("postcondition: persist", assessment=["skills/admin.st [step] +1 -0"]))
+    traj.append(Step.create("later", assessment=["skills/top_rate_estates_ltd.st [step] +35 -0"]))
+    traj.save(traj_path)
+
+    lines = discord_bot.new_assessment_notifications(contact_id, 1)
+    assert lines == [
+        "postcondition: persist",
+        "skills/admin.st [step] +1 -0",
+        "later",
+        "skills/top_rate_estates_ltd.st [step] +35 -0",
+    ]
+
+
+def test_production_destinations_prefers_named_channel_and_configured_ids():
+    production = SimpleNamespace(id=10, name="production")
+    configured = SimpleNamespace(id=11, name="alerts")
+    duplicate = SimpleNamespace(id=10, name="production")
+    guild = SimpleNamespace(
+        threads=[production],
+        text_channels=[configured],
+        channels=[duplicate],
+    )
+
+    destinations = discord_bot.production_destinations_for_guild(guild, {11})
+    assert destinations == [production, configured]
+
+
+def test_format_diff_notification_includes_contact_and_lines():
+    payload = discord_bot.format_diff_notification(
+        "discord:42",
+        ["skills/admin.st [step] +1 -0", "  validator.status: ok"],
+    )
+    assert payload == (
+        "diff notification for discord:42\n"
+        "skills/admin.st [step] +1 -0\n"
+        "  validator.status: ok"
+    )
