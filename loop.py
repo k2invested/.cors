@@ -1758,15 +1758,24 @@ def _find_dangling_gaps(trajectory: Trajectory) -> list[Gap]:
     """Find explicitly persisted unresolved gaps from prior turns.
 
     Cross-turn carry is opt-in. Successful turns clear their frontier.
-    Only clarify/error/forced-synth/heartbeat gaps that were explicitly
-    marked carry_forward are re-admitted automatically.
+    Only explicitly persisted non-clarify gaps are re-admitted automatically.
+    Clarify gaps are one-turn frontier questions; later user turns should
+    produce fresh judgment rather than replaying old clarify leaves.
     """
-    dangling = []
+    dangling: list[Gap] = []
+    seen: set[str] = set()
     for step_hash in trajectory.order:
         step = trajectory.resolve(step_hash)
         if step:
             for gap in step.gaps:
-                if not gap.resolved and not gap.dormant and gap.carry_forward:
+                if (
+                    not gap.resolved
+                    and not gap.dormant
+                    and gap.carry_forward
+                    and gap.vocab != "clarify_needed"
+                    and gap.hash not in seen
+                ):
+                    seen.add(gap.hash)
                     dangling.append(gap)
     return dangling
 

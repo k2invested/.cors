@@ -335,7 +335,6 @@ def execute_iteration(
 
     if gap.vocab == "clarify_needed":
         print("  → clarify needed: halting iteration")
-        gap.carry_forward = True
         clarify_step = Step.create(
             desc=f"clarification needed: {gap.desc}",
             step_refs=[origin_step.hash],

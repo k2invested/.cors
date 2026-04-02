@@ -1243,6 +1243,36 @@ def test_p12_find_dangling_gaps_only_returns_carry_forward_gaps():
     assert [gap.desc for gap in dangling] == ["carry me"]
 
 
+def test_p12_find_dangling_gaps_ignores_clarify_even_if_marked_carry_forward():
+    traj = Trajectory()
+    clarify = make_gap("need user detail", vocab="clarify_needed")
+    clarify.carry_forward = True
+    traj.append(make_step("clarify", gaps=[clarify]))
+
+    assert loop._find_dangling_gaps(traj) == []
+
+
+def test_p12_find_dangling_gaps_dedupes_by_hash():
+    traj = Trajectory()
+    gap = make_gap("same persisted gap", vocab="reason_needed")
+    gap.carry_forward = True
+    clone = Gap(
+        hash=gap.hash,
+        desc=gap.desc,
+        content_refs=list(gap.content_refs),
+        step_refs=list(gap.step_refs),
+        vocab=gap.vocab,
+        vocab_score=gap.vocab_score,
+        carry_forward=True,
+    )
+    traj.append(make_step("one", gaps=[gap]))
+    traj.append(make_step("two", gaps=[clone]))
+
+    dangling = loop._find_dangling_gaps(traj)
+    assert len(dangling) == 1
+    assert dangling[0].hash == gap.hash
+
+
 def test_p12_persist_forced_synth_frontier_clones_active_ledger_gaps():
     traj = Trajectory()
     compiler = Compiler(traj, current_turn=3)
