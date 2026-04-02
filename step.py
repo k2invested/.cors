@@ -162,6 +162,7 @@ class Gap:
     resolved:    bool = False           # True when chain closed this gap
     dormant:     bool = False           # True if below threshold, stored but not acted on
     turn_id:     Optional[int] = None  # which turn created this gap (for cross-turn threshold)
+    carry_forward: bool = False        # True when explicitly persisted for cross-turn resume
 
     @staticmethod
     def create(desc: str,
@@ -200,6 +201,8 @@ class Gap:
             d["resolved"] = True
         if self.dormant:
             d["dormant"] = True
+        if self.carry_forward:
+            d["carry_forward"] = True
         return d
 
 
@@ -344,6 +347,7 @@ class Step:
                 vocab_score=g.get("vocab_score", 0.0),
                 resolved=g.get("resolved", False),
                 dormant=g.get("dormant", False),
+                carry_forward=g.get("carry_forward", False),
             )
             gaps.append(gap)
 

@@ -1344,11 +1344,13 @@ def run_turn(
     # Pop gap → resolve hashes → execute by vocab → inject result →
     # new step forms → compiler emits child gaps → repeat
 
+    forced_synth = True
     for iteration in range(MAX_ITERATIONS):
         entry, signal = compiler.next()
 
         if entry is None or signal == GovernorSignal.HALT:
             print(f"\n  HALT (iteration {iteration})")
+            forced_synth = False
             break
 
         gap = entry.gap
@@ -1373,6 +1375,7 @@ def run_turn(
         )
 
         if outcome.control == "break":
+            forced_synth = False
             break
 
         if gap.vocab == "reprogramme_needed" or (gap.vocab and is_mutate(gap.vocab)):
@@ -1386,7 +1389,14 @@ def run_turn(
         # Check if done
         if compiler.is_done():
             print(f"\n  ALL GAPS RESOLVED (iteration {iteration + 1})")
+            forced_synth = False
             break
+
+    if forced_synth:
+        print("\n── FORCED SYNTH: persisting unresolved frontier for next turn ──")
+        forced_step = _persist_forced_synth_frontier(trajectory, compiler, origin_step, current_turn)
+        if forced_step:
+            print(f"  → forced frontier persisted with {len(forced_step.gaps)} gap(s)")
 
     # ── 6. FIRST-CONTACT BOOTSTRAP ──────────────────────────────────
     #
@@ -1427,6 +1437,7 @@ def run_turn(
         heartbeat_gap.scores = Epistemic(relevance=0.9, confidence=0.8, grounded=0.0)
         heartbeat_gap.vocab = "reason_needed"
         heartbeat_gap.turn_id = current_turn
+        heartbeat_gap.carry_forward = True
         # Don't resolve — persist as dangling for next turn's resume
         heartbeat_step = Step.create(
             desc="heartbeat: automatic post-synth reason_needed for background workflow",
@@ -1724,21 +1735,52 @@ def _bootstrap_contact_entity(registry: SkillRegistry, contact_id: str,
 
 
 def _find_dangling_gaps(trajectory: Trajectory) -> list[Gap]:
-    """Find unresolved gaps from prior turns.
+    """Find explicitly persisted unresolved gaps from prior turns.
 
-    Scans the trajectory for gaps that were never resolved — either from
-    clarify_needed halts or interrupted turns. These are candidates for
-    resume. The LLM sees them in the trajectory tree and selects which
-    to carry forward by referencing them in its pre-diff.
+    Cross-turn carry is opt-in. Successful turns clear their frontier.
+    Only clarify/error/forced-synth/heartbeat gaps that were explicitly
+    marked carry_forward are re-admitted automatically.
     """
     dangling = []
     for step_hash in trajectory.order:
         step = trajectory.resolve(step_hash)
         if step:
             for gap in step.gaps:
-                if not gap.resolved and not gap.dormant:
+                if not gap.resolved and not gap.dormant and gap.carry_forward:
                     dangling.append(gap)
     return dangling
+
+
+def _clone_gap_for_carry_forward(gap: Gap, *, current_turn: int) -> Gap:
+    cloned = Gap.create(
+        desc=gap.desc,
+        content_refs=list(gap.content_refs),
+        step_refs=list(gap.step_refs),
+        origin=gap.origin,
+    )
+    cloned.scores = Epistemic(
+        relevance=gap.scores.relevance,
+        confidence=gap.scores.confidence,
+        grounded=gap.scores.grounded,
+    )
+    cloned.vocab = gap.vocab
+    cloned.vocab_score = gap.vocab_score
+    cloned.turn_id = current_turn
+    cloned.carry_forward = True
+    return cloned
+
+
+def _persist_forced_synth_frontier(trajectory: Trajectory, compiler: Compiler, origin_step: Step, current_turn: int) -> Step | None:
+    pending = [entry.gap for entry in compiler.ledger.active_gaps() if not entry.gap.resolved and not entry.gap.dormant]
+    if not pending:
+        return None
+    forced_step = Step.create(
+        desc="forced synth: unresolved frontier persisted for next turn",
+        step_refs=[origin_step.hash],
+        gaps=[_clone_gap_for_carry_forward(gap, current_turn=current_turn) for gap in pending],
+    )
+    trajectory.append(forced_step)
+    return forced_step
 
 
 def _find_identity_skill(contact_id: str, registry: SkillRegistry) -> Skill | None:

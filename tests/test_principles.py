@@ -377,6 +377,7 @@ P4_CASES = [
     ("gap_hash_changes_with_desc", lambda: make_gap("a").hash != make_gap("b").hash),
     ("gap_hash_changes_with_refs", lambda: make_gap("a", content_refs=["x"]).hash != make_gap("a", content_refs=["y"]).hash),
     ("gap_to_dict_carries_vocab", lambda: make_gap("a", vocab="pattern_needed").to_dict()["vocab"] == "pattern_needed"),
+    ("gap_to_dict_carries_carry_forward", lambda: (lambda g: (setattr(g, "carry_forward", True), g.to_dict()["carry_forward"])[1])(make_gap("a"))),
     ("gap_to_dict_carries_status_flags", lambda: (lambda d: d["resolved"] and d["dormant"])(
         make_gap("a", resolved=True, dormant=True).to_dict()
     )),
@@ -664,7 +665,11 @@ P10_CASES = [
     ("reprogramme_relevance_descends", lambda: [s["relevance"] for s in skill_data("reprogramme")["steps"]] == [1.0, 0.9, 0.8]),
     ("background_trigger_needs_heartbeat", lambda: (lambda comp: (comp.record_background_trigger("c1"), comp.needs_heartbeat())[1])(Compiler(Trajectory()))),
     ("await_suppresses_heartbeat", lambda: (lambda comp: (comp.record_background_trigger("c1"), comp.record_await("c1"), comp.needs_heartbeat())[2] is False)(Compiler(Trajectory()))),
-    ("dangling_gaps_find_active", lambda: len(loop._find_dangling_gaps((lambda traj: (traj.append(make_step("s", gaps=[make_gap("active")])), traj)[1])(Trajectory()))) == 1),
+    ("dangling_gaps_find_carry_forward_only", lambda: (lambda traj, gap: (
+        setattr(gap, "carry_forward", True),
+        traj.append(make_step("s", gaps=[gap])),
+        len(loop._find_dangling_gaps(traj)) == 1
+    )[2])(Trajectory(), make_gap("active"))),
     ("dangling_gaps_ignore_dormant", lambda: len(loop._find_dangling_gaps((lambda traj: (traj.append(make_step("s", gaps=[make_gap("d", dormant=True)])), traj)[1])(Trajectory()))) == 0),
     ("dangling_gaps_ignore_resolved", lambda: len(loop._find_dangling_gaps((lambda traj: (traj.append(make_step("s", gaps=[make_gap("r", resolved=True)])), traj)[1])(Trajectory()))) == 0),
     ("reason_steps_count", lambda: skill("reason").step_count() == 4),
@@ -1219,6 +1224,35 @@ def test_p12_resolve_current_gap_marks_trajectory_gap_resolved_for_cross_turn_re
     assert resolved_gap is not None
     assert resolved_gap.resolved is True
     assert loop._find_dangling_gaps(traj) == []
+
+
+def test_p12_find_dangling_gaps_only_returns_carry_forward_gaps():
+    traj = Trajectory()
+    carry = make_gap("carry me", vocab="reason_needed")
+    carry.carry_forward = True
+    plain = make_gap("drop me", vocab="hash_resolve_needed")
+    traj.append(make_step("resume", gaps=[carry, plain]))
+
+    dangling = loop._find_dangling_gaps(traj)
+    assert [gap.desc for gap in dangling] == ["carry me"]
+
+
+def test_p12_persist_forced_synth_frontier_clones_active_ledger_gaps():
+    traj = Trajectory()
+    compiler = Compiler(traj, current_turn=3)
+    origin_gap = make_gap("pending", vocab="hash_resolve_needed", relevance=0.9, confidence=0.9)
+    origin = make_step("origin", gaps=[origin_gap])
+    traj.append(origin)
+    compiler.emit_origin_gaps(origin)
+
+    forced = loop._persist_forced_synth_frontier(traj, compiler, origin, current_turn=3)
+
+    assert forced is not None
+    assert forced.desc == "forced synth: unresolved frontier persisted for next turn"
+    assert len(forced.gaps) == 1
+    assert forced.gaps[0].carry_forward is True
+    assert forced.gaps[0].desc == "pending"
+    assert forced.gaps[0].turn_id == 3
 
 
 def test_p12_reprogramme_failure_does_not_commit_without_written_path():

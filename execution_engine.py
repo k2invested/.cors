@@ -133,6 +133,7 @@ def _emit_rogue_with_diagnosis(
     )
     diagnose_gap.scores = Epistemic(relevance=1.0, confidence=0.9, grounded=0.0)
     diagnose_gap.vocab = "reason_needed"
+    diagnose_gap.carry_forward = True
 
     rogue_step = _make_rogue_step(
         desc=desc,
@@ -239,6 +240,7 @@ def execute_iteration(
 
     if gap.vocab == "clarify_needed":
         print("  → clarify needed: halting iteration")
+        gap.carry_forward = True
         clarify_step = Step.create(
             desc=f"clarification needed: {gap.desc}",
             step_refs=[origin_step.hash],
