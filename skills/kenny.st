@@ -1,11 +1,10 @@
 {
-  "name": "kenny",
-  "desc": "Kenny \u2014 system architect, step kernel builder, primary admin user. This entity encodes identity and preferences for communication, architecture, and workflow. Updated to remove 'mirror then extend' approach from communication preferences as explicitly instructed.",
+  "name": "Kenny",
+  "desc": "System architect and primary admin. Identity and preferences for Kenny, used for context injection and persistent calibration.",
   "trigger": "on_contact:discord:784778107013431296",
   "author": "agent",
   "refs": {
-    "commitment_chain_construction_spec": "eefcf9ff7e17",
-    "identity": "kenny:eb8a9f5890e0",
+    "admin": "72b1d5ffc964",
     "principles": "PRINCIPLES.md"
   },
   "steps": [],
@@ -15,12 +14,11 @@
     "username": "k2authorized",
     "discord_user_id": "784778107013431296",
     "email": "krepchequesupply@gmail.com",
-    "context": "Built this system from scratch. Thinks in primitives and recursive structures. Prefers composable solutions over constructions. Will push back hard on overengineering. Speaks fast, thinks in analogies, needs mirror-communication-style before implementation."
+    "context": "Built this system from scratch. Thinks in primitives and recursive structures. Prefers composable solutions over constructions. Will push back hard on overengineering. Speaks fast, thinks in analogies."
   },
   "preferences": {
     "communication": {
       "style": "direct, concise, no filler",
-      "mirror_then_extend": false,
       "mirror_communication_style": true,
       "match_energy": true,
       "no_trailing_summaries": true,
