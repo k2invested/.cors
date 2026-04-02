@@ -218,6 +218,15 @@ def _entity_target_for_reprogramme(gap: Gap, registry: Any) -> Any | None:
     return None
 
 
+def _new_action_origination_requires_reason(
+    gap: Gap,
+    *,
+    route_mode: str | None,
+    target_entity: Any | None,
+) -> bool:
+    return route_mode == "action_editor" and target_entity is None and gap.vocab != "reason_needed"
+
+
 def _reprogramme_mode_for_source(path: str | None) -> str | None:
     if not path:
         return None
@@ -349,6 +358,7 @@ def execute_iteration(
 
     elif vocab and is_mutate(vocab):
         policy = hooks.load_tree_policy()
+        target_skill = _entity_target_for_reprogramme(gap, registry)
         reroute_vocab = None
         for ref in gap.content_refs:
             rule = hooks.match_policy(ref, policy)
@@ -372,8 +382,15 @@ def execute_iteration(
                 reroute_vocab = "reprogramme_needed"
 
         if reroute_vocab == "reprogramme_needed" and not gap.route_mode:
-            target_skill = _entity_target_for_reprogramme(gap, registry)
             gap.route_mode = _determine_reprogramme_mode(gap, target_skill, policy)
+
+        if reroute_vocab == "reprogramme_needed" and _new_action_origination_requires_reason(
+            gap,
+            route_mode=gap.route_mode,
+            target_entity=target_skill,
+        ):
+            reroute_vocab = "reason_needed"
+            gap.route_mode = None
 
         if reroute_vocab:
             print(f"  → policy auto-route: {vocab} → {reroute_vocab}")
@@ -883,6 +900,11 @@ def execute_iteration(
         policy = hooks.load_tree_policy()
         target_entity = _entity_target_for_reprogramme(gap, registry)
         route_mode = _determine_reprogramme_mode(gap, target_entity, policy)
+        if _new_action_origination_requires_reason(gap, route_mode=route_mode, target_entity=target_entity):
+            print("  → action origination requires reason_needed first")
+            gap.vocab = "reason_needed"
+            compiler.ledger.stack.append(entry)
+            return ExecutionOutcome(control="continue")
         entity_data = hooks.resolve_entity(gap.content_refs, registry, trajectory)
         if entity_data:
             session.inject(f"## Existing entity data\n{entity_data}")

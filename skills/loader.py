@@ -260,6 +260,8 @@ def infer_artifact_kind(data: dict, path: str, is_command: bool) -> str:
         return "codon"
     if "entities" in Path(path).parts or Path(path).name == "admin.st":
         return "entity"
+    if "actions" in Path(path).parts:
+        return "action"
     has_semantics = any(field in data for field in SEMANTIC_FIELDS)
     has_steps = bool(data.get("steps"))
     if has_semantics and has_steps:

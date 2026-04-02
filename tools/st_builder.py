@@ -586,6 +586,10 @@ def entity_output_dir(output_dir: str) -> str:
     return str(Path(output_dir) / "entities")
 
 
+def action_output_dir(output_dir: str) -> str:
+    return str(Path(output_dir) / "actions")
+
+
 def find_existing_contact_path(trigger: str, output_dir: str) -> str | None:
     output_root = Path(output_dir)
     if not output_root.exists():
@@ -703,6 +707,8 @@ def write_st(st: dict, output_dir: str = None, existing_ref: str | None = None) 
         target_dir = output_dir
         if artifact_kind == "entity" and st.get("name") != "admin":
             target_dir = entity_output_dir(output_dir)
+        elif artifact_kind in {"action", "hybrid"}:
+            target_dir = action_output_dir(output_dir)
         os.makedirs(target_dir, exist_ok=True)
         name = st.get("name", "untitled")
         filename = re.sub(r'[^a-z0-9_]', '_', name.lower()) + ".st"

@@ -350,7 +350,7 @@ P3_CASES = [
     ("tree_policy_admin_sets_entity_editor_mode", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["reprogramme_mode"] == "entity_editor"),
     ("tree_policy_entities_reroutes_reprogramme", lambda: loop._match_policy("skills/entities/clinton.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
     ("tree_policy_entities_set_entity_editor_mode", lambda: loop._match_policy("skills/entities/clinton.st", loop._load_tree_policy())["reprogramme_mode"] == "entity_editor"),
-    ("tree_policy_skills_set_action_editor_mode", lambda: loop._match_policy("skills/hash_edit.st", loop._load_tree_policy())["reprogramme_mode"] == "action_editor"),
+    ("tree_policy_actions_set_action_editor_mode", lambda: loop._match_policy("skills/actions/hash_edit.st", loop._load_tree_policy())["reprogramme_mode"] == "action_editor"),
     ("tree_policy_exact_match_compile_immutable", lambda: loop._match_policy("compile.py", loop._load_tree_policy())["immutable"] is True),
     ("tree_policy_longest_prefix_wins", lambda: loop._match_policy("skills/codons/reason.st", loop._load_tree_policy())["on_reject"] == "reason_needed"),
 ]
@@ -715,7 +715,7 @@ P12_CASES = [
     ("extract_command_reads_command_field", lambda: loop._extract_command('{"command": "echo hi"}') == "echo hi"),
     ("extract_command_missing_returns_none", lambda: loop._extract_command('{"reasoning": "x"}') is None),
     ("resolve_all_refs_formats_blocks", lambda: (lambda ctx: "resolved step" in loop.resolve_all_refs([ctx.step1.hash], [], ctx.traj))(build_chain_context())),
-    ("load_tree_policy_contains_skills_prefix", lambda: "skills/" in loop._load_tree_policy()),
+    ("load_tree_policy_contains_action_entity_prefixes", lambda: "skills/actions/" in loop._load_tree_policy() and "skills/entities/" in loop._load_tree_policy()),
     ("match_policy_exact_path", lambda: loop._match_policy("loop.py", loop._load_tree_policy())["immutable"] is True),
     ("match_policy_prefix_path", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
     ("match_policy_longest_prefix", lambda: loop._match_policy("skills/codons/await.st", loop._load_tree_policy())["on_reject"] == "reason_needed"),
@@ -1373,6 +1373,26 @@ def test_p12_action_tree_reprogramme_mode_preserves_flow_fields():
     assert preserved["closure"] == {"success": {}}
 
 
+def test_p12_new_action_origination_requires_reason():
+    gap = make_gap("build research workflow", vocab="reprogramme_needed")
+    gap.route_mode = "action_editor"
+    assert execution_engine_module._new_action_origination_requires_reason(
+        gap,
+        route_mode="action_editor",
+        target_entity=None,
+    ) is True
+
+
+def test_p12_existing_action_update_does_not_require_reason():
+    gap = make_gap("update hash_edit", vocab="reprogramme_needed")
+    gap.route_mode = "action_editor"
+    assert execution_engine_module._new_action_origination_requires_reason(
+        gap,
+        route_mode="action_editor",
+        target_entity=skill("hash_edit"),
+    ) is False
+
+
 def test_p12_st_builder_reuses_existing_contact_trigger_path(tmp_path):
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()
@@ -1402,6 +1422,24 @@ def test_p12_st_builder_reuses_existing_contact_trigger_path(tmp_path):
     assert rewritten["desc"] == "canonical admin"
     assert rewritten["trigger"] == "on_contact:discord:784778107013431296"
     assert len(rewritten["steps"]) == 1
+
+
+def test_p12_st_builder_writes_new_actions_into_actions_tree(tmp_path):
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+
+    path = st_builder_module.write_st(
+        {
+            "name": "research",
+            "desc": "research workflow",
+            "trigger": "manual",
+            "artifact": {"kind": "action", "protected_kind": "action"},
+            "steps": [{"action": "resolve", "desc": "resolve target", "vocab": "hash_resolve_needed", "post_diff": False}],
+        },
+        output_dir=str(skills_dir),
+    )
+
+    assert path == str(skills_dir / "actions" / "research.st")
 
 
 def test_p12_resolve_hash_supports_skill_source_path(monkeypatch):

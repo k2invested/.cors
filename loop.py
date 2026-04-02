@@ -134,7 +134,7 @@ DEFAULT_TREE_POLICY = {
     "skills/codons/":   {"immutable": True, "on_reject": "reason_needed"},
     "skills/admin.st":  {"on_mutate": "reprogramme_needed", "reprogramme_mode": "entity_editor"},
     "skills/entities/": {"on_mutate": "reprogramme_needed", "reprogramme_mode": "entity_editor"},
-    "skills/":          {"on_mutate": "reprogramme_needed", "reprogramme_mode": "action_editor"},
+    "skills/actions/":  {"on_mutate": "reprogramme_needed", "reprogramme_mode": "action_editor"},
     "ui_output/":       {"on_mutate": "stitch_needed"},
     "logs/":            {"immutable": True},
     "store/":           {"immutable": True},

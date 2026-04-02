@@ -4,14 +4,18 @@
   "trigger": "manual",
   "author": "agent",
   "refs": {},
-  "steps": [
-    {
-      "action": "entity_update",
-      "desc": "knowledge updated from conversation"
-    }
-  ],
   "constraints": {
     "not_web_ui": true,
     "not_cybersecurity_cors": true
-  }
+  },
+  "steps": [
+    {
+      "action": "load_constraints",
+      "desc": "surface constraints context for cors_ui",
+      "resolve": [
+        "constraints"
+      ],
+      "post_diff": false
+    }
+  ]
 }
