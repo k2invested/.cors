@@ -224,7 +224,11 @@ def _new_action_origination_requires_reason(
     route_mode: str | None,
     target_entity: Any | None,
 ) -> bool:
-    return route_mode == "action_editor" and target_entity is None and gap.vocab != "reason_needed"
+    return (
+        route_mode == "action_editor"
+        and target_entity is None
+        and gap.vocab not in {"reason_needed", "reprogramme_needed"}
+    )
 
 
 def _should_inject_chain_spec_for_reason(gap: Gap) -> bool:
@@ -825,6 +829,7 @@ def execute_iteration(
             context_step = hooks.emit_reason_skill(reason_skill, gap, origin_step, entry.chain_id)
             trajectory.append(context_step)
             compiler.add_step_to_chain(context_step.hash)
+        author_actions = _reason_requires_workflow_authoring(gap, registry)
         if _should_inject_chain_spec_for_reason(gap):
             _inject_chain_spec(
                 session=session,
@@ -839,8 +844,9 @@ def execute_iteration(
             f"Reason inline about: gap:{gap.hash} \"{gap.desc}\".\n"
             "Choose the next lawful move in the current turn.\n"
             "- If judgment is enough, emit the next clarified gap(s) or no gaps.\n"
-            "- If new reusable workflow structure is needed, author the concrete creation/update gap(s) needed to actualize it.\n"
+            f"- {'If this is new skills/actions/*.st origination, you own workflow authoring. Actualize it through the semantic_skeleton/reprogramme path; do not emit another generic create/write file gap.' if author_actions else 'If new reusable workflow structure is needed, author the concrete creation/update gap(s) needed to actualize it.'}\n"
             "- If an existing workflow should be triggered, emit the activation gap(s) for that path.\n"
+            f"{'- For new action/workflow packages, emit a concrete reprogramme_needed actualization gap that carries the authored structure forward. Do not restate the request as content_needed or hash_edit_needed.\n' if author_actions else ''}"
             "Keep reasoning stateful and current-turn; do not defer by scheduling background work unless a later gap explicitly does so."
         )
         step_result, child_gaps = hooks.parse_step_output(

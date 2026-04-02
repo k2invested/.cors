@@ -523,6 +523,7 @@ P5_CASES = [
     ("reason_skill_forbids_clarify", lambda: "do not use clarify_needed" in skill_data("reason")["desc"].lower()),
     ("reason_skill_mentions_stateful_judgment", lambda: "stateful judgment" in skill_data("reason")["desc"].lower()),
     ("reason_skill_rejects_passive_deferral", lambda: "not as a passive deferral" in skill_data("reason")["desc"].lower()),
+    ("reason_skill_says_new_actions_use_skeleton_path", lambda: "semantic_skeleton path" in skill_data("reason")["desc"].lower()),
     ("reprogramme_skill_says_it_does_not_own_judgment", lambda: "does not own the judgment layer" in skill_data("reprogramme")["desc"].lower()),
     ("pre_diff_prompt_routes_inferred_preferences_to_reason_first", lambda: "use reason_needed first to judge whether it should become semantic state" in loop.PRE_DIFF_SYSTEM.lower()),
     ("pre_diff_prompt_says_stable_preferences_are_not_no_gap", lambda: "stable user-model updates are not no-gap" in loop.PRE_DIFF_SYSTEM.lower()),
@@ -846,6 +847,7 @@ P10_CASES += [
     ("route_mode_for_action_source_is_action_editor", lambda: execution_engine_module._reprogramme_mode_for_source("skills/actions/hash_edit.st") == "action_editor"),
     ("new_action_origination_requires_reason", lambda: execution_engine_module._new_action_origination_requires_reason(make_gap("create research workflow", vocab="content_needed"), route_mode="action_editor", target_entity=None)),
     ("existing_action_update_does_not_require_reason", lambda: execution_engine_module._new_action_origination_requires_reason(make_gap("update hash_edit", vocab="reprogramme_needed"), route_mode="action_editor", target_entity=skill("hash_edit")) is False),
+    ("new_action_reprogramme_does_not_rebounce_to_reason", lambda: execution_engine_module._new_action_origination_requires_reason(make_gap("actualize research workflow", vocab="reprogramme_needed"), route_mode="action_editor", target_entity=None) is False),
     ("reason_requires_workflow_authoring_for_new_actions", lambda: execution_engine_module._reason_requires_workflow_authoring(make_gap("Create a new research workflow in skills/actions/"), registry())),
     ("reason_skips_workflow_authoring_for_existing_target", lambda: execution_engine_module._reason_requires_workflow_authoring(make_gap("Update existing hash_edit workflow", content_refs=[skill("hash_edit").hash]), registry()) is False),
     ("chain_spec_injection_detects_research", lambda: execution_engine_module._should_inject_chain_spec_for_reason(make_gap("build a research workflow"))),
@@ -2016,14 +2018,14 @@ def test_p12_action_tree_reprogramme_mode_preserves_flow_fields():
     assert preserved["closure"] == {"success": {}}
 
 
-def test_p12_new_action_origination_requires_reason():
+def test_p12_new_action_origination_allows_reason_authored_reprogramme():
     gap = make_gap("build research workflow", vocab="reprogramme_needed")
     gap.route_mode = "action_editor"
     assert execution_engine_module._new_action_origination_requires_reason(
         gap,
         route_mode="action_editor",
         target_entity=None,
-    ) is True
+    ) is False
 
 
 def test_p12_existing_action_update_does_not_require_reason():
