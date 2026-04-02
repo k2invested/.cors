@@ -313,17 +313,26 @@ def _node_relevance(node: dict, index: int) -> float:
 
 def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
                            origin_step: Step, entry_chain_id: str,
-                           turn_counter: int) -> Step:
+                           turn_counter: int, task_prompt: str | None = None,
+                           embedded: bool = False) -> Step:
+    activation_desc = (
+        f"embedded workflow:{package_ref} for {gap.desc}"
+        if embedded else
+        f"activated workflow:{package_ref} for {gap.desc}"
+    )
+    if task_prompt:
+        activation_desc += f" | task:{task_prompt}"
     step = Step.create(
-        desc=f"activated step package:{package_ref} for {gap.desc}",
+        desc=activation_desc,
         step_refs=[origin_step.hash],
         content_refs=[package_ref] + gap.content_refs,
         chain_id=entry_chain_id,
     )
     for st_step in skill.steps:
         child_refs = [package_ref] + gap.content_refs + list(st_step.resolve) + list(st_step.content_refs)
+        child_desc = st_step.desc if not task_prompt else f"{st_step.desc}\n\nActivation task: {task_prompt}"
         child_gap = Gap.create(
-            desc=st_step.desc,
+            desc=child_desc,
             content_refs=child_refs,
             step_refs=list(st_step.step_refs),
         )
@@ -340,9 +349,17 @@ def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
 
 def activate_stepchain_package(package: dict, package_ref: str, gap: Gap,
                                origin_step: Step, entry_chain_id: str,
-                               turn_counter: int) -> Step:
+                               turn_counter: int, task_prompt: str | None = None,
+                               embedded: bool = False) -> Step:
+    activation_desc = (
+        f"embedded json chain:{package_ref} for {gap.desc}"
+        if embedded else
+        f"activated json chain:{package_ref} for {gap.desc}"
+    )
+    if task_prompt:
+        activation_desc += f" | task:{task_prompt}"
     step = Step.create(
-        desc=f"activated json chain:{package_ref} for {gap.desc}",
+        desc=activation_desc,
         step_refs=[origin_step.hash],
         content_refs=[package_ref] + gap.content_refs,
         chain_id=entry_chain_id,
@@ -358,8 +375,11 @@ def activate_stepchain_package(package: dict, package_ref: str, gap: Gap,
         activation_ref = node.get("manifestation", {}).get("activation_ref")
         if activation_ref:
             child_refs.append(activation_ref)
+        child_desc = gap_template.get("desc", node.get("goal", ""))
+        if task_prompt:
+            child_desc = f"{child_desc}\n\nActivation task: {task_prompt}"
         child_gap = Gap.create(
-            desc=gap_template.get("desc", node.get("goal", "")),
+            desc=child_desc,
             content_refs=child_refs,
             step_refs=_runtime_ref_list(gap_template.get("step_refs", [])),
         )
@@ -377,7 +397,8 @@ def activate_stepchain_package(package: dict, package_ref: str, gap: Gap,
 def activate_chain_reference(chains_dir: Path, chain_ref: str, activation: str, gap: Gap,
                              origin_step: Step, entry_chain_id: str,
                              registry: SkillRegistry, compiler, trajectory: Trajectory,
-                             turn_counter: int) -> Step | None:
+                             turn_counter: int, task_prompt: str | None = None,
+                             embedded: bool = False) -> Step | None:
     if activation == "background":
         compiler.record_background_trigger(entry_chain_id, refs=[chain_ref])
         return Step.create(
@@ -390,13 +411,15 @@ def activate_chain_reference(chains_dir: Path, chain_ref: str, activation: str, 
     skill = registry.resolve(chain_ref)
     if skill:
         return activate_skill_package(
-            skill, chain_ref, gap, origin_step, entry_chain_id, turn_counter
+            skill, chain_ref, gap, origin_step, entry_chain_id, turn_counter,
+            task_prompt=task_prompt, embedded=embedded,
         )
 
     package = load_chain_package(chains_dir, chain_ref, trajectory)
     if package and package.get("version") == "stepchain.v1":
         return activate_stepchain_package(
-            package, chain_ref, gap, origin_step, entry_chain_id, turn_counter
+            package, chain_ref, gap, origin_step, entry_chain_id, turn_counter,
+            task_prompt=task_prompt, embedded=embedded,
         )
 
     return None

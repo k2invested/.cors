@@ -1,32 +1,31 @@
 {
   "name": "reason",
-  "desc": "Start codon — planning primitive, persistence-judgment layer, reorientation checkpoint, and heartbeat trigger. Four roles: (1) PLAN: decompose complex tasks into commitment chains built bottom-up — lower layers first so higher layers can embed them. (2) JUDGE PERSISTENCE: decide whether inferred preferences, user-model corrections, or semantic updates should become long-horizon state before surfacing reprogramme_needed. (3) REORIENT: when the compiler rejects a chain or an immutable path is violated, reason_needed fires as the recalibration checkpoint. (4) HEARTBEAT: automatic post-synth reason_needed persists as a dangling gap, causing the agent to inspect background sub-agent progress next turn — render tree, assess, close/revisit/refine.",
+  "desc": "Start codon — parent reasoning context for reason_needed activations. It conditions the reasoning agent the way admin.st conditions the main agent, but it is not itself the target workflow being activated. Three primary outputs: (1) CONTINUE: proceed with better-formed next gaps or a justified decision using current context. (2) AUTHOR: submit one validator-passing skeleton.v1 when a new reusable action/workflow package must be created. (3) ACTIVATE: select an existing workflow/package by hash and delegate it current_turn or background. It also remains the persistence-judgment layer, reorientation checkpoint, and heartbeat parent context.",
   "trigger": "on_vocab:reason_needed",
   "author": "system",
   "steps": [
     {
-      "action": "render_reasoning_trees",
-      "desc": "resolve and render all naturally formed reasoning step chains as fully bloomed semantic trees — same shape as trajectory render. pure observation, no mutation. for heartbeat: render the sub-agent's chain tree. for planning: render existing commitment chains + available .st files as embeddable components.",
+      "action": "load_reason_context",
+      "desc": "inject deterministic reasoning posture for the live origin gap. render the current step network, relevant semantic trees, and available packages. reason.st is parent context for this activation, not the workflow being activated.",
       "vocab": "hash_resolve_needed",
       "relevance": 1.0,
       "post_diff": false
     },
     {
-      "action": "assess_and_route",
-      "desc": "study the rendered trees. seven paths: (1) observe only — gain clarity, may surface clarify_needed. (2) refine — update a mutable reasoning commitment via hash_edit. (3) manifest — reference a commitment hash + compose a prompt to activate an agent. commit_needed injected as last step behind all commitment gaps. (4) plan — decompose a complex task into a semantic tree specification (see chain construction spec). consecutive reason_needed steps build layers bottom-up. (5) judge persistence — decide whether inferred preferences, corrections, or user-model updates should be written into semantic state. if yes, surface reprogramme_needed. (6) heartbeat — inspect background sub-agent tree, close/revisit/refine+reactivate. (7) reorient — after compiler rejection, recalibrate approach.",
+      "action": "choose_reason_path",
+      "desc": "choose exactly one path for this reason activation: continue_with_gaps, submit_skeleton, or activate_existing_workflow. use continue when judgment or better clarity is enough. use submit_skeleton for new reusable workflow origination. use activate_existing_workflow when an existing package should handle the task.",
       "relevance": 0.9,
       "post_diff": true
     },
     {
-      "action": "construct_or_act",
-      "desc": "if planning: write the commitment chain as a semantic tree following the chain construction specification. each step encodes full gap configuration {action, desc, vocab, relevance, post_diff, content_refs, step_refs}. embed existing .st files by placing their hash in a step's content_refs — their gaps will disperse depth-first when resolved. embed await_needed after any background trigger. write new .st embeddings inline as steps with all 7 gap axes specified. build layers back-to-front: leaf chains first (lowest layer), then mid-level chains that adopt them, then top-level orchestration. the resulting tree is directly extractable to .st via chain_to_st. if refining: hash_edit updates the reasoning chain. if manifesting: compose agent trigger + inject commitment gaps + trailing commit_needed. if judging persistence: articulate whether the semantic update is stable enough to persist and surface reprogramme_needed only when warranted. if heartbeat: emit close/revisit/refine gaps. if reorienting: reconstruct the rejected chain with corrections.",
-      "vocab": "hash_edit_needed",
+      "action": "author_or_delegate",
+      "desc": "if continuing: articulate the next lawful gap(s) or justified decision directly. if authoring: return one valid skeleton.v1. if activating: select an existing workflow by hash and provide the task prompt/payload. embedded activations stay current_turn; background is only for delegated autonomous work.",
       "relevance": 0.8,
       "post_diff": true
     },
     {
-      "action": "post_reason_check",
-      "desc": "after construction, manifestation, or reorientation: re-render affected reasoning trees to verify coherence. check: (1) all await codons present after background triggers. (2) leaf chains exist before parent chains reference them. (3) relevance descending within each chain. (4) post_diff set correctly (false for deterministic steps, true for decision points). (5) all 7 gap axes present on constructed steps. (6) existing .st embeddings referenced by valid hash. if the constructed tree passes verification, it is ready for execution or crystallization to .st via chain_to_st.",
+      "action": "verify_selected_path",
+      "desc": "verify that the selected path fits the task: new reusable workflows must leave reason as skeleton.v1 submissions, existing workflows activate by hash, embedded activations remain current_turn, and delegated autonomous work is the only background case.",
       "vocab": "hash_resolve_needed",
       "relevance": 0.7,
       "post_diff": true

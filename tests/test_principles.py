@@ -480,6 +480,7 @@ P5_CASES = [
     ("reprogramme_skill_trigger_is_vocab", lambda: skill("reprogramme").trigger == "on_vocab:reprogramme_needed"),
     ("reprogramme_skill_all_steps_loaded", lambda: skill("reprogramme").step_count() == 3),
     ("reason_skill_mentions_persistence_judgment", lambda: "persistence" in skill_data("reason")["desc"].lower()),
+    ("reason_skill_mentions_parent_context", lambda: "parent reasoning context" in skill_data("reason")["desc"].lower()),
     ("reprogramme_skill_says_it_does_not_own_judgment", lambda: "does not own the judgment layer" in skill_data("reprogramme")["desc"].lower()),
     ("pre_diff_prompt_routes_inferred_preferences_to_reason_first", lambda: "use reason_needed first to judge whether it should become semantic state" in loop.PRE_DIFF_SYSTEM.lower()),
     ("pre_diff_prompt_says_stable_preferences_are_not_no_gap", lambda: "stable user-model updates are not no-gap" in loop.PRE_DIFF_SYSTEM.lower()),
@@ -793,6 +794,8 @@ P10_CASES += [
     ("route_mode_for_action_source_is_action_editor", lambda: execution_engine_module._reprogramme_mode_for_source("skills/actions/hash_edit.st") == "action_editor"),
     ("new_action_origination_requires_reason", lambda: execution_engine_module._new_action_origination_requires_reason(make_gap("create research workflow", vocab="content_needed"), route_mode="action_editor", target_entity=None)),
     ("existing_action_update_does_not_require_reason", lambda: execution_engine_module._new_action_origination_requires_reason(make_gap("update hash_edit", vocab="reprogramme_needed"), route_mode="action_editor", target_entity=skill("hash_edit")) is False),
+    ("reason_requires_workflow_authoring_for_new_actions", lambda: execution_engine_module._reason_requires_workflow_authoring(make_gap("Create a new research workflow in skills/actions/"), registry())),
+    ("reason_skips_workflow_authoring_for_existing_target", lambda: execution_engine_module._reason_requires_workflow_authoring(make_gap("Update existing hash_edit workflow", content_refs=[skill("hash_edit").hash]), registry()) is False),
     ("chain_spec_injection_detects_research", lambda: execution_engine_module._should_inject_chain_spec_for_reason(make_gap("build a research workflow"))),
     ("chain_spec_injection_skips_simple_preference", lambda: execution_engine_module._should_inject_chain_spec_for_reason(make_gap("remember my favourite colour")) is False),
     ("entity_editor_coercion_strips_flow_fields", lambda: (lambda frame: ("root" not in frame and "phases" not in frame and "closure" not in frame and frame["artifact"]["kind"] == "entity"))(
@@ -890,6 +893,7 @@ P12_CASES += [
         traj.append(make_step("s", gaps=[gap])),
         len(loop._find_dangling_gaps(traj)) == 0,
     )[2])(Trajectory(), make_gap("clarify", vocab="clarify_needed"))),
+    ("emit_reason_skill_is_context_only", lambda: len(loop._emit_reason_skill(skill("reason"), make_gap("reason about this"), make_step("origin"), "c1").gaps) == 0),
 ]
 
 

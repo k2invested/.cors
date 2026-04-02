@@ -821,26 +821,12 @@ def _canonicalize_content_refs(refs: list[str]) -> list[str]:
 
 def _emit_reason_skill(reason_skill: Skill, gap: Gap, origin_step: Step,
                        entry_chain_id: str) -> Step:
-    reason_step = Step.create(
-        desc=f"reason activated: {gap.desc}",
+    return Step.create(
+        desc=f"reason parent context: {gap.desc}",
         step_refs=[origin_step.hash],
         content_refs=[reason_skill.hash] + gap.content_refs,
         chain_id=entry_chain_id,
     )
-    for st_step in reason_skill.steps:
-        child_gap = Gap.create(
-            desc=st_step.desc,
-            content_refs=gap.content_refs,
-        )
-        child_gap.scores = Epistemic(
-            relevance=st_step.__dict__.get("relevance", 0.8),
-            confidence=0.8,
-            grounded=0.0,
-        )
-        child_gap.vocab = st_step.vocab
-        child_gap.turn_id = _turn_counter
-        reason_step.gaps.append(child_gap)
-    return reason_step
 
 
 # ── Tool execution ───────────────────────────────────────────────────────
