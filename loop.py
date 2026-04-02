@@ -324,7 +324,11 @@ def _render_step_tree(step, trajectory: Trajectory, depth: int = 0,
     time_tag = f" ({absolute_time(step.t)})" if step.t > 0 else ""
     step_sig = trajectory._step_signature(step) if hasattr(trajectory, "_step_signature") else ""
     sig_prefix = f"{step_sig} " if step_sig else ""
-    lines = [f"{indent}{sig_prefix}step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}{time_tag}"]
+    rogue_tag = ""
+    if getattr(step, "rogue", False):
+        extras = [part for part in [getattr(step, "rogue_kind", None), getattr(step, "failure_source", None)] if part]
+        rogue_tag = f" (rogue:{', '.join(extras)})" if extras else " (rogue)"
+    lines = [f"{indent}{sig_prefix}step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}{time_tag}{rogue_tag}"]
 
     # Gaps as child branches
     for gap in step.gaps:

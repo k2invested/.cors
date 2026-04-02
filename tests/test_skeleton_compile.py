@@ -356,6 +356,27 @@ def test_lower_semantic_skeleton_to_entity_intent():
     assert lowered["init"]["status"] == "pending"
 
 
+def test_lower_semantic_skeleton_normalizes_alias_existing_ref():
+    doc = {
+        "version": "semantic_skeleton.v1",
+        "artifact": {
+            "kind": "entity",
+            "protected_kind": "entity",
+            "lineage": "admin",
+            "version_strategy": "hash_pinned",
+        },
+        "name": "admin",
+        "desc": "admin identity",
+        "trigger": "manual",
+        "refs": {},
+        "existing_ref": "kenny:47824f077e7d",
+        "semantics": {},
+    }
+
+    _lowered, _artifact_kind, existing_ref = st_builder_module.lower_semantic_skeleton(doc)
+    assert existing_ref == "47824f077e7d"
+
+
 def test_semantic_skeleton_from_st_derives_flow_from_steps():
     st = {
         "name": "review_flow",
@@ -388,6 +409,11 @@ def test_semantic_skeleton_from_st_derives_flow_from_steps():
     assert len(frame["phases"]) == 3
     assert frame["phases"][0]["gap_template"]["desc"] == "inspect current target state"
     assert frame["phases"][1]["manifestation"]["runtime_vocab"] == "reprogramme_needed"
+
+
+def test_normalize_existing_ref_strips_alias_prefix():
+    assert st_builder_module.normalize_existing_ref("kenny:47824f077e7d") == "47824f077e7d"
+    assert st_builder_module.normalize_existing_ref("47824f077e7d") == "47824f077e7d"
 
 
 def test_st_builder_writes_existing_ref_in_place(tmp_path):

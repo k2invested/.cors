@@ -81,6 +81,71 @@ def _record_step(step_result: Step, *, entry: Any, trajectory: Any, compiler: An
     print(f"  step:{step_result.hash}" + (f" commit:{step_result.commit}" if step_result.commit else ""))
 
 
+def _make_rogue_step(
+    *,
+    desc: str,
+    origin_step: Step,
+    gap: Gap,
+    chain_id: str | None,
+    rogue_kind: str,
+    failure_source: str,
+    failure_detail: str | None = None,
+    commit: str | None = None,
+) -> Step:
+    return Step.create(
+        desc=desc,
+        step_refs=[origin_step.hash],
+        content_refs=gap.content_refs,
+        commit=commit,
+        chain_id=chain_id,
+        rogue=True,
+        rogue_kind=rogue_kind,
+        failure_source=failure_source,
+        failure_detail=failure_detail,
+    )
+
+
+def _emit_rogue_with_diagnosis(
+    *,
+    desc: str,
+    origin_step: Step,
+    gap: Gap,
+    chain_id: str | None,
+    rogue_kind: str,
+    failure_source: str,
+    trajectory: Any,
+    compiler: Any,
+    failure_detail: str | None = None,
+    commit: str | None = None,
+) -> Step:
+    diagnose_gap = Gap.create(
+        desc=(
+            f"Diagnose rogue step: classify the failure, determine whether state changed or was reverted, "
+            f"and choose the next safe correction path for {rogue_kind} from {failure_source}."
+        ),
+        content_refs=gap.content_refs,
+        step_refs=[origin_step.hash],
+    )
+    diagnose_gap.scores = Epistemic(relevance=1.0, confidence=0.9, grounded=0.0)
+    diagnose_gap.vocab = "reason_needed"
+
+    rogue_step = _make_rogue_step(
+        desc=desc,
+        origin_step=origin_step,
+        gap=gap,
+        chain_id=chain_id,
+        rogue_kind=rogue_kind,
+        failure_source=failure_source,
+        failure_detail=failure_detail,
+        commit=commit,
+    )
+    rogue_step.gaps.append(diagnose_gap)
+    trajectory.append(rogue_step)
+    compiler.emit(rogue_step)
+    compiler.add_step_to_chain(rogue_step.hash)
+    return rogue_step
+
+
 def _pattern_tool_params(gap: Gap) -> dict[str, str] | None:
     """Infer file_grep params when pattern_needed provides a concrete search term."""
     pattern = None
@@ -291,14 +356,17 @@ def execute_iteration(
         if exec_failed:
             print("  → execution failed, recording on trajectory")
             session.inject(f"## EXECUTION FAILED for gap:{gap.hash}\n{output}")
-            step_result = Step.create(
+            step_result = _emit_rogue_with_diagnosis(
                 desc=f"FAILED: {gap.desc}",
-                step_refs=[origin_step.hash],
-                content_refs=gap.content_refs,
+                origin_step=origin_step,
+                gap=gap,
                 chain_id=entry.chain_id,
+                rogue_kind="tool_failure",
+                failure_source=vocab or "mutation",
+                trajectory=trajectory,
+                compiler=compiler,
+                failure_detail=output[:500] if output else None,
             )
-            trajectory.append(step_result)
-            compiler.add_step_to_chain(step_result.hash)
             return ExecutionOutcome(control="continue", step_result=step_result)
 
         if executed:
@@ -369,11 +437,26 @@ def execute_iteration(
                             content_refs=gap.content_refs,
                             gaps=[reject_gap],
                             chain_id=entry.chain_id,
+                            rogue=True,
+                            rogue_kind="auto_reverted_mutation",
+                            failure_source="tree_policy",
+                            failure_detail=f"immutable path violation → {on_reject}",
                         )
                         trajectory.append(reject_step)
                         compiler.emit(reject_step)
+                        diagnose_step = _emit_rogue_with_diagnosis(
+                            desc=f"ROGUE: {gap.desc} (codon immutability)",
+                            origin_step=origin_step,
+                            gap=gap,
+                            chain_id=entry.chain_id,
+                            rogue_kind="auto_reverted_mutation",
+                            failure_source="tree_policy",
+                            trajectory=trajectory,
+                            compiler=compiler,
+                            failure_detail=f"immutable path violation → {on_reject}",
+                        )
                         compiler.resolve_current_gap(gap.hash)
-                        return ExecutionOutcome(control="continue")
+                        return ExecutionOutcome(control="continue", step_result=diagnose_step)
                     session.inject(
                         "## PROTECTED PATH VIOLATION\n"
                         "Your command tried to modify a protected system file. "
@@ -381,14 +464,17 @@ def execute_iteration(
                         "only modify files in the workspace, not system files.\n"
                         f"Command output was:\n{output}"
                     )
-                    step_result = Step.create(
+                    step_result = _emit_rogue_with_diagnosis(
                         desc=f"REVERTED: {gap.desc} (protected path violation)",
-                        step_refs=[origin_step.hash],
-                        content_refs=gap.content_refs,
+                        origin_step=origin_step,
+                        gap=gap,
                         chain_id=entry.chain_id,
+                        rogue_kind="policy_violation",
+                        failure_source="tree_policy",
+                        trajectory=trajectory,
+                        compiler=compiler,
+                        failure_detail=output[:500] if output else "protected path violation",
                     )
-                    trajectory.append(step_result)
-                    compiler.add_step_to_chain(step_result.hash)
                     return ExecutionOutcome(control="continue", step_result=step_result)
 
                 session.inject(f"## Command output (no mutation)\n{output}")
@@ -549,6 +635,17 @@ def execute_iteration(
                             )
                     else:
                         session.inject(f"## Skeleton compile errors\n{output}")
+                        rogue_step = _emit_rogue_with_diagnosis(
+                            desc=f"FAILED: skeleton compile for {gap.desc}",
+                            origin_step=origin_step,
+                            gap=gap,
+                            chain_id=entry.chain_id,
+                            rogue_kind="compile_invalid",
+                            failure_source="skeleton_compile",
+                            trajectory=trajectory,
+                            compiler=compiler,
+                            failure_detail=output[:500],
+                        )
                         step_result = hooks.emit_reason_skill(reason_skill, gap, origin_step, entry.chain_id)
                         trajectory.append(step_result)
                         compiler.emit(step_result)
@@ -556,6 +653,17 @@ def execute_iteration(
                         compiler.resolve_current_gap(gap.hash)
                         return ExecutionOutcome(control="continue")
                 else:
+                    rogue_step = _emit_rogue_with_diagnosis(
+                        desc=f"FAILED: invalid skeleton submission for {gap.desc}",
+                        origin_step=origin_step,
+                        gap=gap,
+                        chain_id=entry.chain_id,
+                        rogue_kind="skeleton_invalid",
+                        failure_source="reason_needed",
+                        trajectory=trajectory,
+                        compiler=compiler,
+                        failure_detail="missing or invalid skeleton.v1 payload",
+                    )
                     step_result = hooks.emit_reason_skill(reason_skill, gap, origin_step, entry.chain_id)
                     trajectory.append(step_result)
                     compiler.emit(step_result)
@@ -793,10 +901,13 @@ def execute_iteration(
             output, code = hooks.execute_tool("tools/st_builder.py", intent)
             print(f"  st_builder: {output[:150]}")
             written_path = hooks.extract_written_path(output)
-            commit_sha, _ = hooks.auto_commit(
-                f"reprogramme: {gap.desc[:50]}",
-                paths=[written_path] if written_path else None,
-            )
+            if code == 0 and written_path:
+                commit_sha, _ = hooks.auto_commit(
+                    f"reprogramme: {gap.desc[:50]}",
+                    paths=[written_path],
+                )
+            else:
+                commit_sha = None
             if commit_sha:
                 print(f"  → committed: {commit_sha}")
                 step_result = Step.create(
@@ -808,11 +919,18 @@ def execute_iteration(
                 )
                 compiler.resolve_current_gap(gap.hash)
             else:
-                step_result = Step.create(
+                if code != 0:
+                    session.inject(f"## ST BUILDER FAILED\n{output}")
+                step_result = _emit_rogue_with_diagnosis(
                     desc=f"reprogramme failed: {gap.desc}",
-                    step_refs=[origin_step.hash],
-                    content_refs=gap.content_refs,
+                    origin_step=origin_step,
+                    gap=gap,
                     chain_id=entry.chain_id,
+                    rogue_kind="validation_error" if code != 0 else "manifest_failure",
+                    failure_source="st_builder",
+                    trajectory=trajectory,
+                    compiler=compiler,
+                    failure_detail=output[:500] if output else None,
                 )
                 compiler.resolve_current_gap(gap.hash)
         else:

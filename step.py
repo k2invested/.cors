@@ -34,7 +34,7 @@ from typing import Optional
 
 
 TREE_LANGUAGE_KEY = (
-    "tree_sig: step{kindflowN}=kind:o observe,m mutate; flow:+ open,~ dormant,= closed. "
+    "tree_sig: step{kindflowN}=kind:o observe,m mutate,r rogue; flow:+ open,~ dormant,= closed. "
     "gap{statusclassrcg/s:c}=status:? active,= resolved,~ dormant; "
     "class:o observe,m mutate,b bridge,c clarify,_ unknown; "
     "rcg are rel/conf/gr bands 0-9; s:c are step_refs:content_refs counts."
@@ -232,6 +232,10 @@ class Step:
     t:            float = 0.0
     chain_id:     Optional[str] = None  # which reasoning chain this step belongs to
     parent:       Optional[str] = None  # step hash that spawned this step (child gap)
+    rogue:        bool = False          # True when the step materialized as a policy/tool/schema failure
+    rogue_kind:   Optional[str] = None  # policy_violation, codon_failure, compile_invalid, etc.
+    failure_source: Optional[str] = None  # which tool/runtime path failed
+    failure_detail: Optional[str] = None  # compact machine-visible failure summary
 
     @staticmethod
     def create(desc: str,
@@ -240,7 +244,11 @@ class Step:
                gaps: list[Gap] = None,
                commit: str = None,
                chain_id: str = None,
-               parent: str = None) -> "Step":
+               parent: str = None,
+               rogue: bool = False,
+               rogue_kind: str | None = None,
+               failure_source: str | None = None,
+               failure_detail: str | None = None) -> "Step":
         t = time.time()
         srefs = step_refs or []
         crefs = content_refs or []
@@ -255,13 +263,20 @@ class Step:
             t=t,
             chain_id=chain_id,
             parent=parent,
+            rogue=rogue,
+            rogue_kind=rogue_kind,
+            failure_source=failure_source,
+            failure_detail=failure_detail,
         )
 
     def is_mutation(self) -> bool:
         return self.commit is not None
 
+    def is_rogue(self) -> bool:
+        return self.rogue
+
     def is_observation(self) -> bool:
-        return self.commit is None
+        return self.commit is None and not self.rogue
 
     def has_gaps(self) -> bool:
         return any(not g.resolved and not g.dormant for g in self.gaps)
@@ -295,6 +310,14 @@ class Step:
             d["chain_id"] = self.chain_id
         if self.parent:
             d["parent"] = self.parent
+        if self.rogue:
+            d["rogue"] = True
+        if self.rogue_kind:
+            d["rogue_kind"] = self.rogue_kind
+        if self.failure_source:
+            d["failure_source"] = self.failure_source
+        if self.failure_detail:
+            d["failure_detail"] = self.failure_detail
         return d
 
     @staticmethod
@@ -329,6 +352,10 @@ class Step:
             t=d.get("t", 0.0),
             chain_id=d.get("chain_id"),
             parent=d.get("parent"),
+            rogue=d.get("rogue", False),
+            rogue_kind=d.get("rogue_kind"),
+            failure_source=d.get("failure_source"),
+            failure_detail=d.get("failure_detail"),
         )
 
 
@@ -461,6 +488,10 @@ class Trajectory:
     def dormant_gaps(self) -> list[Gap]:
         """All dormant gaps across the trajectory."""
         return [g for g in self.gap_index.values() if g.dormant]
+
+    def rogue_steps(self) -> list[Step]:
+        """All rogue steps across the trajectory."""
+        return [self.steps[h] for h in self.order if h in self.steps and self.steps[h].rogue]
 
     def recurring_dormant(self, min_count: int = 3) -> list[str]:
         """Dormant gap descriptions that appear multiple times."""
@@ -616,7 +647,10 @@ class Trajectory:
         """
         active = len(step.active_gaps())
         dormant = len(step.dormant_gaps())
-        kind = "m" if step.is_mutation() else "o"
+        if step.is_rogue():
+            kind = "r"
+        else:
+            kind = "m" if step.is_mutation() else "o"
         flow = "+" if active else "~" if dormant else "="
         count = str(active) if active else ""
         return f"{{{kind}{flow}{count}}}"
@@ -667,11 +701,20 @@ class Trajectory:
             steps = self.recent(n)
             if not steps:
                 return "(empty trajectory)"
-            return self._render_steps_as_tree(steps, registry)
+            rendered = self._render_steps_as_tree(steps, registry)
+            rogue_lines = self._render_rogue_lines(registry=registry)
+            if rogue_lines:
+                return f"{rendered}\n\n" + "\n".join(rogue_lines)
+            return rendered
 
         lines = []
         for chain in chains:
             lines.extend(self._render_chain_lines(chain, registry=registry))
+
+        rogue_lines = self._render_rogue_lines(registry=registry)
+        if rogue_lines:
+            lines.append("")
+            lines.extend(rogue_lines)
 
         return "\n".join(lines)
 
@@ -712,9 +755,13 @@ class Trajectory:
             ref_str = self._render_refs(step.step_refs, step.content_refs, registry)
             commit_str = f" → commit:{step.commit}" if step.commit else ""
             time_tag = f" ({absolute_time(step.t)})" if step.t > 0 else ""
+            rogue_tag = ""
+            if step.rogue:
+                extras = [part for part in [step.rogue_kind, step.failure_source] if part]
+                rogue_tag = f" (rogue:{', '.join(extras)})" if extras else " (rogue)"
             lines.append(
                 f"  {branch}─ {self._step_signature(step)} step:{step.hash} "
-                f"\"{step.desc}\"{ref_str}{commit_str}{time_tag}"
+                f"\"{step.desc}\"{ref_str}{commit_str}{time_tag}{rogue_tag}"
             )
 
             active = [g for g in step.gaps if not g.dormant and not g.resolved]
@@ -759,9 +806,13 @@ class Trajectory:
             ref_str = self._render_refs(step.step_refs, step.content_refs, registry)
             commit_str = f" → commit:{step.commit}" if step.commit else ""
             time_tag = f" ({absolute_time(step.t)})" if step.t > 0 else ""
+            rogue_tag = ""
+            if step.rogue:
+                extras = [part for part in [step.rogue_kind, step.failure_source] if part]
+                rogue_tag = f" (rogue:{', '.join(extras)})" if extras else " (rogue)"
             lines.append(
                 f"{branch}─ {self._step_signature(step)} step:{step.hash} "
-                f"\"{step.desc}\"{ref_str}{commit_str}{time_tag}"
+                f"\"{step.desc}\"{ref_str}{commit_str}{time_tag}{rogue_tag}"
             )
 
             for j, gap in enumerate(step.gaps):
@@ -787,3 +838,21 @@ class Trajectory:
                     )
 
         return "\n".join(lines)
+
+    def _render_rogue_lines(self, registry=None) -> list[str]:
+        rogues = self.rogue_steps()
+        if not rogues:
+            return []
+        lines = [f"rogues ({len(rogues)})"]
+        for idx, step in enumerate(rogues[-5:]):
+            branch = "└" if idx == len(rogues[-5:]) - 1 else "├"
+            ref_str = self._render_refs(step.step_refs, step.content_refs, registry)
+            commit_str = f" → commit:{step.commit}" if step.commit else ""
+            time_tag = f" ({absolute_time(step.t)})" if step.t > 0 else ""
+            extras = [part for part in [step.rogue_kind, step.failure_source] if part]
+            rogue_tag = f" [{', '.join(extras)}]" if extras else ""
+            lines.append(
+                f"  {branch}─ {self._step_signature(step)} step:{step.hash} "
+                f"\"{step.desc}\"{rogue_tag}{ref_str}{commit_str}{time_tag}"
+            )
+        return lines

@@ -44,12 +44,28 @@ SEMANTIC_FIELDS = {
     "entity_refs",
     "init",
 }
+HEX_REF_RE = re.compile(r"^[0-9a-f]{12}$")
 
 
 def slugify(text: str) -> str:
     """Turn a description into an action name."""
     words = re.sub(r'[^a-z0-9\s]', '', text.lower()).split()
     return '_'.join(words[:4])
+
+
+def normalize_existing_ref(existing_ref: str | None) -> str | None:
+    if not isinstance(existing_ref, str):
+        return None
+    candidate = existing_ref.strip()
+    if not candidate:
+        return None
+    if HEX_REF_RE.fullmatch(candidate):
+        return candidate
+    if ":" in candidate:
+        suffix = candidate.rsplit(":", 1)[1].strip()
+        if HEX_REF_RE.fullmatch(suffix):
+            return suffix
+    return candidate
 
 
 # ── Schema validation ────────────────────────────────────────────────────
@@ -66,6 +82,7 @@ def validate_st(data: dict,
                 output_dir: str | None = None) -> list[str]:
     """Validate a .st structure. Returns list of errors (empty = valid)."""
     errors = []
+    existing_ref = normalize_existing_ref(existing_ref)
 
     if "name" not in data:
         errors.append("missing 'name'")
@@ -452,7 +469,7 @@ def blank_semantic_skeleton(
 def lower_semantic_skeleton(intent: dict) -> tuple[dict, str, str | None]:
     artifact = dict(intent.get("artifact", {}))
     artifact_kind = artifact.get("kind", "entity")
-    existing_ref = intent.get("existing_ref")
+    existing_ref = normalize_existing_ref(intent.get("existing_ref"))
 
     if artifact_kind == "entity":
         lowered_kind = "entity"
@@ -573,6 +590,7 @@ def write_st(st: dict, output_dir: str = None, existing_ref: str | None = None) 
     """Write a .st file and return its path."""
     output_dir = output_dir or SKILLS_DIR
     os.makedirs(output_dir, exist_ok=True)
+    existing_ref = normalize_existing_ref(existing_ref)
 
     existing_path = find_existing_skill_path(existing_ref, output_dir) if existing_ref else None
     if existing_ref and not existing_path:
@@ -640,7 +658,7 @@ def main():
             raise SystemExit(1)
 
         artifact_kind = intent.get("artifact_kind", "entity")
-        existing_ref = intent.get("existing_ref") or intent.get("existing_action_ref")
+        existing_ref = normalize_existing_ref(intent.get("existing_ref") or intent.get("existing_action_ref"))
 
         # Build .st from intent
         st = build_st(intent)
@@ -650,7 +668,7 @@ def main():
     if errors:
         print(f"Validation errors:\n" + "\n".join(f"  - {e}" for e in errors))
         print(f"\nGenerated (invalid):\n{json.dumps(st, indent=2)}")
-        return
+        raise SystemExit(1)
 
     # Write
     path = write_st(st, existing_ref=existing_ref)

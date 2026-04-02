@@ -249,6 +249,9 @@ P1_CASES = [
     ).all_refs()) == {"step_parent", "blob_parent", "step_child", "blob_child"}),
     ("step_roundtrip_desc", lambda: Step.from_dict(make_step("roundtrip").to_dict()).desc == "roundtrip"),
     ("step_roundtrip_commit", lambda: Step.from_dict(make_step("roundtrip", commit="abc").to_dict()).commit == "abc"),
+    ("step_roundtrip_rogue", lambda: (lambda restored: restored.rogue and restored.rogue_kind == "policy_violation")(
+        Step.from_dict(Step.create("rogue", rogue=True, rogue_kind="policy_violation", failure_source="tree_policy").to_dict())
+    )),
     ("chain_rehashes_on_add", lambda: (lambda c: (c.add_step("b"), c.hash)[1] != chain_hash(["gap", "a"]))(Chain.create("gap", "a"))),
     ("trajectory_resolves_step_and_gap", lambda: (lambda t, s, g: t.resolve(s.hash) == s and t.resolve_gap(g.hash) == g)(
         *(lambda gap: (lambda step, traj: (traj.append(step), traj, step, gap)[1:])(make_step("origin", gaps=[gap]), Trajectory()))(make_gap("g"))
@@ -452,6 +455,96 @@ P6_CASES = [
     ("co_occurrence_counts_reference_usage", lambda: seed_trajectory("blob_a", count=2).co_occurrence("blob_a") == 2),
     ("resolve_entity_falls_back_to_trajectory", lambda: (lambda traj, step: "step:" in loop._resolve_entity([step.hash], registry(), traj))( *(lambda t, s: (t.append(s), (t, s))[1])(Trajectory(), make_step("fallback")) )),
 ]
+
+
+def test_p13_rogue_step_signature_and_render():
+    traj = Trajectory()
+    rogue = Step.create(
+        "REVERTED: bad mutation",
+        content_refs=["blob_a"],
+        rogue=True,
+        rogue_kind="policy_violation",
+        failure_source="tree_policy",
+    )
+    traj.append(rogue)
+
+    rendered = traj.render_recent(5, registry())
+    assert "{r=" in rendered
+    assert "rogues (1)" in rendered
+    assert "policy_violation, tree_policy" in rendered
+
+
+def test_p13_reprogramme_failure_materializes_rogue_step():
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps({
+                "version": "semantic_skeleton.v1",
+                "artifact": {"kind": "entity"},
+                "name": "admin",
+                "desc": "bad update",
+                "trigger": "manual",
+                "refs": {},
+                "existing_ref": "kenny:47824f077e7d",
+                "semantics": {},
+            })
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("persist admin preference", content_refs=[skill("admin").hash], vocab="reprogramme_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("Validation errors:\n  - existing_ref not found: kenny:47824f077e7d", 1),
+        auto_commit=lambda message, paths=None: ("abc123", None),
+        parse_step_output=lambda raw, step_refs, content_refs, chain_id=None: (make_step("noop"), []),
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: None,
+        is_reprogramme_intent=lambda intent: True,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert outcome.step_result.rogue is True
+    assert outcome.step_result.rogue_kind == "validation_error"
+    assert outcome.step_result.failure_source == "st_builder"
+    assert len(outcome.step_result.gaps) == 1
+    assert outcome.step_result.gaps[0].vocab == "reason_needed"
+    assert "Diagnose rogue step" in outcome.step_result.gaps[0].desc
 
 
 P7_CASES = [
@@ -911,6 +1004,77 @@ def test_p12_inline_reprogramme_does_not_trigger_heartbeat():
     assert outcome.step_result is not None
     assert outcome.step_result.commit == "abc123"
     assert compiler.needs_heartbeat() is False
+
+
+def test_p12_reprogramme_failure_does_not_commit_without_written_path():
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps({
+                "version": "semantic_skeleton.v1",
+                "artifact": {"kind": "entity"},
+                "name": "admin",
+                "desc": "bad update",
+                "trigger": "manual",
+                "refs": {},
+                "existing_ref": "kenny:47824f077e7d",
+                "semantics": {},
+            })
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("persist admin preference", content_refs=[skill("admin").hash], vocab="reprogramme_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+    commit_calls = []
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("Validation errors:\n  - existing_ref not found: kenny:47824f077e7d", 1),
+        auto_commit=lambda message, paths=None: (commit_calls.append((message, paths)) or ("abc123", None)),
+        parse_step_output=lambda raw, step_refs, content_refs, chain_id=None: (make_step("noop"), []),
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: None,
+        is_reprogramme_intent=lambda intent: True,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert outcome.step_result.commit is None
+    assert commit_calls == []
+    assert any("ST BUILDER FAILED" in injected for injected in session.injected)
 
 
 def test_p12_st_builder_reuses_existing_contact_trigger_path(tmp_path):
