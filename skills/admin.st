@@ -7,21 +7,14 @@
     "principles": null,
     "recent_chains": null,
     "commitments": null,
-    "commitment_chain_construction_spec": "eefcf9ff7e17"
+    "commitment_chain_construction_spec": "eefcf9ff7e17",
+    "top_rate_estates_ltd": "0c106388cfe2"
   },
   "artifact": {
     "kind": "entity",
     "protected_kind": "entity",
     "lineage": "admin",
     "version_strategy": "hash_pinned"
-  },
-  "identity": {
-    "name": "Kenny",
-    "role": "architect",
-    "username": "k2authorized",
-    "discord_user_id": "784778107013431296",
-    "email": "krepchequesupply@gmail.com",
-    "context": "Built this system from scratch. Thinks in primitives and recursive structures. Prefers composable solutions over constructions. Will push back hard on overengineering. Speaks fast, thinks in analogies."
   },
   "preferences": {
     "communication": {
@@ -53,27 +46,21 @@
     },
     "meta": {
       "surface_reprogramme_on_new_preference": true
+    },
+    "entity_aliases": {
+      "my business": {
+        "refers_to": "top rate estates ltd:0c106388cfe2",
+        "desc": "Whenever I refer to 'my business', interpret it as referring to the entity Top Rate Estates LTD."
+      }
     }
   },
-  "reasoning": {
-    "surface_reason_needed_for_open_decisions": true,
-    "reason_needed_scope": [
-      "open decisions",
-      "planning",
-      "judgment under uncertainty or complexity"
-    ],
-    "resolve_ambiguity_via_context": true,
-    "context_resolution_methods": [
-      "traverse available context",
-      "review history",
-      "inspect semantic trees",
-      "analyze workflow structure"
-    ],
-    "clarify_needed_only_when": [
-      "missing info is genuinely only available from user",
-      "multiple plausible paths would waste effort or create real risk"
-    ],
-    "do_not_ask_for_clarification_without_reasoning_first": true
+  "identity": {
+    "name": "Kenny",
+    "role": "architect",
+    "username": "k2authorized",
+    "discord_user_id": "784778107013431296",
+    "email": "krepchequesupply@gmail.com",
+    "context": "Built this system from scratch. Thinks in primitives and recursive structures. Prefers composable solutions over constructions. Will push back hard on overengineering. Speaks fast, thinks in analogies."
   },
   "steps": [
     {
@@ -108,5 +95,25 @@
       ],
       "post_diff": false
     }
-  ]
+  ],
+  "reasoning": {
+    "surface_reason_needed_for_open_decisions": true,
+    "reason_needed_scope": [
+      "open decisions",
+      "planning",
+      "judgment under uncertainty or complexity"
+    ],
+    "resolve_ambiguity_via_context": true,
+    "context_resolution_methods": [
+      "traverse available context",
+      "review history",
+      "inspect semantic trees",
+      "analyze workflow structure"
+    ],
+    "clarify_needed_only_when": [
+      "missing info is genuinely only available from user",
+      "multiple plausible paths would waste effort or create real risk"
+    ],
+    "do_not_ask_for_clarification_without_reasoning_first": true
+  }
 }
