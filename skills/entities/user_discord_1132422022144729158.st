@@ -1,48 +1,22 @@
 {
-  "name": "user_discord_1132422022144729158",
-  "desc": "Bootstrap entity for inbound contact discord:1132422022144729158",
+  "name": "Courtney",
+  "desc": "Semantic entity profile for Courtney (discord:1132422022144729158), tracking identity, preferences, and professional context for ongoing interaction. Includes known information and placeholders for future profile enrichment.",
   "trigger": "on_contact:discord:1132422022144729158",
-  "author": "system",
   "refs": {},
-  "steps": [
-    {
-      "action": "load_identity",
-      "desc": "surface who this inbound contact appears to be from current known metadata",
-      "post_diff": false,
-      "resolve": [
-        "identity"
-      ]
-    },
-    {
-      "action": "load_onboarding_preferences",
-      "desc": "surface get-to-know instructions and passive profile-maintenance preferences for this contact",
-      "post_diff": false,
-      "resolve": [
-        "preferences"
-      ]
-    },
-    {
-      "action": "load_access_rules",
-      "desc": "surface current access and execution permissions for this contact",
-      "post_diff": false,
-      "resolve": [
-        "access_rules"
-      ]
-    },
-    {
-      "action": "load_init_state",
-      "desc": "surface onboarding and init state for this contact",
-      "post_diff": false,
-      "resolve": [
-        "init"
-      ]
-    }
-  ],
+  "artifact": {
+    "kind": "entity",
+    "protected_kind": "entity",
+    "lineage": "user_discord_1132422022144729158",
+    "version_strategy": "hash_pinned"
+  },
   "identity": {
     "external_id": "discord:1132422022144729158",
     "username": "discord:1132422022144729158",
     "source": "inbound_contact",
-    "context": "Auto-bootstrapped from a first inbound message. Minimal identity only until init is completed."
+    "context": "Auto-bootstrapped from a first inbound message. Minimal identity only until init is completed.",
+    "name": "Courtney",
+    "age": null,
+    "target_role": "Video editor / edit assistant"
   },
   "preferences": {
     "onboarding": {
@@ -56,18 +30,47 @@
       "completion_rule": "Once enough stable profile is known, update this entity and set init.status to complete."
     }
   },
-  "access_rules": {
-    "observe": true,
-    "reprogramme": true,
-    "compile": false,
-    "activate_existing": false,
-    "mutate": false
-  },
+  "constraints": {},
+  "sources": [],
+  "scope": "Professional and onboarding context for Courtney as a video editor / edit assistant. Additional background, skills, and achievements to be added as provided.",
+  "steps": [
+    {
+      "action": "load_identity",
+      "desc": "surface identity context for Courtney",
+      "resolve": [
+        "identity"
+      ],
+      "post_diff": false
+    },
+    {
+      "action": "load_preferences",
+      "desc": "surface preferences context for Courtney",
+      "resolve": [
+        "preferences"
+      ],
+      "post_diff": false
+    },
+    {
+      "action": "load_scope",
+      "desc": "surface scope context for Courtney",
+      "resolve": [
+        "scope"
+      ],
+      "post_diff": false
+    }
+  ],
   "init": {
     "status": "pending",
     "mode": "first_contact",
     "ask_profile_questions": true,
     "seed_message": "Could you pattern me a better cv",
     "next_action": "Ask a small number of concise onboarding questions when useful. When enough stable profile is known, reprogramme this entity to set init.status to complete."
+  },
+  "access_rules": {
+    "observe": true,
+    "reprogramme": true,
+    "compile": false,
+    "activate_existing": false,
+    "mutate": false
   }
 }
