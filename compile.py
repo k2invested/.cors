@@ -335,6 +335,9 @@ class Compiler:
         self.active_chain: Chain | None = None
         self.last_was_mutation: bool = False  # OMO tracking
         self.current_turn: int = current_turn  # for cross-turn threshold
+        self._background_triggers: set[str] = set()
+        self._awaited_chains: set[str] = set()
+        self._background_trigger_refs: dict[str, set[str]] = {}
 
     # ── 1. Emission → Admission → Placement ──
 
@@ -475,42 +478,49 @@ class Compiler:
           - entry: the gap to address (None if ledger empty)
           - signal: governor's decision (ALLOW, ACT, CONSTRAIN, etc.)
         """
-        if self.ledger.is_empty():
-            return None, GovernorSignal.HALT
+        redirected_chains: set[str] = set()
 
-        entry = self.ledger.peek()
-        if entry is None:
-            return None, GovernorSignal.HALT
+        while not self.ledger.is_empty():
+            entry = self.ledger.peek()
+            if entry is None:
+                return None, GovernorSignal.HALT
 
-        # Find chain length
-        chain = self.trajectory.chains.get(entry.chain_id)
-        chain_length = chain.length() if chain else 0
+            chain = self.trajectory.chains.get(entry.chain_id)
+            chain_length = chain.length() if chain else 0
 
-        # Record epistemic state
-        self.governor_state.record(entry.gap.scores)
+            shadow_state = GovernorState(
+                vectors=[*self.governor_state.vectors, entry.gap.scores.as_vector()]
+            )
+            signal = govern(entry, chain_length, shadow_state)
 
-        # Governor decision
-        signal = govern(entry, chain_length, self.governor_state)
+            if signal == GovernorSignal.CONSTRAIN:
+                self.force_close_chain(entry.chain_id)
+                continue
 
-        if signal == GovernorSignal.CONSTRAIN:
-            # Force-close this chain, move to next
-            self.force_close_chain(entry.chain_id)
-            return self.next()  # recurse to get next entry
+            if signal == GovernorSignal.REDIRECT:
+                has_alternative = any(
+                    candidate.chain_id != entry.chain_id
+                    for candidate in self.ledger.stack
+                )
+                if has_alternative and entry.chain_id not in redirected_chains:
+                    redirected_chains.add(entry.chain_id)
+                    self.skip_chain(entry.chain_id)
+                    continue
+                signal = GovernorSignal.ALLOW
 
-        if signal == GovernorSignal.REDIRECT:
-            # Skip this chain, try next origin gap
-            self.skip_chain(entry.chain_id)
-            return self.next()
+            popped = self.ledger.pop()
+            if popped is None:
+                return None, GovernorSignal.HALT
 
-        # Pop and return
-        popped = self.ledger.pop()
+            self.governor_state.record(popped.gap.scores)
 
-        # Track active chain
-        chain = self.trajectory.chains.get(popped.chain_id)
-        if chain:
-            self.active_chain = chain
+            chain = self.trajectory.chains.get(popped.chain_id)
+            if chain:
+                self.active_chain = chain
 
-        return popped, signal
+            return popped, signal
+
+        return None, GovernorSignal.HALT
 
     # ── 3. OMO Enforcement ──
 
@@ -586,32 +596,20 @@ class Compiler:
         for chain_id, state in self.ledger.chain_states.items():
             if state == ChainState.CLOSED:
                 continue
-            # Check if chain had a reprogramme trigger but no await
-            has_reprogramme = False
-            has_await = False
-            for entry in self.ledger.history:
-                # Check resolved history for this chain
-                pass  # simplified — tracked via background_triggers
             if chain_id in self._background_triggers and chain_id not in self._awaited_chains:
                 return True
         return False
 
     def record_background_trigger(self, chain_id: str, refs: list[str] | None = None):
         """Record that a chain triggered a background workflow."""
-        if not hasattr(self, '_background_triggers'):
-            self._background_triggers = set()
         self._background_triggers.add(chain_id)
         if refs:
-            if not hasattr(self, '_background_trigger_refs'):
-                self._background_trigger_refs = {}
             stored = self._background_trigger_refs.setdefault(chain_id, set())
             for ref in refs:
                 stored.add(ref)
 
     def record_await(self, chain_id: str):
         """Record that a chain set an await checkpoint."""
-        if not hasattr(self, '_awaited_chains'):
-            self._awaited_chains = set()
         self._awaited_chains.add(chain_id)
 
     def needs_heartbeat(self) -> bool:
@@ -624,22 +622,11 @@ class Compiler:
 
         Law 9: the loop always closes.
         """
-        if not hasattr(self, '_background_triggers'):
-            return False
-        if not hasattr(self, '_awaited_chains'):
-            self._awaited_chains = set()
         unresolved = self._background_triggers - self._awaited_chains
         return len(unresolved) > 0
 
     def background_refs(self) -> list[str]:
         """Refs associated with unresolved background triggers."""
-        if not hasattr(self, '_background_triggers'):
-            return []
-        if not hasattr(self, '_awaited_chains'):
-            self._awaited_chains = set()
-        if not hasattr(self, '_background_trigger_refs'):
-            return []
-
         refs: list[str] = []
         unresolved = self._background_triggers - self._awaited_chains
         for chain_id in unresolved:

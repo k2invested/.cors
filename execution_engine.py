@@ -17,6 +17,7 @@ This module is the execution core for iteration-time branch handling.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,10 +32,12 @@ import manifest_engine as me
 class ExecutionHooks:
     resolve_all_refs: Callable[[list[str], list[str], Any], str]
     execute_tool: Callable[[str, dict], tuple[str, int]]
-    auto_commit: Callable[[str], tuple[str | None, str | None]]
+    auto_commit: Callable[..., tuple[str | None, str | None]]
     parse_step_output: Callable[..., tuple[Step, list[Gap]]]
     extract_json: Callable[[str], dict | None]
     extract_command: Callable[[str], str | None]
+    extract_written_path: Callable[[str], str | None]
+    is_reprogramme_intent: Callable[[dict | None], bool]
     load_tree_policy: Callable[[], dict]
     match_policy: Callable[[str, dict], dict | None]
     resolve_entity: Callable[[list[str], Any, Any], str | None]
@@ -75,6 +78,32 @@ def _record_step(step_result: Step, *, entry: Any, trajectory: Any, compiler: An
         trajectory.append(step_result)
     compiler.add_step_to_chain(step_result.hash)
     print(f"  step:{step_result.hash}" + (f" commit:{step_result.commit}" if step_result.commit else ""))
+
+
+def _pattern_tool_params(gap: Gap) -> dict[str, str] | None:
+    """Infer file_grep params when pattern_needed provides a concrete search term."""
+    pattern = None
+    quoted = re.findall(r'"([^"]+)"|\'([^\']+)\'', gap.desc)
+    for left, right in quoted:
+        candidate = (left or right).strip()
+        if candidate:
+            pattern = candidate
+            break
+
+    path = None
+    for ref in gap.content_refs:
+        candidate = ref.split(":", 1)[1] if ":" in ref and "/" in ref.split(":", 1)[1] else ref
+        if "/" in candidate or candidate.endswith((".st", ".py", ".json", ".md", ".txt", ".yaml", ".yml")):
+            path = candidate
+            break
+
+    if not pattern:
+        return None
+
+    params = {"pattern": pattern}
+    if path:
+        params["path"] = path
+    return params
 
 
 def execute_iteration(
@@ -368,8 +397,21 @@ def execute_iteration(
         tool_conf = config.tool_map.get(vocab, {})
         tool_path = tool_conf.get("tool") if isinstance(tool_conf, dict) else tool_conf
         if tool_path:
-            output, _ = hooks.execute_tool(tool_path, {"refs": gap.content_refs, "desc": gap.desc})
-            session.inject(f"## Tool output ({vocab})\n{output}")
+            if vocab == "pattern_needed":
+                params = _pattern_tool_params(gap)
+                if params:
+                    output, _ = hooks.execute_tool(tool_path, params)
+                    session.inject(f"## Tool output ({vocab})\n{output}")
+                elif resolved_data:
+                    session.inject(f"## Resolved data\n{resolved_data}")
+                else:
+                    session.inject(
+                        "## Pattern observation fallback\n"
+                        "No concrete search pattern was available, so no grep was executed."
+                    )
+            else:
+                output, _ = hooks.execute_tool(tool_path, {"refs": gap.content_refs, "desc": gap.desc})
+                session.inject(f"## Tool output ({vocab})\n{output}")
         elif resolved_data:
             session.inject(f"## Resolved data\n{resolved_data}")
 
@@ -692,10 +734,14 @@ def execute_iteration(
         )
         print(f"  LLM compose: {raw[:150]}...")
         intent = hooks.extract_json(raw)
-        if intent:
+        if hooks.is_reprogramme_intent(intent):
             output, code = hooks.execute_tool("tools/st_builder.py", intent)
             print(f"  st_builder: {output[:150]}")
-            commit_sha, _ = hooks.auto_commit(f"reprogramme: {gap.desc[:50]}")
+            written_path = hooks.extract_written_path(output)
+            commit_sha, _ = hooks.auto_commit(
+                f"reprogramme: {gap.desc[:50]}",
+                paths=[written_path] if written_path else None,
+            )
             if commit_sha:
                 compiler.record_background_trigger(entry.chain_id)
                 print(f"  → committed: {commit_sha}")
@@ -716,7 +762,7 @@ def execute_iteration(
                 )
                 compiler.resolve_current_gap(gap.hash)
         else:
-            print("  → no intent extracted")
+            print("  → no valid st_builder intent extracted")
             step_result = Step.create(
                 desc=f"reprogramme skipped: {gap.desc}",
                 step_refs=[origin_step.hash],

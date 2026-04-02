@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from skills.loader import load_all
 from tools import security_compile as security_compile_module
 
 
@@ -225,7 +226,10 @@ def test_security_compile_accepts_realized_chain_shape():
 
 def test_security_compile_embedded_package_adds_activation_cascade_warning():
     doc = stepchain_doc()
-    doc["input"]["candidate"]["nodes"][0]["manifestation"]["activation_ref"] = "72b1d5ffc964"
+    registry = load_all(str(ROOT / "skills"))
+    admin = registry.resolve_by_name("admin")
+    assert admin is not None
+    doc["input"]["candidate"]["nodes"][0]["manifestation"]["activation_ref"] = admin.hash
     result = security_compile_module.security_compile(doc)
     codes = {item["code"] for item in result["result"]["risks"]}
     assert "activation_cascade" in codes

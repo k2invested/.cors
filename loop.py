@@ -172,19 +172,34 @@ def _check_protected(commit_sha: str, pre_commit_sha: str) -> tuple[list[str], s
     return violations, on_reject
 
 
-def auto_commit(message: str) -> tuple[str | None, str | None]:
-    """Stage all changes and commit. Returns (SHA, on_reject_vocab).
+def auto_commit(message: str, paths: list[str] | None = None) -> tuple[str | None, str | None]:
+    """Stage selected changes and commit. Returns (SHA, on_reject_vocab).
 
     After committing, checks for protected path violations. If the LLM
     mutated a protected file, auto-reverts to the previous commit and
     returns (None, on_reject_vocab) (the mutation is rejected).
     """
-    status = git(["status", "--porcelain"])
+    status_cmd = ["status", "--porcelain"]
+    add_cmd = ["add", "-A"]
+    if paths:
+        normalized: list[str] = []
+        for path in paths:
+            try:
+                p = Path(path)
+                if p.is_absolute():
+                    p = p.relative_to(CORS_ROOT)
+                normalized.append(str(p))
+            except ValueError:
+                normalized.append(path)
+        status_cmd.extend(["--", *normalized])
+        add_cmd.extend(["--", *normalized])
+
+    status = git(status_cmd)
     if not status:
         return None, None
 
     pre_sha = git_head()
-    git(["add", "-A"])
+    git(add_cmd)
     git(["commit", "-m", message])
     post_sha = git_head()
 
@@ -227,6 +242,13 @@ def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
         skill = _skill_registry.resolve(ref)
         if skill:
             return _render_entity(skill)
+        for candidate in _skill_registry.all_skills():
+            try:
+                rel_source = str(Path(candidate.source).resolve().relative_to(CORS_ROOT))
+            except ValueError:
+                rel_source = str(Path(candidate.source))
+            if ref == rel_source or ref == Path(rel_source).name:
+                return _render_entity(candidate)
 
     # Try trajectory step — render as semantic tree branch
     step = trajectory.resolve(ref)
@@ -241,6 +263,12 @@ def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
     package = me.load_chain_package(CHAINS_DIR, ref, trajectory)
     if package:
         return me.render_chain_package(package, ref)
+
+    repo_path = CORS_ROOT / ref
+    if ("/" in ref or ref.endswith(".st")) and repo_path.exists() and repo_path.is_file():
+        content = git_show(f"HEAD:{ref}")
+        if not content.startswith("(unresolvable"):
+            return content
 
     # Try git object
     content = git_show(ref)
@@ -341,6 +369,81 @@ def resolve_all_refs(step_refs: list[str], content_refs: list[str],
         if data:
             blocks.append(f"── resolved {ref} ──\n{data}")
     return "\n\n".join(blocks) if blocks else ""
+
+
+def _normalize_repo_ref(ref: str) -> str | None:
+    if not isinstance(ref, str):
+        return None
+    candidate = ref.strip()
+    if not candidate:
+        return None
+    try:
+        path = Path(candidate)
+        if path.is_absolute():
+            path = path.resolve().relative_to(CORS_ROOT)
+        return str(path)
+    except ValueError:
+        return candidate
+
+
+def _skill_source_ref_map() -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    if not _skill_registry:
+        return mapping
+    for skill in _skill_registry.all_skills():
+        try:
+            rel_source = str(Path(skill.source).resolve().relative_to(CORS_ROOT))
+        except ValueError:
+            rel_source = str(Path(skill.source))
+        candidates = {
+            rel_source,
+            Path(rel_source).name,
+        }
+        for candidate in candidates:
+            mapping[candidate] = skill.hash
+    return mapping
+
+
+def _canonicalize_content_ref(ref: str) -> str:
+    if not isinstance(ref, str):
+        return ref
+    candidate = ref.strip()
+    if not candidate:
+        return candidate
+
+    if _skill_registry and _skill_registry.resolve(candidate):
+        return candidate
+
+    if re.fullmatch(r"[0-9a-f]{7,64}", candidate):
+        return candidate
+
+    if candidate.startswith(("step:", "gap:", "commit:", "blob:", "tree:", "HEAD:")):
+        return candidate
+
+    normalized = _normalize_repo_ref(candidate) or candidate
+
+    skill_ref = _skill_source_ref_map().get(normalized)
+    if skill_ref:
+        return skill_ref
+
+    repo_path = CORS_ROOT / normalized
+    if repo_path.exists():
+        object_sha = git(["rev-parse", f"HEAD:{normalized}"]).strip()
+        if object_sha:
+            return object_sha.splitlines()[0]
+
+    return candidate
+
+
+def _canonicalize_content_refs(refs: list[str]) -> list[str]:
+    canonical: list[str] = []
+    seen: set[str] = set()
+    for ref in refs:
+        resolved = _canonicalize_content_ref(ref)
+        if resolved and resolved not in seen:
+            seen.add(resolved)
+            canonical.append(resolved)
+    return canonical
 
 
 def _emit_reason_skill(reason_skill: Skill, gap: Gap, origin_step: Step,
@@ -534,10 +637,13 @@ The kernel resolves content_refs for you. If you reference a hash, the kernel wi
 Each gap maps to a vocab term that tells the kernel HOW to resolve it:
 
 OBSERVE (kernel resolves, you receive data):
-  pattern_needed — search file contents by pattern
-  hash_resolve_needed — resolve step/gap/blob hashes from trajectory
-  email_needed — check email
+  pattern_needed — search file contents by a concrete pattern you already know
+  hash_resolve_needed — resolve step/gap/blob hashes, skill hashes, or repo paths like skills/admin.st
+  mailbox_needed — check mailbox state
   external_context — surface from current context
+  (workspace files visible via HEAD commit tree. URLs and web research are steps inside workflow .st files, not standalone vocab.)
+
+BRIDGE (control flow / persistence):
   clarify_needed — you cannot proceed without user input. USE THIS when:
     - The user's intent is ambiguous and you'd be guessing
     - Multiple interpretations exist and the wrong one wastes effort
@@ -545,7 +651,6 @@ OBSERVE (kernel resolves, you receive data):
     The desc field becomes your question. This halts the iteration loop.
     The gap persists on the trajectory — next turn, the LLM sees it and
     can resume the chain with the user's clarification as new context.
-  (workspace files visible via HEAD commit tree. URLs and web research are steps inside workflow .st files, not standalone vocab.)
 
 MUTATE (you compose a command, kernel executes):
   hash_edit_needed — edit any file (universal: read by hash → compose edit → execute via hash_manifest)
@@ -553,9 +658,15 @@ MUTATE (you compose a command, kernel executes):
   content_needed — write a new file
   script_edit_needed — edit an existing file
   command_needed — execute a shell command
-  message_needed — send an email/message
+  email_needed — send an email/message
   json_patch_needed — surgical JSON edit
   git_revert_needed — git revert/checkout
+
+For explicit edit/update requests, do not stop at "need to inspect". Emit the actual mutate gap as well as any prerequisite observation gap. The compiler will resolve the observe gap first, then return to the mutate gap.
+
+For .st files, identity profiles, preferences, or long-horizon semantic state updates, use reprogramme_needed as the actual update gap. Use hash_edit_needed or script_edit_needed for ordinary workspace file edits.
+
+If the user names a workspace file directly, put that relative path in content_refs. If the target is an already loaded entity/workflow (for example kenny:... or admin.st), reference that entity or repo path directly instead of emitting an ungrounded observe gap.
 
 BRIDGE_VOCAB_PLACEHOLDER
 
@@ -699,7 +810,7 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
 
     # Build dynamic system prompt with actual available entities
     entity_list_lines = "\n".join(
-        f"    {s.display_name}:{s.hash} — {s.desc[:60]}"
+        f"    {s.display_name}:{s.hash} ({Path(s.source).name}) — {s.desc[:60]}"
         for s in registry.all_skills()
     )
     dynamic_bridge = (
@@ -878,13 +989,13 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
             print(f"\n  ALL GAPS RESOLVED (iteration {iteration + 1})")
             break
 
-    # ── 6. REPROGRAMME PASS ─────────────────────────────────────────
+    # ── 6. FIRST-CONTACT BOOTSTRAP ──────────────────────────────────
     #
-    # Automatic, pre-synthesis. The agent reviews the turn and updates
-    # any .st files that need it. Not a gap — housekeeping.
-    # The commit hash lands on trajectory so synthesis can see it.
+    # Only first-seen inbound contacts are auto-bootstrapped here.
+    # Normal semantic updates must surface through explicit
+    # reprogramme_needed gaps rather than an every-turn housekeeping pass.
 
-    reprogramme_step = _reprogramme_pass(session, registry, trajectory, contact_id, user_message)
+    reprogramme_step = _bootstrap_contact_entity(registry, contact_id, user_message)
     if reprogramme_step:
         trajectory.append(reprogramme_step)
 
@@ -935,6 +1046,20 @@ def run_turn(user_message: str, contact_id: str = "admin") -> str:
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
+def _extract_json_block(raw: str) -> tuple[dict | None, int | None]:
+    """Extract the first valid top-level JSON object from model output."""
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(raw):
+        if ch != "{":
+            continue
+        try:
+            obj, _end = decoder.raw_decode(raw[i:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj, i
+    return None, None
+
 def _parse_step_output(raw: str, step_refs: list[str], content_refs: list[str],
                        chain_id: str = None) -> tuple[Step, list[Gap]]:
     """Parse LLM output into a Step with gaps.
@@ -943,22 +1068,20 @@ def _parse_step_output(raw: str, step_refs: list[str], content_refs: list[str],
     Extract the gaps from the JSON, build a Step.
     """
     gaps = []
+    data, json_start = _extract_json_block(raw)
     try:
-        # Find JSON block in output
-        json_start = raw.find("{")
-        json_end = raw.rfind("}") + 1
-        if json_start >= 0 and json_end > json_start:
-            data = json.loads(raw[json_start:json_end])
+        if data:
             for g in data.get("gaps", []):
+                canonical_content_refs = _canonicalize_content_refs(g.get("content_refs", []))
                 gap = Gap.create(
                     desc=g.get("desc", ""),
-                    content_refs=g.get("content_refs", []),
+                    content_refs=canonical_content_refs,
                     step_refs=g.get("step_refs", []),
                 )
                 gap.scores = Epistemic(
                     relevance=g.get("relevance", 0.5),
                     confidence=g.get("confidence", 0.5),
-                    grounded=0.0,  # kernel computes from co-occurrence at admission
+                    grounded=0.0,
                 )
                 gap.vocab = g.get("vocab")
                 if gap.vocab:
@@ -969,8 +1092,7 @@ def _parse_step_output(raw: str, step_refs: list[str], content_refs: list[str],
         pass
 
     # Extract desc from the natural text portion (before JSON)
-    json_start = raw.find("{")
-    desc = raw[:json_start].strip() if json_start > 0 else raw[:200].strip()
+    desc = raw[:json_start].strip() if isinstance(json_start, int) and json_start > 0 else raw[:200].strip()
     # Trim to a reasonable length
     if len(desc) > 200:
         desc = desc[:200] + "..."
@@ -978,7 +1100,7 @@ def _parse_step_output(raw: str, step_refs: list[str], content_refs: list[str],
     step = Step.create(
         desc=desc,
         step_refs=step_refs,
-        content_refs=content_refs,
+        content_refs=_canonicalize_content_refs(content_refs),
         gaps=gaps,
         chain_id=chain_id,
     )
@@ -988,27 +1110,34 @@ def _parse_step_output(raw: str, step_refs: list[str], content_refs: list[str],
 
 def _extract_json(raw: str) -> dict | None:
     """Extract a JSON object from LLM output."""
-    try:
-        json_start = raw.find("{")
-        json_end = raw.rfind("}") + 1
-        if json_start >= 0 and json_end > json_start:
-            return json.loads(raw[json_start:json_end])
-    except (json.JSONDecodeError, KeyError):
-        pass
-    return None
+    data, _json_start = _extract_json_block(raw)
+    return data
 
 
 def _extract_command(raw: str) -> str | None:
     """Extract a command from LLM JSON output."""
-    try:
-        json_start = raw.find("{")
-        json_end = raw.rfind("}") + 1
-        if json_start >= 0 and json_end > json_start:
-            data = json.loads(raw[json_start:json_end])
-            return data.get("command")
-    except (json.JSONDecodeError, KeyError):
-        pass
+    data = _extract_json(raw)
+    return data.get("command") if isinstance(data, dict) else None
+
+
+def _extract_written_path(tool_output: str) -> str | None:
+    for line in tool_output.splitlines():
+        if line.startswith("Written: "):
+            return line.split("Written: ", 1)[1].strip()
     return None
+
+
+def _is_reprogramme_intent(intent: dict | None) -> bool:
+    if not isinstance(intent, dict):
+        return False
+    if "gaps" in intent:
+        return False
+    if "version" in intent:
+        return False
+    if "name" not in intent or "desc" not in intent:
+        return False
+    artifact_kind = intent.get("artifact_kind", "entity")
+    return artifact_kind in {"entity", "action_update", "hybrid_update"}
 
 
 def _resolve_entity(content_refs: list[str], registry: SkillRegistry,
@@ -1093,6 +1222,8 @@ def _execution_hooks() -> ExecutionHooks:
         parse_step_output=_parse_step_output,
         extract_json=_extract_json,
         extract_command=_extract_command,
+        extract_written_path=_extract_written_path,
+        is_reprogramme_intent=_is_reprogramme_intent,
         load_tree_policy=_load_tree_policy,
         match_policy=_match_policy,
         resolve_entity=_resolve_entity,
@@ -1155,76 +1286,35 @@ def _render_entity(skill: Skill) -> str:
     return "\n".join(lines)
 
 
-def _reprogramme_pass(session: Session, registry: SkillRegistry,
-                      trajectory: Trajectory, contact_id: str,
-                      user_message: str) -> Step | None:  # noqa: ARG001
-    """Automatic pre-synthesis reprogramme pass.
+def _bootstrap_contact_entity(registry: SkillRegistry, contact_id: str,
+                              user_message: str) -> Step | None:
+    """Bootstrap a thin entity for a first-seen inbound contact.
 
-    The agent reviews the turn and decides if any .st files need updating.
-    Not a gap — silent housekeeping. The commit hash lands on trajectory
-    so synthesis can reference it.
-
-    Returns a blob step with commit hash, or None if nothing to update.
+    This is the only automatic persistence path. Ongoing semantic updates
+    must come through explicit reprogramme_needed gaps surfaced by the
+    agent, not a per-turn housekeeping pass.
     """
     identity_skill = _find_identity_skill(contact_id, registry)
-    if identity_skill is None:
-        print(f"\n── REPROGRAMME BOOTSTRAP ({contact_id}) ──")
-        intent = _build_init_user_intent(contact_id, user_message)
-        output, code = execute_tool("tools/st_builder.py", intent)
-        print(f"  st_builder: {output[:150]}")
-        if code == 0:
-            commit_sha, _on_reject = auto_commit(f"reprogramme bootstrap: {intent['name']}")
-            if commit_sha:
-                print(f"  → bootstrapped: {commit_sha}")
-                return Step.create(
-                    desc=f"reprogrammed bootstrap: {intent['name']}",
-                    content_refs=[commit_sha],
-                    commit=commit_sha,
-                )
+    if identity_skill is not None:
         return None
 
-    entity_list = "\n".join(
-        f"  {s.display_name}:{s.hash} ({s.name}.st)"
-        for s in registry.all_skills()
-    )
-
-    raw = session.call(
-        "## Pre-synthesis reprogramme check\n"
-        "Review this turn. Did you learn anything new about any entity that should be persisted?\n"
-        "- A preference correction or clarification\n"
-        "- A new person, concept, or domain mentioned\n"
-        "- Updated context about a known entity\n\n"
-        f"Known entities:\n{entity_list}\n\n"
-        "If YES: respond with a JSON intent for st_builder.\n"
-        "Prefer pure entity updates. Do not invent new action workflows here.\n"
-        "If NO: respond with exactly: NO_UPDATE"
-    )
-
-    if "NO_UPDATE" in raw:
-        print("  reprogramme: no updates needed")
-        return None
-
-    print(f"\n── REPROGRAMME ──")
-    print(f"  LLM: {raw[:150]}...")
-
-    intent = _extract_json(raw)
-    if not intent:
-        print("  reprogramme: no valid intent extracted")
-        return None
-
+    print(f"\n── REPROGRAMME BOOTSTRAP ({contact_id}) ──")
+    intent = _build_init_user_intent(contact_id, user_message)
     output, code = execute_tool("tools/st_builder.py", intent)
     print(f"  st_builder: {output[:150]}")
-
-    commit_sha, _on_reject = auto_commit(f"reprogramme: {intent.get('name', 'unknown')}")
-    if commit_sha:
-        print(f"  → committed: {commit_sha}")
-        step = Step.create(
-            desc=f"reprogrammed: {intent.get('name', 'unknown')}",
-            content_refs=[commit_sha],
-            commit=commit_sha,
+    if code == 0:
+        written_path = _extract_written_path(output)
+        commit_sha, _on_reject = auto_commit(
+            f"reprogramme bootstrap: {intent['name']}",
+            paths=[written_path] if written_path else None,
         )
-        return step
-
+        if commit_sha:
+            print(f"  → bootstrapped: {commit_sha}")
+            return Step.create(
+                desc=f"reprogrammed bootstrap: {intent['name']}",
+                content_refs=[commit_sha],
+                commit=commit_sha,
+            )
     return None
 
 
@@ -1293,6 +1383,28 @@ def _build_init_user_intent(contact_id: str, user_message: str) -> dict:
                 "Minimal identity only until init is completed."
             ),
         },
+        "preferences": {
+            "onboarding": {
+                "deterministic_reprogramme_mode": "bootstrap_only",
+                "get_to_know_entity": True,
+                "ask_concise_questions": True,
+                "question_strategy": (
+                    "Ask a small number of concise get-to-know-you questions when useful, "
+                    "rather than interrogating every turn."
+                ),
+                "profile_update_mode": (
+                    "Passively surface explicit reprogramme_needed gaps when stable traits, "
+                    "preferences, or user-corrected context should be persisted."
+                ),
+                "passive_reprogramme_optional": True,
+                "passive_reprogramme_removal": (
+                    "The user may later ask to remove passive profile-maintenance behavior from this entity."
+                ),
+                "completion_rule": (
+                    "Once enough stable profile is known, update this entity and set init.status to complete."
+                ),
+            }
+        },
         "access_rules": {
             "observe": True,
             "reprogramme": True,
@@ -1315,6 +1427,12 @@ def _build_init_user_intent(contact_id: str, user_message: str) -> dict:
                 "action": "load_identity",
                 "desc": "surface who this inbound contact appears to be from current known metadata",
                 "resolve": ["identity"],
+                "post_diff": False,
+            },
+            {
+                "action": "load_onboarding_preferences",
+                "desc": "surface get-to-know instructions and passive profile-maintenance preferences for this contact",
+                "resolve": ["preferences"],
                 "post_diff": False,
             },
             {
@@ -1342,6 +1460,11 @@ def _render_identity(skill: Skill) -> str:
         return ""
 
     lines = [f"## Identity: {skill.display_name}:{skill.hash}"]
+    try:
+        rel_source = Path(skill.source).resolve().relative_to(CORS_ROOT)
+        lines.append(f"  source: {rel_source}")
+    except ValueError:
+        lines.append(f"  source: {skill.source}")
 
     identity = data.get("identity", {})
     if identity:

@@ -21,6 +21,8 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import compile as compile_module
+import execution_engine as execution_engine_module
 import loop
 from compile import (
     ADMISSION_THRESHOLD,
@@ -404,6 +406,10 @@ P5_CASES = [
     ("reprogramme_skill_all_steps_loaded", lambda: skill("reprogramme").step_count() == 3),
     ("init_user_intent_uses_on_contact_trigger", lambda: loop._build_init_user_intent("discord:123", "hi")["trigger"] == "on_contact:discord:123"),
     ("init_user_intent_starts_pending", lambda: loop._build_init_user_intent("discord:123", "hi")["init"]["status"] == "pending"),
+    ("init_user_intent_prefers_get_to_know_questions", lambda: loop._build_init_user_intent("discord:123", "hi")["preferences"]["onboarding"]["get_to_know_entity"] is True),
+    ("init_user_intent_bootstrap_is_only_deterministic_reprogramme", lambda: loop._build_init_user_intent("discord:123", "hi")["preferences"]["onboarding"]["deterministic_reprogramme_mode"] == "bootstrap_only"),
+    ("init_user_intent_passive_reprogramme_is_optional", lambda: loop._build_init_user_intent("discord:123", "hi")["preferences"]["onboarding"]["passive_reprogramme_optional"] is True),
+    ("init_user_intent_loads_onboarding_preferences", lambda: any(step["action"] == "load_onboarding_preferences" for step in loop._build_init_user_intent("discord:123", "hi")["steps"])),
 ]
 
 
@@ -451,7 +457,7 @@ P7_CASES = [
     ("extract_st_steps_blob_is_terminal", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "observe target", "content_refs": ["blob_a"], "gaps": []}]})[0]["post_diff"] is False),
     ("extract_st_steps_gap_branch_is_flexible", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "branch", "gaps": [{"content_refs": ["blob_a"], "step_refs": ["step_a"], "scores": {"relevance": 0.8}, "vocab": "pattern_needed"}]}]})[0]["post_diff"] is True),
     ("extract_st_steps_commit_implies_post_diff", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "mutate", "commit": "abc", "gaps": [{"content_refs": [], "step_refs": [], "scores": {"relevance": 0.8}, "vocab": "content_needed"}]}]})[0]["post_diff"] is True),
-    ("admin_deterministic_steps_helper", lambda: len(skill("admin").deterministic_steps()) == 4),
+    ("admin_deterministic_steps_helper", lambda: all(not s.post_diff for s in skill("admin").steps)),
     ("hash_edit_flexible_steps_helper", lambda: len(skill("hash_edit").flexible_steps()) == 1),
 ]
 
@@ -759,6 +765,26 @@ def test_p12_auto_commit_contract_success(monkeypatch):
     assert loop.auto_commit("ok") == ("abc123", None)
 
 
+def test_p12_auto_commit_scopes_to_selected_paths(monkeypatch):
+    calls: list[tuple[str, ...]] = []
+
+    def fake_git(cmd, cwd=None):
+        calls.append(tuple(cmd))
+        if cmd == ["status", "--porcelain", "--", "skills/admin.st"]:
+            return " M skills/admin.st"
+        if cmd[:3] == ["rev-parse", "--short", "HEAD"]:
+            return "abc123"
+        return ""
+
+    monkeypatch.setattr(loop, "git", fake_git)
+    monkeypatch.setattr(loop, "git_head", lambda: "abc123")
+    monkeypatch.setattr(loop, "_check_protected", lambda post, pre: ([], None))
+
+    assert loop.auto_commit("ok", paths=["/Users/k2invested/Desktop/cors/skills/admin.st"]) == ("abc123", None)
+    assert ("status", "--porcelain", "--", "skills/admin.st") in calls
+    assert ("add", "-A", "--", "skills/admin.st") in calls
+
+
 def test_p12_auto_commit_contract_rejection(monkeypatch):
     calls: list[tuple[str, ...]] = []
 
@@ -776,3 +802,127 @@ def test_p12_auto_commit_contract_rejection(monkeypatch):
 
     assert loop.auto_commit("bad") == (None, "reason_needed")
     assert ("revert", "--no-commit", "HEAD") in calls
+
+
+def test_p12_reprogramme_intent_rejects_gap_payload():
+    assert loop._is_reprogramme_intent({"gaps": [{"desc": "x"}]}) is False
+
+
+def test_p12_reprogramme_intent_accepts_entity_payload():
+    assert loop._is_reprogramme_intent({"name": "admin", "desc": "prefs", "artifact_kind": "entity"}) is True
+
+
+def test_p12_bootstrap_contact_entity_skips_known_contact(monkeypatch):
+    admin = registry().resolve_by_name("admin")
+    assert admin is not None
+    monkeypatch.setattr(loop, "_find_identity_skill", lambda contact_id, registry_obj: admin)
+    assert loop._bootstrap_contact_entity(registry(), "admin", "hi") is None
+
+
+def test_p12_bootstrap_contact_entity_creates_first_contact_step(monkeypatch):
+    monkeypatch.setattr(loop, "_find_identity_skill", lambda contact_id, registry_obj: None)
+    monkeypatch.setattr(loop, "execute_tool", lambda tool, intent: ("Written: /Users/k2invested/Desktop/cors/skills/user_discord_123.st", 0))
+    monkeypatch.setattr(loop, "auto_commit", lambda message, paths=None: ("abc123", None))
+
+    step = loop._bootstrap_contact_entity(registry(), "discord:123", "hello there")
+
+    assert step is not None
+    assert step.commit == "abc123"
+    assert step.desc == "reprogrammed bootstrap: user_discord_123"
+    assert step.content_refs == ["abc123"]
+
+
+def test_p12_resolve_hash_supports_skill_source_path(monkeypatch):
+    monkeypatch.setattr(loop, "_skill_registry", registry())
+    rendered = loop.resolve_hash("skills/admin.st", Trajectory())
+    assert rendered is not None
+    assert "## Entity: kenny:" in rendered
+
+
+def test_p12_pattern_tool_params_include_path_when_pattern_is_quoted():
+    gap = make_gap(
+        "Need to find \"mirror_then_extend\" in admin preferences.",
+        content_refs=["skills/admin.st"],
+        vocab="pattern_needed",
+    )
+    assert execution_engine_module._pattern_tool_params(gap) == {
+        "pattern": "mirror_then_extend",
+        "path": "skills/admin.st",
+    }
+
+
+def test_p12_canonicalize_content_ref_maps_skill_source_to_hash(monkeypatch):
+    monkeypatch.setattr(loop, "_skill_registry", registry())
+    skill = registry().resolve_by_name("admin")
+    assert skill is not None
+    assert loop._canonicalize_content_ref("skills/admin.st") == skill.hash
+
+
+def test_p12_canonicalize_content_ref_maps_repo_path_to_head_object_hash(monkeypatch):
+    monkeypatch.setattr(loop, "_skill_registry", registry())
+    expected = loop.git(["rev-parse", "HEAD:docs/ARCHITECTURE.md"]).strip().splitlines()[0]
+    assert loop._canonicalize_content_ref("docs/ARCHITECTURE.md") == expected
+
+
+def test_p12_parse_step_output_canonicalizes_gap_content_refs(monkeypatch):
+    monkeypatch.setattr(loop, "_skill_registry", registry())
+    raw = json.dumps(
+        {
+            "gaps": [
+                {
+                    "desc": "inspect admin",
+                    "content_refs": ["skills/admin.st"],
+                    "step_refs": [],
+                    "vocab": "hash_resolve_needed",
+                    "relevance": 0.9,
+                    "confidence": 0.8,
+                }
+            ]
+        }
+    )
+    step, gaps = loop._parse_step_output(raw, step_refs=[], content_refs=["docs/ARCHITECTURE.md"])
+    skill = registry().resolve_by_name("admin")
+    assert skill is not None
+    assert gaps[0].content_refs == [skill.hash]
+    assert step.content_refs == [loop.git(["rev-parse", "HEAD:docs/ARCHITECTURE.md"]).strip().splitlines()[0]]
+
+
+def test_p12_compiler_next_redirects_to_alternative_chain_without_recursive_loop(monkeypatch):
+    compiler = Compiler(Trajectory())
+    first = make_gap("first", vocab="pattern_needed")
+    second = make_gap("second", vocab="pattern_needed")
+    compiler.ledger.push_origin(first, "c1")
+    compiler.ledger.push_origin(second, "c2")
+
+    def fake_govern(entry, chain_length, state):
+        if entry.chain_id == "c2":
+            return GovernorSignal.REDIRECT
+        return GovernorSignal.ALLOW
+
+    monkeypatch.setattr(compile_module, "govern", fake_govern)
+
+    entry, signal = compiler.next()
+
+    assert entry is not None
+    assert entry.chain_id == "c1"
+    assert signal == GovernorSignal.ALLOW
+    assert len(compiler.governor_state.vectors) == 1
+
+
+def test_p12_compiler_next_redirect_single_chain_falls_back_without_state_duplication(monkeypatch):
+    compiler = Compiler(Trajectory())
+    gap = make_gap("only", vocab="pattern_needed")
+    compiler.ledger.push_origin(gap, "only-chain")
+
+    monkeypatch.setattr(
+        compile_module,
+        "govern",
+        lambda entry, chain_length, state: GovernorSignal.REDIRECT,
+    )
+
+    entry, signal = compiler.next()
+
+    assert entry is not None
+    assert entry.chain_id == "only-chain"
+    assert signal == GovernorSignal.ALLOW
+    assert len(compiler.governor_state.vectors) == 1
