@@ -501,6 +501,10 @@ P5_CASES = [
     ("init_user_intent_passive_reprogramme_is_optional", lambda: loop._build_init_user_intent("discord:123", "hi")["preferences"]["onboarding"]["passive_reprogramme_optional"] is True),
     ("init_user_intent_has_single_initiation_step", lambda: [step["action"] for step in loop._build_init_user_intent("discord:123", "hi")["steps"]] == ["initiate_entity"]),
     ("init_user_intent_initiation_step_resolves_full_profile", lambda: loop._build_init_user_intent("discord:123", "hi")["steps"][0]["resolve"] == ["identity", "preferences", "access_rules", "init"]),
+    ("init_user_intent_uses_discord_username_as_default_name", lambda: loop._build_init_user_intent("discord:123", "hi", contact_profile={"username": "courtney"})["name"] == "courtney"),
+    ("init_user_intent_sets_identity_name_from_profile", lambda: loop._build_init_user_intent("discord:123", "hi", contact_profile={"username": "courtney"})["identity"]["name"] == "courtney"),
+    ("contact_trigger_filename_uses_username", lambda: st_builder_module.contact_filename_for_st({"trigger": "on_contact:discord:123", "identity": {"username": "courtney"}, "name": "courtney"}) == "courtney.st"),
+    ("init_user_intent_sets_discord_id_as_identifier", lambda: loop._build_init_user_intent("discord:123", "hi", contact_profile={"username": "courtney"})["identity"]["discord_user_id"] == "123"),
     ("reprogramme_intent_accepts_semantic_skeleton", lambda: loop._is_reprogramme_intent({
         "version": "semantic_skeleton.v1",
         "artifact": {"kind": "entity"},
@@ -1296,7 +1300,7 @@ def test_p12_run_turn_bootstraps_unknown_contact_even_on_no_gap_turn(monkeypatch
     monkeypatch.setattr(loop, "_find_identity_skill", lambda contact_id, registry_obj: None)
     monkeypatch.setattr(loop, "_save_turn", lambda trajectory, state=None: None)
 
-    def fake_bootstrap(registry_obj, contact_id, user_message):
+    def fake_bootstrap(registry_obj, contact_id, user_message, *, contact_profile=None):
         assert contact_id == "discord:123"
         assert user_message == "Hey"
         return make_step("reprogrammed bootstrap: user_discord_123", commit="boot123", content_refs=["boot123"])
@@ -1373,7 +1377,7 @@ def test_p12_run_turn_bootstraps_before_identity_lookup(monkeypatch, tmp_path):
     monkeypatch.setattr(loop, "_render_identity", lambda skill_obj: "## Identity")
     monkeypatch.setattr(loop, "_save_turn", lambda trajectory, state=None: None)
     monkeypatch.setattr(loop, "_synthesize", lambda session, user_message, turn_facts=None: "hello")
-    monkeypatch.setattr(loop, "_bootstrap_contact_entity", lambda registry_obj, contact_id, user_message: make_step("reprogrammed bootstrap: user_discord_123", commit="boot123"))
+    monkeypatch.setattr(loop, "_bootstrap_contact_entity", lambda registry_obj, contact_id, user_message, contact_profile=None: make_step("reprogrammed bootstrap: user_discord_123", commit="boot123"))
 
     response = loop.run_turn(
         "Hey",

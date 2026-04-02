@@ -13,13 +13,22 @@ def fake_message(
     *,
     author_id=1,
     author_bot=False,
+    author_name="user1",
+    author_display_name="",
+    author_global_name="",
     guild_id=None,
     channel_id=10,
     mentions=None,
     content="hi",
 ):
     return SimpleNamespace(
-        author=SimpleNamespace(id=author_id, bot=author_bot),
+        author=SimpleNamespace(
+            id=author_id,
+            bot=author_bot,
+            name=author_name,
+            display_name=author_display_name,
+            global_name=author_global_name,
+        ),
         guild=SimpleNamespace(id=guild_id) if guild_id is not None else None,
         channel=SimpleNamespace(id=channel_id),
         mentions=mentions or [],
@@ -30,6 +39,15 @@ def fake_message(
 def test_contact_id_for_message():
     message = fake_message(author_id=42)
     assert discord_bot.contact_id_for_message(message) == "discord:42"
+
+
+def test_contact_profile_for_message_prefers_available_discord_names():
+    message = fake_message(author_id=42, author_name="jayuser", author_display_name="Jay", author_global_name="Jay G")
+    assert discord_bot.contact_profile_for_message(message) == {
+        "username": "jayuser",
+        "global_name": "Jay G",
+        "display_name": "Jay",
+    }
 
 
 def test_state_paths_for_contact_are_isolated_per_user():

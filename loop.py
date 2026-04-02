@@ -1162,6 +1162,7 @@ Never claim that a file, preference, or workspace state was changed, removed, up
 def run_turn(
     user_message: str,
     contact_id: str = "admin",
+    contact_profile: dict[str, str] | None = None,
     *,
     traj_file: str | Path | None = None,
     chains_file: str | Path | None = None,
@@ -1189,7 +1190,7 @@ def run_turn(
     Trajectory.load_chains(str(state.chains_file), trajectory)
     registry = load_all(str(SKILLS_DIR))
     _skill_registry = registry
-    pre_bootstrap_step = _bootstrap_contact_entity(registry, contact_id, user_message)
+    pre_bootstrap_step = _bootstrap_contact_entity(registry, contact_id, user_message, contact_profile=contact_profile)
     if pre_bootstrap_step:
         trajectory.append(pre_bootstrap_step)
         registry = load_all(str(SKILLS_DIR))
@@ -1709,7 +1710,9 @@ def _render_entity(skill: Skill) -> str:
 
 
 def _bootstrap_contact_entity(registry: SkillRegistry, contact_id: str,
-                              user_message: str) -> Step | None:
+                              user_message: str,
+                              *,
+                              contact_profile: dict[str, str] | None = None) -> Step | None:
     """Bootstrap a thin entity for a first-seen inbound contact.
 
     This is the only automatic persistence path. Ongoing semantic updates
@@ -1721,7 +1724,7 @@ def _bootstrap_contact_entity(registry: SkillRegistry, contact_id: str,
         return None
 
     print(f"\n── REPROGRAMME BOOTSTRAP ({contact_id}) ──")
-    intent = _build_init_user_intent(contact_id, user_message)
+    intent = _build_init_user_intent(contact_id, user_message, contact_profile=contact_profile)
     output, code = execute_tool("tools/st_builder.py", intent)
     print(f"  st_builder: {output[:150]}")
     if code == 0:
@@ -1842,7 +1845,7 @@ def _slug_contact_id(contact_id: str) -> str:
     return slug or "contact"
 
 
-def _build_init_user_intent(contact_id: str, user_message: str) -> dict:
+def _build_init_user_intent(contact_id: str, user_message: str, *, contact_profile: dict[str, str] | None = None) -> dict:
     """Build a deterministic bootstrap entity for a first-seen inbound contact.
 
     This is intentionally thin. It should give the system continuity on the
@@ -1852,17 +1855,24 @@ def _build_init_user_intent(contact_id: str, user_message: str) -> dict:
     seed = user_message.strip()
     if len(seed) > 200:
         seed = seed[:200] + "..."
+    profile = contact_profile or {}
+    username = str(profile.get("username", "")).strip()
+    global_name = str(profile.get("global_name", "")).strip()
+    display_name = str(profile.get("display_name", "")).strip()
+    semantic_name = username or global_name or display_name or f"user_{slug}"
 
     return {
         "artifact_kind": "entity",
-        "name": f"user_{slug}",
+        "name": semantic_name,
         "desc": f"Bootstrap entity for inbound contact {contact_id}",
         "trigger": f"on_contact:{contact_id}",
         "author": "system",
         "refs": {},
         "identity": {
             "external_id": contact_id,
-            "username": contact_id,
+            "username": username or contact_id,
+            "discord_user_id": contact_id.split(":", 1)[1] if contact_id.startswith("discord:") else "",
+            "name": semantic_name,
             "source": "inbound_contact",
             "context": (
                 "Auto-bootstrapped from a first inbound message. "

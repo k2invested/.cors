@@ -49,6 +49,23 @@ def contact_id_for_message(message: Any) -> str:
     return f"discord:{message.author.id}"
 
 
+def contact_profile_for_message(message: Any) -> dict[str, str]:
+    author = getattr(message, "author", None)
+    if author is None:
+        return {}
+    username = str(getattr(author, "name", "") or "").strip()
+    global_name = str(getattr(author, "global_name", "") or "").strip()
+    display_name = str(getattr(author, "display_name", "") or "").strip()
+    profile: dict[str, str] = {}
+    if username:
+        profile["username"] = username
+    if global_name:
+        profile["global_name"] = global_name
+    if display_name:
+        profile["display_name"] = display_name
+    return profile
+
+
 def _slug_contact_id(contact_id: str) -> str:
     slug = re.sub(r"[^a-z0-9_]+", "_", contact_id.lower()).strip("_")
     return slug or "contact"
@@ -237,6 +254,7 @@ def build_client():
                 return
 
             contact_id = contact_id_for_message(message)
+            contact_profile = contact_profile_for_message(message)
             command_response = handle_transport_command(prompt, contact_id)
             if command_response is not None:
                 logging.info("discord transport command command=%r", prompt)
@@ -259,6 +277,7 @@ def build_client():
                             run_turn,
                             prompt,
                             contact_id,
+                            contact_profile=contact_profile,
                             **state_paths_for_contact(contact_id),
                         )
             except Exception:

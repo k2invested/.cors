@@ -618,6 +618,19 @@ def find_existing_contact_path(trigger: str, output_dir: str) -> str | None:
     return matches[0][2]
 
 
+def contact_filename_for_st(st: dict) -> str | None:
+    trigger = st.get("trigger", "")
+    if not isinstance(trigger, str) or not trigger.startswith("on_contact:"):
+        return None
+    preferred = (
+        str(st.get("identity", {}).get("username", "") or "").strip()
+        or str(st.get("identity", {}).get("name", "") or "").strip()
+        or str(st.get("name", "") or "").strip()
+    )
+    slug = re.sub(r"[^a-z0-9_]+", "_", preferred.lower()).strip("_")
+    return f"{slug or 'contact'}.st"
+
+
 # ── Builder ──────────────────────────────────────────────────────────────
 
 def build_st(intent: dict) -> dict:
@@ -710,8 +723,10 @@ def write_st(st: dict, output_dir: str = None, existing_ref: str | None = None) 
         elif artifact_kind in {"action", "hybrid"}:
             target_dir = action_output_dir(output_dir)
         os.makedirs(target_dir, exist_ok=True)
-        name = st.get("name", "untitled")
-        filename = re.sub(r'[^a-z0-9_]', '_', name.lower()) + ".st"
+        filename = contact_filename_for_st(st)
+        if not filename:
+            name = st.get("name", "untitled")
+            filename = re.sub(r'[^a-z0-9_]', '_', name.lower()) + ".st"
         path = os.path.join(target_dir, filename)
 
     with open(path, "w") as f:
