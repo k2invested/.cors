@@ -436,6 +436,7 @@ P5_CASES = [
     ("pre_diff_prompt_says_stable_preference_statements_count_as_action", lambda: "stable first-person preference statements about future interaction count as action" in loop.PRE_DIFF_SYSTEM.lower()),
     ("pre_diff_prompt_says_bridge_codons_are_primitives", lambda: "treat the bridge codons as primitives" in loop.PRE_DIFF_SYSTEM.lower()),
     ("pre_diff_prompt_says_reason_is_stateful_judgment_primitive", lambda: "reason_needed is the primitive for stateful judgment" in loop.PRE_DIFF_SYSTEM.lower()),
+    ("pre_diff_prompt_says_reason_before_clarify", lambda: "do not use clarify_needed as the first response to uncertainty" in loop.PRE_DIFF_SYSTEM.lower()),
     ("pre_diff_prompt_says_reprogramme_is_semantic_persistence_primitive", lambda: "reprogramme_needed is the primitive for stateless semantic persistence" in loop.PRE_DIFF_SYSTEM.lower()),
     ("init_user_intent_uses_on_contact_trigger", lambda: loop._build_init_user_intent("discord:123", "hi")["trigger"] == "on_contact:discord:123"),
     ("init_user_intent_starts_pending", lambda: loop._build_init_user_intent("discord:123", "hi")["init"]["status"] == "pending"),

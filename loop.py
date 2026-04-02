@@ -1018,12 +1018,17 @@ OBSERVE (kernel resolves, you receive data):
 
 BRIDGE (control flow / persistence):
   clarify_needed — you cannot proceed without user input. USE THIS when:
-    - The user's intent is ambiguous and you'd be guessing
-    - Multiple interpretations exist and the wrong one wastes effort
-    - You need a specific piece of information only the user has
+    - Missing information is genuinely only available from the user
+    - Multiple plausible paths remain after reasoning, and the wrong one would waste effort or create real risk
+    - You have already tried to reduce ambiguity by traversing available context, history, semantic trees, entities, or workflow structure and still cannot proceed safely
     The desc field becomes your question. This halts the iteration loop.
     The gap persists on the trajectory — next turn, the LLM sees it and
     can resume the chain with the user's clarification as new context.
+
+Reason before clarify:
+  - Do not use clarify_needed as the first response to uncertainty if available context can reduce ambiguity.
+  - If trajectory, entity space, semantic trees, stepchains, or workspace structure can answer the question or narrow the choice, use reason_needed first.
+  - Reserve clarify_needed for information that is truly user-only or for cases where proceeding without clarification would create real waste or risk.
 
 MUTATE (you compose a command, kernel executes):
   hash_edit_needed — edit any file (universal: read by hash → compose edit → execute via hash_manifest)
@@ -1216,8 +1221,13 @@ def run_turn(
         "    - Executable step flow or chain structure needs to be derived or refined\n"
         "    - You need to judge whether an inferred preference, correction, or user-model update should persist\n"
         "    - A user states a stable first-person preference but has not explicitly asked you to persist it yet\n"
+        "    - Ambiguity may be reducible by traversing available context rather than asking the user immediately\n"
         "    - A commitment needs activation, reintegration, or reorientation\n"
         "    This is the primitive for stateful judgment and structure. It reasons over semantic trees, entity space, executable structure, and persistence judgment.\n\n"
+        "  Clarify discipline:\n"
+        "    - clarify_needed is not the default response to uncertainty.\n"
+        "    - If available context, history, semantic trees, .st packages, or workflow structure can reduce ambiguity, use reason_needed first.\n"
+        "    - Reserve clarify_needed for genuinely user-only information or for cases where multiple plausible paths would waste effort or create real risk.\n\n"
         "  await_needed — PAUSE CODON. Synchronization checkpoint.\n"
         "    Use this when background work must explicitly rejoin the parent chain.\n"
         "    Suspends the parent flow until the sub-agent or background branch is ready.\n\n"
