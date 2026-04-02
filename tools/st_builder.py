@@ -49,6 +49,20 @@ PRESERVED_MERGE_FIELDS = {
     *SEMANTIC_FIELDS,
     "reasoning",
 }
+ENTITY_STEP_FIELDS = [
+    "identity",
+    "preferences",
+    "constraints",
+    "sources",
+    "scope",
+    "schema",
+    "access_rules",
+    "principles",
+    "boundaries",
+    "domain_knowledge",
+    "entity_refs",
+    "init",
+]
 
 
 def slugify(text: str) -> str:
@@ -80,6 +94,26 @@ def _deep_merge_dict(base: dict, overlay: dict) -> dict:
         else:
             merged[key] = value
     return merged
+
+
+def default_entity_steps(data: dict) -> list[dict]:
+    steps: list[dict] = []
+    name = data.get("name", "entity")
+    for field in ENTITY_STEP_FIELDS:
+        if field not in data:
+            continue
+        value = data.get(field)
+        if value in ({}, [], "", None):
+            continue
+        steps.append(
+            {
+                "action": f"load_{field}",
+                "desc": f"surface {field} context for {name}",
+                "resolve": [field],
+                "post_diff": False,
+            }
+        )
+    return steps
 
 
 # ── Schema validation ────────────────────────────────────────────────────
@@ -515,6 +549,8 @@ def lower_semantic_skeleton(intent: dict) -> tuple[dict, str, str | None]:
         st["steps"] = []
     if closure is not None:
         st["closure"] = closure
+    if artifact_kind == "entity" and not st["steps"]:
+        st["steps"] = default_entity_steps(st)
 
     return st, lowered_kind, existing_ref
 
@@ -596,6 +632,9 @@ def build_st(intent: dict) -> dict:
     for key, value in intent.items():
         if key not in BASE_FIELDS:
             st[key] = value
+
+    if intent.get("artifact_kind", "entity") == "entity" and not st["steps"]:
+        st["steps"] = default_entity_steps(st)
 
     return st
 

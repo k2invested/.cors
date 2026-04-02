@@ -394,6 +394,15 @@ P5_CASES = [
     ("render_for_prompt_has_header", lambda: registry().render_for_prompt().startswith("## Available Skills")),
     ("build_st_forwards_identity", lambda: "identity" in st_builder_module.build_st({"name": "person", "desc": "d", "identity": {"name": "Ada"}})),
     ("build_st_allows_empty_actions", lambda: st_builder_module.build_st({"name": "entity", "desc": "d", "actions": []})["steps"] == []),
+    ("build_st_entity_adds_context_injection_steps", lambda: st_builder_module.build_st({
+        "name": "person",
+        "desc": "d",
+        "identity": {"name": "Ada"},
+        "preferences": {"communication": {"style": "direct"}},
+    })["steps"] == [
+        {"action": "load_identity", "desc": "surface identity context for person", "resolve": ["identity"], "post_diff": False},
+        {"action": "load_preferences", "desc": "surface preferences context for person", "resolve": ["preferences"], "post_diff": False},
+    ]),
     ("validate_st_accepts_pure_entity", lambda: st_builder_module.validate_st({"name": "entity", "desc": "d", "steps": []}) == []),
     ("validate_st_rejects_invalid_trigger", lambda: any("invalid trigger" in e for e in st_builder_module.validate_st({"name": "x", "desc": "d", "trigger": "bad", "steps": []}))),
     ("builder_preserves_explicit_vocab", lambda: st_builder_module.build_st({"name": "x", "desc": "d", "steps": [{"action": "inspect", "desc": "inspect file", "vocab": "hash_resolve_needed"}]})["steps"][0]["vocab"] == "hash_resolve_needed"),

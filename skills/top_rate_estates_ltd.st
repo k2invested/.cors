@@ -1,6 +1,6 @@
 {
   "name": "Top Rate Estates LTD",
-  "desc": "Core identity and mission for Top Rate Estates LTD, a property business focused on providing high-quality real estate services.",
+  "desc": "Core identity and mission for Top Rate Estates LTD, a property management and investment company developing AI agent and ML automation capabilities.",
   "trigger": "manual",
   "refs": {},
   "artifact": {
@@ -12,24 +12,51 @@
   "identity": {
     "legal_name": "Top Rate Estates LTD",
     "type": "business",
-    "domain": "real estate",
+    "domain": "property management and investment",
     "location": "UK",
-    "status": "active"
+    "status": "starting",
+    "specialization": "AI agents and ML solutions for property operations and investment workflows"
   },
   "preferences": {
-    "mission": "Deliver high-quality property services with integrity and client focus.",
+    "mission": "Build a modern property management and investment company that uses AI agents and ML-driven automations to improve operations, insight, and service quality.",
     "focus_areas": [
-      "property sales",
-      "property lettings",
       "property management",
-      "client advisory"
+      "property investment",
+      "AI agents",
+      "ML solutions",
+      "workflow automation",
+      "operational intelligence"
+    ],
+    "automation_targets": [
+      "tenant and landlord communications",
+      "deal and property workflow tracking",
+      "document processing",
+      "market research support",
+      "internal operations"
     ],
     "values": [
       "integrity",
       "professionalism",
-      "client satisfaction",
-      "transparency"
+      "clarity",
+      "leverage through automation"
     ]
   },
-  "steps": []
+  "steps": [
+    {
+      "action": "load_identity",
+      "desc": "surface identity context for Top Rate Estates LTD",
+      "resolve": [
+        "identity"
+      ],
+      "post_diff": false
+    },
+    {
+      "action": "load_preferences",
+      "desc": "surface preferences context for Top Rate Estates LTD",
+      "resolve": [
+        "preferences"
+      ],
+      "post_diff": false
+    }
+  ]
 }

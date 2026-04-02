@@ -354,6 +354,11 @@ def test_lower_semantic_skeleton_to_entity_intent():
     assert lowered["identity"]["name"] == "Kenny"
     assert lowered["preferences"]["communication"]["style"] == "direct"
     assert lowered["init"]["status"] == "pending"
+    assert lowered["steps"] == [
+        {"action": "load_identity", "desc": "surface identity context for admin", "resolve": ["identity"], "post_diff": False},
+        {"action": "load_preferences", "desc": "surface preferences context for admin", "resolve": ["preferences"], "post_diff": False},
+        {"action": "load_init", "desc": "surface init context for admin", "resolve": ["init"], "post_diff": False},
+    ]
 
 
 def test_lower_semantic_skeleton_normalizes_alias_existing_ref():
