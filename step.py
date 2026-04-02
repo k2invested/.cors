@@ -202,6 +202,8 @@ class Gap:
             d["resolved"] = True
         if self.dormant:
             d["dormant"] = True
+        if self.turn_id is not None:
+            d["turn_id"] = self.turn_id
         if self.carry_forward:
             d["carry_forward"] = True
         if self.route_mode:
@@ -350,6 +352,7 @@ class Step:
                 vocab_score=g.get("vocab_score", 0.0),
                 resolved=g.get("resolved", False),
                 dormant=g.get("dormant", False),
+                turn_id=g.get("turn_id"),
                 carry_forward=g.get("carry_forward", False),
                 route_mode=g.get("route_mode"),
             )
@@ -416,6 +419,7 @@ class Chain:
             "steps": self.steps,
             "desc": self.desc,
             "resolved": self.resolved,
+            "extracted": self.extracted,
         }
 
     @staticmethod

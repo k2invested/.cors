@@ -1,186 +1,160 @@
 # loop.py
 
-[loop.py](/Users/k2invested/Desktop/cors/loop.py) is the live turn orchestrator. It is where the runtime architecture becomes operational at turn scope.
+[loop.py](/Users/k2invested/Desktop/cors/loop.py) is the turn orchestrator. It assembles one conversational turn, injects the live semantic surfaces, drives the compiler/execution cycle, and persists the result.
 
-## What The Loop Owns
+## What It Owns
 
-The loop owns one complete turn:
+`run_turn()` owns:
 
-- loading state
-- creating the origin step
-- loading identity and package context
-- invoking the compiler
-- injecting semantic runtime surfaces
-- delegating per-gap execution into the execution engine
-- synthesizing the user response
-- persisting trajectory and extracted chains
+1. loading trajectory, chains, skills, and git HEAD
+2. composing the first-step bridge prompt
+3. creating the origin step
+4. injecting identity and entity context
+5. creating the compiler
+6. re-admitting explicit carry-forward gaps
+7. iterating the active frontier through [execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py)
+8. running the pre-synthesis reprogramme pass
+9. synthesizing the user response
+10. persisting heartbeat frontier when necessary
+11. saving state
 
-If `step.py` is the object model and `compile.py` is the sequencing law, `loop.py` is the turn-level orchestrator. The actual per-gap execution core now lives in [execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py).
+## Prompt Law
 
-## Session Model
+The pre-diff prompt is now stricter than older docs implied.
 
-The file uses a persistent `Session` backed by the chat completions API. The default model is `KERNEL_COMPOSE_MODEL` if set, otherwise `gpt-4.1`.
+Two important runtime laws are encoded there:
 
-The session accumulates:
+- use `reason_needed` before `clarify_needed` when existing context, trajectory, semantic trees, or workflows can reduce ambiguity
+- treat bridge codons as primitives rather than ordinary tool routing
 
-- the system prompt
-- injected semantic context
-- the model’s own prior outputs
+This matters because first-step behavior is the main place where the runtime decides whether a vague request becomes:
 
-So the loop is stateful within a turn even when individual tools are not.
-
-## Turn Lifecycle
-
-The implemented `run_turn()` flow is:
-
-1. Load trajectory, chains, skills, and HEAD.
-2. Build the dynamic pre-diff prompt.
-3. Find unresolved dangling gaps from earlier turns.
-4. Ask for the origin step.
-5. Append the origin step to the trajectory.
-6. Inject identity if a contact-triggered `.st` exists.
-7. Create a compiler for the current turn.
-8. Re-admit qualifying cross-turn gaps.
-9. Emit origin gaps onto the ledger.
-10. Iterate up to `MAX_ITERATIONS`.
-11. Run `_reprogramme_pass()`.
-12. Synthesize the user-facing answer.
-13. Persist an automatic heartbeat if background work still needs reintegration.
-14. Save trajectory and chains.
-
-That is the actual control loop in source today.
+- observation
+- clarification
+- structural reasoning
+- semantic persistence
 
 ## Context Injection
 
-The loop no longer injects only a trajectory window.
+The loop injects these live surfaces:
 
-During the turn it can inject:
+```text
+## Recent Trajectory
+## Active Chain Tree
+## Resolved Hash Data
+## Identity / Entity Context
+## Step Network
+```
 
-- a salient recent trajectory render
-- resolved hashes through `resolve_hash()`
-- identity and entity context
-- `## Active Chain Tree` for the current ledger chain
-- `## Step Network` for the current package ecology
-
-The `Active Chain Tree` is especially important. On each iteration the loop renders the chain identified by the current ledger entry’s `chain_id`, and marks the current gap with `[focus]`. That means the model sees the live causal branch it is currently inside, not just isolated nearby hashes.
-
-The loop also injects a one-line tree-language legend before the initial trajectory render. That keeps the render itself thin while still making richer gap dimensions legible. The render surface stays mostly hashes, descriptions, and refs; the extra structure is compressed into fixed signatures on steps and gaps.
+The current chain render is especially important. The LLM does not work a ledger entry blind; it sees the branch it is currently inside.
 
 ## Hash Resolution
 
-`resolve_hash()` currently resolves in this order:
+`resolve_hash()` resolves in this order:
 
-1. skill registry
-2. trajectory step
-3. trajectory gap
-4. persisted chain package through the manifest engine
-5. Git object
+1. loaded skill/package hash
+2. trajectory step hash
+3. trajectory gap hash
+4. manifest-engine chain package
+5. git object
 
-Two consequences matter.
+Entity-like `.st` packages are resolved differently from action packages:
 
-Entity-style `.st` files and executable packages share the same hash-resolution surface.
+- entity sources inject semantic content through [_render_entity()](/Users/k2invested/Desktop/cors/loop.py)
+- action packages render as package payload
 
-Step hashes resolve as semantic tree branches, not flat blobs. The loop renders ancestry and child gaps when a step ref is brought back into context.
+Entity-source detection now includes:
 
-## Runtime Branches
-
-Branch selection is driven by vocab, but the branch machinery no longer lives inline in the turn loop. [loop.py](/Users/k2invested/Desktop/cors/loop.py) now hands each admitted ledger entry to [execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py), which owns:
-
-- ref resolution
-- vocab routing
-- tree-policy reroutes
-- tool and mutation execution
-- codon expansion
-- commit/postcondition injection
-- step recording
-
-The same execution engine is also used by `run_command()`, so `/command` packages and ordinary turn-time gaps now share one execution path.
-
-Observation-only paths such as `hash_resolve_needed` and `external_context` inject data and record an observation step without a mutation commit.
-
-Observation vocabs that require tooling run through `execute_tool()`, inject the result, and then ask the model what it observed.
-
-Mutation vocabs run through tree policy and OMO checks, then ask the model to compose the operation, execute it, commit if successful, and emit a universal postcondition gap targeting the resulting commit or post-observe path.
-
-Bridge codons are:
-
-- `commit_needed`
-- `reason_needed`
-- `await_needed`
-- `reprogramme_needed`
-
-Each has dedicated handling and may disperse child gaps from the corresponding codon `.st`.
+- `skills/entities/*`
+- [admin.st](/Users/k2invested/Desktop/cors/skills/admin.st)
+- [commitment_chain_construction_spec.st](/Users/k2invested/Desktop/cors/skills/codons/commitment_chain_construction_spec.st)
 
 ## Tree Policy
 
-Tree policy is enforced before a mutation is accepted as real state change.
+The current default tree policy is:
 
-Current behavior:
+```text
+skills/codons/   -> immutable, reject to reason_needed
+skills/admin.st  -> reprogramme_needed, entity_editor
+skills/entities/ -> reprogramme_needed, entity_editor
+skills/actions/  -> reprogramme_needed, action_editor
+ui_output/       -> stitch_needed
+kernel files     -> immutable
+```
 
-- protected immutable paths are auto-reverted
-- codon mutations reject into `reason_needed`
-- ordinary `skills/` mutations reroute to `reprogramme_needed`
-- UI output reroutes to `stitch_needed`
+[tree_policy.json](/Users/k2invested/Desktop/cors/tree_policy.json) is merged with defaults, not substituted wholesale, so local overrides do not erase newer policy fields such as `reprogramme_mode`.
 
-This is one of the strongest architectural protections in the runtime. It distinguishes codons, packaged `.st` state, and ordinary workspace mutation as different surfaces with different laws.
+## Dangling Gaps
 
-## Auto-Commit And Postconditions
+Cross-turn resume is no longer “all unresolved gaps”.
 
-`auto_commit()` now returns:
+The implemented rule is:
 
-- `(commit_sha, on_reject_vocab)`
+- only unresolved, non-dormant gaps with `carry_forward=True` are re-admitted
+- `clarify_needed` is excluded from automatic carry
+- resume is deduped by gap hash
 
-After commit it immediately checks whether protected paths were modified. If so, it auto-reverts and may return an `on_reject` vocab such as `reason_needed`.
+That makes successful turns self-clearing by default.
 
-Successful mutations trigger a universal postcondition:
+## Forced Synthesis Frontier
 
-- create a `hash_resolve_needed` gap
-- target the commit or configured post-observe path
-- emit it back into the compiler
+When synthesis is forced while the ledger still contains unresolved work, the loop materializes one carry-forward step:
 
-That universal postcondition is the clearest operational realization of OMO in the current runtime.
+```text
+forced synth: unresolved frontier persisted for next turn
+```
 
-## Codons
+The carried gaps are cloned and marked with `carry_forward=True`. This is the main cross-turn persistence path for unfinished structural work.
 
-The bridge codons are partly hardcoded and partly package-driven.
+## Identity Bootstrap
 
-`reason_needed` is now the most complex branch. In the current implementation it can:
+If a first-contact turn has no existing `on_contact:<id>` identity, the reprogramme pass can write a thin bootstrap entity before synthesis.
 
-- emit native `reason.st`
-- ask the model for a `skeleton.v1` submission and compile it through `tools/skeleton_compile.py`
-- activate an existing `.st` package or compiled `.json` stepchain by hash
-- schedule existing or newly compiled packages as background work
-
-`commit_needed` can load `commit.st` if present or fall back to inline commitment reasoning.
-
-`await_needed` can load `await.st` if present or fall back to inline await handling, while also recording the chain as awaited.
-
-`reprogramme_needed` injects principles, registry context, and the step network, asks the model for semantic `.st` intent, routes that intent through [tools/st_builder.py](/Users/k2invested/Desktop/cors/tools/st_builder.py), and commits the result.
-
-So codons are both runtime cases and packaged step systems.
-
-## Reprogramme Pass And Heartbeat
-
-Two behaviors make the loop more recursive than older docs suggested.
-
-`_reprogramme_pass()` runs automatically before synthesis and asks whether entity-style semantic state should be updated from the conversation.
-
-It also now has a deterministic first-contact bootstrap path. If no `on_contact:<id>` entity exists for the inbound contact, the pass writes a thin bootstrap entity before synthesis. That bootstrap entity carries:
+That bootstrap entity includes:
 
 - minimal identity metadata
-- default access rules
-- an `init` block marking the entity as still unknown / onboarding-pending
+- onboarding preferences
+- access rules
+- `init.status = pending`
 
-That means the second turn can inject the entity honestly without pretending the system already knows the person well.
+The point is continuity without pretending the system already knows the person.
 
-Heartbeat persists an automatic dangling `reason_needed` gap if the compiler saw background triggers without a corresponding await. The compiler’s `background_refs()` are attached so the next turn can see which packages or chains are waiting for reintegration.
+## Auto-Commit
 
-This means loop closure is not only “all current gaps resolved.” The system can preserve unfinished higher-order work across turns.
+`auto_commit()` stages and commits selected paths, then immediately checks for protected-surface violations.
 
-## Important Current Drift
+Possible outcomes:
 
-Some of the prompt language still reaches slightly beyond what the runtime strictly supports.
+- clean commit: returns `(sha, None)`
+- protected-surface violation: auto-reverts and returns `(None, on_reject_vocab)`
 
-There is also residual legacy vocab drift. The OMO violation path still records `"scan_needed"` even though `scan_needed` is not part of the live compiler vocab algebra.
+After successful mutation, the loop and execution engine now materialize a postcondition observe step with commit assessment before synthesis.
 
-So [loop.py](/Users/k2invested/Desktop/cors/loop.py) is the best place to understand how one turn is assembled, while [execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py) is the best place to understand how one admitted gap is actually executed. The main remaining drift is not loader lossiness anymore; it is prompt and vocab convergence around the newer structural package model.
+## Assessment Surfaces
+
+The loop owns the commit-assessment builders used after semantic persistence:
+
+- `_commit_assessment_for_commit(...)`
+- `_step_assessment_for_docs(...)`
+
+These emit the compact projection vocabulary now visible in trajectory and Discord diff notifications:
+
+- structure
+- continuity
+- projection
+- grounding
+- policy
+- semantic drift
+- surface deltas
+
+## Heartbeat
+
+Heartbeat persists when background work was triggered without corresponding closure.
+
+The heartbeat gap:
+
+- is `reason_needed`
+- carries `background_refs()`
+- is marked `carry_forward=True`
+
+So background reintegration is structurally visible rather than hidden in prompt memory.

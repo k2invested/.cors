@@ -1,133 +1,173 @@
 # Architecture
 
-[PRINCIPLES.md](/Users/k2invested/Desktop/cors/docs/PRINCIPLES.md) is the design source of truth. This file is narrower: it records the architecture that is actually implemented in source now, the module boundaries that currently exist, and the places where the implementation is still only partially aligned with the design.
+[PRINCIPLES.md](/Users/k2invested/Desktop/cors/docs/PRINCIPLES.md) is the design source of truth. This file is narrower: it records the architecture that is implemented now and names the real module boundaries.
 
-## The Implemented Shape
+## Runtime Stack
 
-The architecture is still built from one primitive: the step. A step records semantic movement, the refs that grounded that movement, any emitted gaps, and optionally a commit. Gaps are admitted by the compiler onto a lawful frontier, addressed by the loop, and recorded back into the trajectory. Chains, `.st` packages, compiled stepchains, and extracted artifacts are all higher-order structures, but none of them replace the step-gap primitive. They all eventually re-enter the runtime as step-and-gap dispersal.
+The kernel is still built on one primitive: `step -> gap -> ledger -> step`.
 
-The implemented layering is:
+```text
+input / event
+  -> loop.py
+     -> step.py            runtime objects and renders
+     -> compile.py         lawful frontier sequencing
+     -> execution_engine.py per-gap execution
+     -> manifest_engine.py package rendering and activation
+     -> skills/loader.py   .st registry projection
+     -> tools/*            subprocess operators and compilers
+  -> trajectory.json / chains.json / git objects
+```
+
+The implemented layers are:
 
 - Layer 0: [step.py](/Users/k2invested/Desktop/cors/step.py)
 - Layer 1: [compile.py](/Users/k2invested/Desktop/cors/compile.py)
 - Layer 2: [manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py)
 - Layer 3: [execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py)
 - Layer 4: [loop.py](/Users/k2invested/Desktop/cors/loop.py)
-- Package and subprocess boundary: [skills/loader.py](/Users/k2invested/Desktop/cors/skills/loader.py) and [tools/](/Users/k2invested/Desktop/cors/tools)
+- Package projection: [skills/loader.py](/Users/k2invested/Desktop/cors/skills/loader.py)
+- Operator bench: [tools/](/Users/k2invested/Desktop/cors/tools)
 
-This separation is now real in the code. `step.py` owns the runtime graph and semantic renders. `compile.py` owns admission, ledger sequencing, and branch law. `manifest_engine.py` owns hash-addressed package persistence, rendering, and activation. `execution_engine.py` owns per-gap execution. `loop.py` owns turn assembly and orchestration. Tool scripts remain outside the kernel and are executed as subprocess operators.
+## Skill Tree
 
-Git remains the external content store. The trajectory stores semantic structure. Blobs, trees, and commits remain in `.git` and are resolved on demand.
+The `.st` ecology is now explicitly split by tree location:
 
-## Runtime Surfaces
+```text
+skills/
+├─ admin.st                     canonical admin primitive
+├─ actions/
+│  ├─ architect.st
+│  ├─ debug.st
+│  └─ hash_edit.st
+├─ entities/
+│  ├─ clinton.st
+│  ├─ cors_ui.st
+│  └─ top_rate_estates_ltd.st
+└─ codons/
+   ├─ await.st
+   ├─ commit.st
+   ├─ commitment_chain_construction_spec.st
+   ├─ reason.st
+   └─ reprogramme.st
+```
 
-There are five core runtime surfaces, plus the package layer they work over.
+The important laws are:
 
-[step.py](/Users/k2invested/Desktop/cors/step.py) is the runtime object model. It defines `Gap`, `Step`, `Chain`, and `Trajectory`, plus the semantic tree renders used by the loop.
+- [admin.st](/Users/k2invested/Desktop/cors/skills/admin.st) is the only root skill and the canonical operator primitive.
+- `skills/entities/` is the semantic entity tree.
+- `skills/actions/` is the executable workflow tree.
+- `skills/codons/` is immutable.
+- [commitment_chain_construction_spec.st](/Users/k2invested/Desktop/cors/skills/codons/commitment_chain_construction_spec.st) lives in the codon tree for immutability, but the loader and resolver treat it as an entity-like spec package.
 
-[compile.py](/Users/k2invested/Desktop/cors/compile.py) is the lawful sequencer. It admits gaps, places them on the ledger, tracks chain lifecycle, enforces the runtime OMO grammar, and keeps the small amount of background bookkeeping needed for heartbeat closure.
+## Turn Flow
 
-[manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py) is the package manifestation layer. It persists compiled `stepchain.v1` packages, resolves them by hash, renders them back into context, lists current package references, renders the step network, and activates both `.st` packages and compiled `.json` stepchains back into first-generation runtime gaps.
+```text
+run_turn()
+  -> origin step
+  -> admin / identity injection
+  -> compiler creation
+  -> explicit dangling-gap readmission
+  -> ledger iteration
+     -> execute_iteration()
+     -> record step / emit child gaps / commit / postcondition
+  -> optional reprogramme pass
+  -> synthesis
+  -> optional heartbeat persistence
+  -> save trajectory and chains
+```
 
-[execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py) is the live execution core. It takes one admitted ledger entry and runs the branch machinery: resolve refs, route by vocab, enforce tree policy, compose and execute mutations, expand codons, inject postconditions, and record the resulting step back into trajectory and chain state.
+Three runtime surfaces are injected repeatedly:
 
-[loop.py](/Users/k2invested/Desktop/cors/loop.py) is the live turn orchestrator. It loads state, forms the origin step, injects identity and semantic context, creates the compiler, injects the active chain tree, hands each admitted gap to `execution_engine.py`, runs the pre-synthesis reprogramme pass, schedules heartbeat work, synthesizes the user answer, and persists state.
+- recent trajectory render from [step.py](/Users/k2invested/Desktop/cors/step.py)
+- active chain render from [step.py](/Users/k2invested/Desktop/cors/step.py)
+- step network render from [manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py)
 
-The package layer sits under those modules:
+## Gap Lifecycle
 
-- loaded `.st` files from [skills/](/Users/k2invested/Desktop/cors/skills)
-- compiled stepchains in `chains/*.json`
-- extracted long runtime chains in `chains/*.json`
+The implemented lifecycle is:
 
-## Context Model
+```text
+LLM emits gaps
+  -> compile.py scores and admits them
+  -> execution_engine.py resolves one admitted gap
+  -> resulting step is appended to trajectory
+  -> child gaps re-enter compiler
+  -> successful mutations auto-commit and emit post-observe hash_resolve_needed
+```
 
-The model does not reason over raw `trajectory.json`. The session is built from rendered semantic surfaces.
+Cross-turn carry is now opt-in:
 
-The main ones in the current runtime are:
+- only gaps with `carry_forward=True` are re-admitted
+- `clarify_needed` does not carry across turns
+- forced-synthesis persistence clones the active frontier into one explicit carry-forward step
 
-- a salient trajectory window from [`Trajectory.render_recent()` in step.py](/Users/k2invested/Desktop/cors/step.py#L563)
-- an active branch render from [`Trajectory.render_chain()` in step.py](/Users/k2invested/Desktop/cors/step.py#L601)
-- resolved hash renders from [`resolve_hash()` in loop.py](/Users/k2invested/Desktop/cors/loop.py#L212)
-- identity and entity renders from `loop.py`
-- the package ecology render from [`render_step_network()` in manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py#L131)
+## Clarify Frontier
 
-That gives the runtime three distinct semantic views at once:
+Clarification is now a bounded one-turn frontier, not an always-resume queue.
 
-- trajectory memory: salient prior reasoning and action
-- active chain tree: the current causal branch being worked
-- step network: the current package and entity ecology the system can build into
+```text
+active clarify gaps in current turn
+  -> merged by execution_engine.py
+  -> one clarification frontier step
+  -> one canonical step hash
+  -> user answers on next turn
+```
 
-## Package Story
+Historical clarify leaves are not automatically replayed.
 
-The package story is now broader than a single `.st` path.
+## Deterministic Routing
 
-Author-time planning surfaces:
+Tree policy and target-path inference now deterministically choose reprogramme mode.
 
-- [schemas/skeleton.v1.json](/Users/k2invested/Desktop/cors/schemas/skeleton.v1.json)
-- [schemas/semantic_skeleton.v1.json](/Users/k2invested/Desktop/cors/schemas/semantic_skeleton.v1.json)
+```text
+skills/admin.st    -> reprogramme_needed (entity_editor)
+skills/entities/*  -> reprogramme_needed (entity_editor)
+skills/actions/*   -> reprogramme_needed (action_editor)
+skills/codons/*    -> immutable -> reason_needed on reject
+```
 
-Deterministic compilers:
+Action origination is split from entity persistence:
 
-- [tools/skeleton_compile.py](/Users/k2invested/Desktop/cors/tools/skeleton_compile.py)
-- [tools/semantic_skeleton_compile.py](/Users/k2invested/Desktop/cors/tools/semantic_skeleton_compile.py)
+- entity creation and entity updates can go straight to `reprogramme_needed`
+- existing action updates can go through `reprogramme_needed` in `action_editor` mode
+- new action or hybrid workflow origination is rerouted to `reason_needed` first
 
-Runtime manifestation surfaces:
+## Reprogramme And Reason
 
-- [manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py)
-- hash-addressed `.st` packages loaded through [skills/loader.py](/Users/k2invested/Desktop/cors/skills/loader.py)
-- compiled and extracted chain packages in `chains/*.json`
+The implemented split is:
 
-Legacy or heuristic crystallizers:
+- `reason_needed`
+  - structural design
+  - chain planning
+  - `skeleton.v1` compilation
+  - existing package activation
+- `reprogramme_needed`
+  - semantic persistence
+  - entity updates
+  - bounded edits to existing action packages
 
-- [tools/chain_to_st.py](/Users/k2invested/Desktop/cors/tools/chain_to_st.py)
-- [tools/st_builder.py](/Users/k2invested/Desktop/cors/tools/st_builder.py)
+`reason_needed` and `reprogramme_needed` selectively inject the immutable chain construction spec when workflow structure matters.
 
-So the repo does not currently have one packaging path. It has deterministic workflow compilation, semantic persistence, and heuristic extraction living side by side.
+## Commit Assessment
 
-## Reason And Reprogramme
+Successful `.st` writes now materialize a real post-observation step before synthesis.
 
-The code now makes a sharper distinction between `reason_needed` and `reprogramme_needed`.
+```text
+reprogramme write
+  -> auto_commit()
+  -> commit assessment
+  -> postcondition step with assessment
+  -> hash_resolve_needed observe gap
+  -> synthesis sees realized change
+```
 
-`reason_needed` is the structural side. In the current runtime it can:
+The same assessment family is also attached to rogue diagnosis when persistence fails.
 
-- emit native `reason.st`
-- submit `skeleton.v1` for deterministic compilation
-- activate an existing `.st` or compiled `.json` chain package by hash
-- schedule package activation as background work and rely on heartbeat reintegration
+## Files And Stores
 
-`reprogramme_needed` is the semantic persistence side. In the current runtime it:
+- [trajectory.json](/Users/k2invested/Desktop/cors/trajectory.json): ordered runtime steps
+- [chains.json](/Users/k2invested/Desktop/cors/chains.json): chain index
+- `chains/<hash>.json`: extracted or compiled packages
+- git objects: external content store for blobs, trees, and commits
 
-- still composes through [tools/st_builder.py](/Users/k2invested/Desktop/cors/tools/st_builder.py)
-- receives the step network as part of its context
-- updates semantic `.st` state rather than originating deterministic action structure
-
-That gives the architecture a real split between structural derivation and semantic persistence, even though the persistence path is still looser and more legacy than the workflow side.
-
-## Tree Policy
-
-[loop.py](/Users/k2invested/Desktop/cors/loop.py) enforces a real ontological boundary through tree policy.
-
-- `skills/codons/` is immutable and rejects into `reason_needed`
-- `skills/` reroutes mutation toward `reprogramme_needed`
-- `ui_output/` reroutes mutation toward `stitch_needed`
-- core kernel and persistence files are immutable
-
-This is one of the clearest implemented distinctions in the repo: codons, packaged `.st` state, and ordinary workspace files are not treated as the same kind of thing.
-
-## Important Current Partials
-
-Several architectural distinctions are now real, but a few important paths are still partial.
-
-[skills/loader.py](/Users/k2invested/Desktop/cors/skills/loader.py) now preserves full package payload plus a normalized runtime projection. It carries package-level `artifact_kind`, refs, semantic fields, and raw payload, and it carries richer step structure such as `resolve`, `condition`, `inject`, `relevance`, manifestation blocks, and generation blocks into runtime objects.
-
-[tools/st_builder.py](/Users/k2invested/Desktop/cors/tools/st_builder.py) is now narrower: it curates semantic `.st` state and supports explicit updates to existing executable packages, but it no longer originates new action workflows and no longer guesses legacy workflow vocab from natural language.
-
-[tools/chain_to_st.py](/Users/k2invested/Desktop/cors/tools/chain_to_st.py) remains heuristic rather than lossless. It is useful as a crystallizer, but it is not the deterministic workflow compiler.
-
-Compiled `stepchain.v1` packages are now real runtime artifacts, but they currently manifest by activation into first-generation gaps rather than by replacing the step-gap primitive. That is consistent with the architecture and should be described that way.
-
-## Summary
-
-The current system is no longer just `step.py + compile.py + loop.py`. It now includes a real package manifestation layer, deterministic skeleton compilers, an active-chain context model, and a clearer separation between structural derivation and semantic persistence.
-
-The important thing to preserve is simple: none of these higher-order layers replace the foundational primitive. They all still fold back into step and gap structure.
+The architectural constant remains simple: packages, chains, entities, and commits all eventually re-enter the live system as steps and gaps.

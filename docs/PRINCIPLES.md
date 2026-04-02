@@ -62,7 +62,9 @@ step.py
 │   ├─ .scores         → Epistemic(relevance, confidence, grounded)
 │   ├─ .vocab          — mapped precondition (determines manifestation)
 │   ├─ .dormant        — below threshold, stored but not acted on
-│   └─ .turn_id        — which turn created this gap (for cross-turn threshold)
+│   ├─ .turn_id        — which turn created this gap (for cross-turn threshold)
+│   ├─ .carry_forward  — explicit cross-turn persistence marker
+│   └─ .route_mode     — deterministic routing hint (entity_editor/action_editor)
 │
 ├─ Step
 │   ├─ .create(desc, step_refs, content_refs, gaps, commit, chain_id, parent)
@@ -74,6 +76,8 @@ step.py
 │   ├─ .gaps           — post-diff: one per causal chain, with vocab + scores
 │   ├─ .commit         — git SHA if mutation occurred (None if observation)
 │   ├─ .t              — timestamp (set at creation via time.time())
+│   ├─ .assessment     — validator/projection lines attached to realized or rogue steps
+│   ├─ .rogue          — failure marker for reverted/rejected manifestations
 │   ├─ .is_mutation()  → commit is not None
 │   ├─ .is_observation() → commit is None
 │   ├─ .active_gaps()  → [g for g in gaps if not resolved and not dormant]
@@ -145,7 +149,7 @@ compile.py
 │   └─ .readmit_cross_turn(gaps, step_hash)
 │       ├─ re-scores against CROSS_TURN_THRESHOLD (0.6)
 │       ├─ re-computes grounded from current trajectory
-│       └─ preserves original metadata (chain_id, depth, priority)
+│       └─ re-admits only explicitly carried gaps as fresh lawful roots
 │
 step.py
 ├─ Trajectory
@@ -158,7 +162,8 @@ step.py
 │
 loop.py
 ├─ _parse_step_output() → extracts gaps from LLM JSON, sets turn_id, grounded=0.0
-└─ _find_dangling_gaps(trajectory) → unresolved gaps from prior turns
+├─ _find_dangling_gaps(trajectory) → unresolved carry_forward gaps only (clarify excluded)
+└─ _persist_forced_synth_frontier(...) → clones unresolved frontier into one carry-forward step
 ```
 
 ---
@@ -225,7 +230,7 @@ The kernel resolves data. The LLM receives it. No mutation. These are the system
 | `pattern_needed` | Kernel runs file_grep → results injected | LLM reasons over results, may branch |
 | `email_needed` | Kernel checks email → results injected | LLM reasons over results, may branch |
 | `external_context` | LLM surfaces from current context — no tool | Blob step, no branching |
-| `clarify_needed` | Halts iteration. Gap desc becomes the question. Persists on trajectory for resume next turn. | No post-diff — the turn ends |
+| `clarify_needed` | Halts iteration. Current-turn clarify gaps merge into one clarification frontier step and one user-facing question packet. | No post-diff — the turn ends |
 
 ### Tier 2: Mutate (external &mut, priority 40)
 
@@ -270,8 +275,8 @@ When a `.st` hash is resolved, the system should treat it as a step package, not
 | `.st` structural shape | Manifestation | What happens |
 |------------------------|---------------|-------------|
 | Pure entity semantics | Context injection | Semantic state is injected: identity, preferences, scope, constraints, domain knowledge |
-| Action workflow | Ledger dispersal | Steps become executable gaps or deterministic package activations |
-| Hybrid | Mixed manifestation | Semantic context injects first, action gaps or embeddings disperse after |
+| Action workflow | Read-only package resolution | Structure is surfaced as a package/workflow description. Activation still comes from vocab, not from hash resolution itself. |
+| Hybrid | Mixed manifestation | Semantic context injects first, action structure remains inspectable until explicitly activated |
 
 So the principle is not “the system reads `.st` files.” The principle is “the system resolves step packages, and their structure determines manifestation.”
 
@@ -281,9 +286,12 @@ Mutations targeting protected paths are intercepted before execution — the tre
 
 | Target matches | Reroutes to | Mechanism |
 |---------------|-------------|-----------|
-| `skills/*.st` or skill hash | `reprogramme_needed` | .st files have schema — must go through st_builder |
+| `skills/admin.st` | `reprogramme_needed` (`entity_editor`) | Canonical admin primitive — semantic persistence only |
+| `skills/entities/*` or entity hash | `reprogramme_needed` (`entity_editor`) | Entity packages persist through semantic entity editor |
+| `skills/actions/*` or existing action hash | `reprogramme_needed` (`action_editor`) | Existing executable packages update through action editor |
+| New action/hybrid `.st` origination | `reason_needed` | New executable structure must be designed before persistence |
 | `ui_output/` or screenshots | `stitch_needed` | Generated assets regenerated, not manually edited |
-| Immutable paths (system code, stores, logs) | Auto-revert + warning | Protected path violation |
+| Immutable paths (codons, system code, stores, logs) | Auto-revert + warning | Protected path violation |
 
 All driven by `tree_policy.json` — configurable, no hardcoded paths.
 
@@ -298,74 +306,79 @@ compile.py
 ├─ OBSERVE_VOCAB = {pattern_needed, hash_resolve_needed, email_needed, external_context, clarify_needed}
 ├─ MUTATE_VOCAB  = {hash_edit_needed, stitch_needed, content_needed, script_edit_needed, command_needed, message_needed, json_patch_needed, git_revert_needed}
 ├─ BRIDGE_VOCAB  = {reason_needed, commit_needed, reprogramme_needed, await_needed}
-├─ is_observe(vocab) → vocab in OBSERVE_VOCAB
-├─ is_mutate(vocab)  → vocab in MUTATE_VOCAB
-├─ is_bridge(vocab)  → vocab in BRIDGE_VOCAB
+├─ is_observe(vocab) / is_mutate(vocab) / is_bridge(vocab)
 └─ vocab_priority(vocab)
-    ├─ observe → 20 (fires first)
+    ├─ observe → 20
     ├─ mutate  → 40
     ├─ unknown → 50
-    ├─ reason_needed → 90 (planning/reorientation)
-    ├─ await_needed → 95 (sync checkpoint)
-    ├─ commit_needed → 98 (reintegration)
-    └─ reprogramme_needed → 99 (fires last)
+    ├─ reason_needed → 90
+    ├─ await_needed → 95
+    ├─ commit_needed → 98
+    └─ reprogramme_needed → 99
 
 loop.py
 ├─ TOOL_MAP
-│   ├─ vocab → {tool: path, post_observe: target}
-│   ├─ hash_resolve_needed → {tool: None} (kernel resolves directly)
-│   ├─ pattern_needed → {tool: "tools/file_grep.py"}
-│   ├─ hash_edit_needed → {tool: "tools/hash_manifest.py"}
-│   ├─ stitch_needed → {tool: "tools/stitch_generate.py", post_observe: "ui_output/"}
-│   └─ ... (full map in loop.py TOOL_MAP constant)
-│
-├─ DETERMINISTIC_VOCAB = {hash_resolve_needed} — kernel resolves, zero LLM cost
-├─ OBSERVATION_ONLY_VOCAB = {hash_resolve_needed, external_context} — blob steps
-│
-├─ Iteration loop branches
-│   ├─ if vocab in DETERMINISTIC_VOCAB → kernel resolves directly
-│   ├─ if vocab in OBSERVATION_ONLY_VOCAB → resolve + inject, no post-diff
-│   ├─ if is_observe(vocab) → tool executes, LLM reasons over results
-│   ├─ if is_mutate(vocab) → compose → execute → auto_commit → postcondition
-│   ├─ if vocab == "reprogramme_needed" → PRINCIPLES.md + registry injected → compose
-│   └─ if vocab == "clarify_needed" → halt iteration, gap persists
-│
-├─ Policy auto-route
-│   ├─ _load_tree_policy() → loads tree_policy.json
-│   ├─ _match_policy(path, policy) → exact match, then longest prefix
-│   └─ on_mutate → reroutes vocab before execution
-│
-├─ auto_commit(message) → git add -A → commit → _check_protected → revert on violation
-│   └─ _check_protected(commit, pre_commit) → scans diff for immutable violations
-│
-├─ Universal postcondition
-│   └─ after auto_commit: Gap.create(hash_resolve_needed, content_refs=[commit_sha])
-│
-└─ resolve_hash(ref, trajectory)
-    ├─ 1. skill registry → .st entity data (_render_entity)
-    ├─ 2. trajectory step → semantic tree branch (_render_step_tree)
-    ├─ 3. trajectory gap → gap data with scores (_render_gap_tree)
-    └─ 4. git object → git show (blob/tree/commit)
+│   ├─ hash_resolve_needed → kernel resolution
+│   ├─ pattern_needed → tools/file_grep.py
+│   ├─ hash_edit_needed → tools/hash_manifest.py
+│   ├─ stitch_needed → tools/stitch_generate.py
+│   └─ ... (full routing lives in TOOL_MAP)
+├─ DETERMINISTIC_VOCAB = {hash_resolve_needed}
+├─ OBSERVATION_ONLY_VOCAB = {hash_resolve_needed, external_context}
+├─ PRE_DIFF_SYSTEM
+│   └─ reason before clarify is explicit bridge law when available context can narrow ambiguity
+├─ resolve_hash(ref, trajectory)
+│   ├─ entity/admin/chain-spec package hash → entity-style deterministic injection
+│   ├─ action package hash → read-only package render
+│   ├─ trajectory step hash → semantic tree branch render
+│   ├─ trajectory gap hash → gap tree render
+│   └─ git object → git show (blob/tree/commit)
+├─ tree policy
+│   ├─ skills/admin.st → reprogramme_needed + entity_editor
+│   ├─ skills/entities/* → reprogramme_needed + entity_editor
+│   ├─ skills/actions/* → reprogramme_needed + action_editor
+│   ├─ skills/codons/* → immutable + on_reject: reason_needed
+│   └─ ui_output/* / immutable code / logs / stores → policy enforcement
+├─ auto_commit(message)
+│   ├─ git add -A → commit
+│   ├─ protected-surface check
+│   └─ inject hash_resolve_needed postcondition targeting the realized commit
+├─ _find_dangling_gaps(trajectory)
+│   └─ only explicit carry_forward gaps resume; clarify never auto-carries
+└─ _persist_forced_synth_frontier(...)
+    └─ unresolved forced-synth frontier cloned forward as fresh carryable gaps
+
+execution_engine.py
+├─ execute_iteration(...)
+│   ├─ merges current-turn clarify gaps into one frontier step
+│   ├─ applies deterministic route_mode hints before execution
+│   ├─ reroutes new action/hybrid origination to reason_needed
+│   ├─ runs reprogramme in entity_editor vs action_editor mode
+│   └─ emits rogue steps with reason_needed diagnosis when execution fails
+├─ _collect_clarify_frontier(...)
+│   └─ current-turn bounded, deduped clarify frontier
+├─ _reprogramme_mode_for_source(path)
+│   └─ derives entity_editor vs action_editor from the target tree
+└─ _new_action_origination_requires_reason(...)
+    └─ new executable structure routes through reason before persistence
 
 tree_policy.json
-├─ "skills/"     → {on_mutate: "reprogramme_needed"}
-├─ "ui_output/"  → {on_mutate: "stitch_needed"}
-├─ "logs/"       → {immutable: true}
-├─ "step.py"     → {immutable: true}
-├─ "compile.py"  → {immutable: true}
-└─ "loop.py"     → {immutable: true}
+├─ "skills/admin.st"  → {on_mutate: "reprogramme_needed", reprogramme_mode: "entity_editor"}
+├─ "skills/entities/" → {on_mutate: "reprogramme_needed", reprogramme_mode: "entity_editor"}
+├─ "skills/actions/"  → {on_mutate: "reprogramme_needed", reprogramme_mode: "action_editor"}
+├─ "skills/codons/"   → {immutable: true, on_reject: "reason_needed"}
+├─ "ui_output/"       → {on_mutate: "stitch_needed"}
+├─ "logs/"            → {immutable: true}
+└─ core runtime files → {immutable: true}
 
 tools/
-├─ hash_manifest.py   — universal file I/O: read/write/patch/diff + file-type routing
-├─ st_builder.py      — .st constructor: validates schema, forwards manifestation fields
-├─ stitch_generate.py — Google Stitch SDK: prompt → HTML + Tailwind CSS
+├─ hash_manifest.py   — universal file I/O and mutation dispatch
+├─ st_builder.py      — semantic `.st` persistence, entity/action validation, context-step enforcement
+├─ stitch_generate.py — prompt → HTML + Tailwind CSS
 ├─ file_grep.py       — pattern search across workspace
-├─ file_write.py      — write new file
-├─ file_edit.py       — edit existing file
-├─ code_exec.py       — execute shell command, output blob-hashed into git
-├─ email_send.py      — send email/message
-├─ json_patch.py      — surgical JSON mutation
-└─ git_ops.py         — git revert/checkout
+├─ security_compile.py / trace_tree_build.py / semantic_skeleton_compile.py
+│   └─ validator / assessment / structural projection tooling used by post-observation
+└─ supporting writers/editors/ops
 ```
 
 ---
@@ -527,16 +540,16 @@ Reprogramme operates in two modes: **classifiable mid-turn** and **automatic pre
 loop.py
 ├─ Reprogramme branch (iteration loop)
 │   ├─ if vocab == "reprogramme_needed"
-│   ├─ reads PRINCIPLES.md → injects into session
-│   ├─ injects entity registry (all skills + commands with descriptions)
-│   ├─ compose prompt: "reuse existing .st before building new"
-│   └─ teaches two modes: context injection vs gap ledger mutation
+│   ├─ injects current step network + registry + protected editing law
+│   ├─ injects chain construction spec selectively for action_editor / planning contexts
+│   ├─ preserves admin as canonical root entity primitive
+│   └─ routes through deterministic entity_editor vs action_editor mode
 │
 ├─ _reprogramme_pass() → automatic pre-synthesis safety net
 │   └─ reviews turn for knowledge updates, fires if needed
 │
 └─ Entity rendering
-    ├─ _render_entity(skill) → full .st data formatted for injection
+    ├─ _render_entity(skill) → full entity/spec `.st` data formatted for injection
     └─ _render_identity(skill) → identity .st formatted for session
 
 skills/loader.py
@@ -551,15 +564,27 @@ skills/loader.py
 ├─ Skill
 │   ├─ .display_name → from identity.name or skill name
 │   ├─ .is_command → trigger.startswith("command:")
+│   ├─ .artifact_kind → entity / action / hybrid / codon
 │   └─ .hash → content hash of .st file
 │
-└─ load_all(skills_dir) → SkillRegistry (bridge + command separation)
+└─ load_all(skills_dir) → SkillRegistry
+    ├─ loads skills/admin.st as canonical root entity
+    ├─ loads skills/entities/* as entity/spec injection packages
+    ├─ loads skills/actions/* as executable packages
+    └─ loads skills/codons/* as protected primitive codons
 
 tools/st_builder.py
-├─ Builds valid .st from JSON intent
-├─ Validates schema (name, desc, trigger, steps)
-├─ steps[] can be empty → pure entity, no workflow
-└─ Forwards all non-base fields (identity, constraints, sources, scope, etc.)
+├─ Builds valid `.st` from semantic intent
+├─ Validates entity/action/hybrid persistence frame
+├─ Entity semantics require deterministic context-injection steps
+├─ entity_editor
+│   ├─ preserves pure entity shape
+│   ├─ strips root/phases/closure
+│   └─ writes to skills/entities/ (or skills/admin.st when editing admin)
+├─ action_editor
+│   ├─ preserves executable package structure
+│   └─ writes to skills/actions/
+└─ Forwards semantic fields (identity, constraints, scope, refs, preferences, etc.)
 ```
 
 ---
@@ -717,23 +742,22 @@ So `post_diff` should be treated as a first-class workflow primitive alongside t
 ### Code mechanisms
 
 ```
-skills/*.st
-├─ Each step object can carry "post_diff": true|false
+skills/admin.st / skills/entities/* / skills/actions/* / skills/codons/*
+├─ Each authored step can carry "post_diff": true|false
 └─ This expresses whether the step is structurally open or closed after manifestation
 
 skills/loader.py
 └─ SkillStep.post_diff → preserved on loaded step packages
 
-schemas/skeleton.v1.json
-├─ Every non-terminal phase requires post_diff
-└─ post_diff is part of the structural contract submitted for compilation
+schemas/semantic_skeleton.v1.json
+├─ Semantic step structure preserves post_diff
+└─ post_diff remains part of the structural contract submitted for persistence / compilation
 
-tools/skeleton_compile.py
-└─ Preserves post_diff into stepchain.v1 as manifestation-time structure
+tools/semantic_skeleton_compile.py
+└─ Preserves post_diff into compiled semantic structure
 
-loop.py
-└─ Current runtime still only partially enforces post_diff generically
-   → the principle is ahead of the implementation here
+loop.py / execution_engine.py
+└─ Runtime uses post_diff to distinguish deterministic observation/persistence from branch-opening steps
 ```
 
 ---
@@ -1146,7 +1170,8 @@ skills/codons/reason.st
 │   ├─ relevance: 0.9
 │   └─ post_diff: true (LLM chooses: observe / refine / manifest / plan / heartbeat / reorient)
 ├─ step 3: construct_or_act
-│   ├─ vocab: hash_edit_needed (if refine/plan)
+│   ├─ vocab: hash_edit_needed (if refine)
+│   ├─ vocab: content_needed / skeleton submission / package activation (if plan/manifest)
 │   ├─ relevance: 0.8
 │   └─ post_diff: true (chain construction writes full gap config per step)
 └─ step 4: post_reason_check
@@ -1168,23 +1193,9 @@ skills/codons/commit.st
 
 skills/codons/reprogramme.st
 ├─ trigger: "on_vocab:reprogramme_needed"
-├─ step 1: load_principles_and_registry (observe, rel=1.0, post_diff=false)
-├─ step 2: compose_st (mutate, rel=0.9, post_diff=false — no branching)
-└─ step 3: commit_and_register (rel=0.8, post_diff=false — fire and forget)
-
-tools/chain_to_st.py
-├─ chain_to_st(chain_hash, name, desc, trigger, refs, output_path)
-│   ├─ load_chain_data(chain_hash) → chain + resolved steps
-│   ├─ extract_st_steps(chain_data) → .st-compatible step list
-│   │   ├─ maps step.desc → st_step.action + desc
-│   │   ├─ maps gap.vocab → st_step.vocab
-│   │   ├─ maps gap.scores.relevance → st_step.relevance (or position-derived)
-│   │   ├─ maps gap.content_refs → st_step.content_refs (embeddable .st hashes)
-│   │   └─ infers post_diff from branching structure
-│   └─ writes JSON .st file (deterministic — no LLM needed)
-│
-└─ Discovery → crystallization pipeline:
-    chain on trajectory → chain_to_st → .st file → future invocation → same gaps
+├─ step 1: load laws, registry, route frame (observe, rel=1.0, post_diff=false)
+├─ step 2: compose semantic frame in deterministic route_mode (rel=0.9, post_diff=false)
+└─ step 3: persist + auto-commit + post-observe assessment (rel=0.8, post_diff=false)
 
 step.py
 ├─ Trajectory.find_passive_chains(content_ref)
@@ -1201,13 +1212,27 @@ compile.py
 ├─ Compiler.resolve_current_gap(gap_hash)
 │   └─ marks chain.extracted when length >= CHAIN_EXTRACT_LENGTH (8)
 └─ Compiler.readmit_cross_turn(gaps, step_hash)
-    └─ re-scores dangling gaps at CROSS_TURN_THRESHOLD (0.6)
+    └─ re-scores only explicit carry-forward gaps at CROSS_TURN_THRESHOLD (0.6)
+
+execution_engine.py
+├─ reason_needed execution
+│   ├─ can emit native `reason.st`
+│   ├─ can submit skeleton / semantic_skeleton for deterministic compilation
+│   ├─ can activate existing hash-addressed packages
+│   └─ injects commitment_chain_construction_spec selectively for planning/workflow/research
+├─ reprogramme_needed execution
+│   ├─ entity_editor → semantic entity persistence
+│   ├─ action_editor → executable package persistence
+│   ├─ new action/hybrid origination → rerouted back to reason_needed
+│   └─ successful write → assessment-bearing post-observation step before synth
+└─ clarify frontier
+    └─ current-turn clarify gaps merge into one canonical clarification step hash
 
 loop.py
-├─ _find_dangling_gaps(trajectory) → unresolved gaps from prior turns
+├─ _find_dangling_gaps(trajectory) → only non-clarify carry_forward gaps resume
 ├─ find_passive_chains() checked before creating new chain
 ├─ Heartbeat: after synthesis, if compiler.needs_heartbeat()
-│   └─ persist reason_needed gap as dangling → next turn's resume picks it up
+│   └─ persist reason_needed gap as carryable frontier → next turn's resume picks it up
 ├─ Codon rejection: _check_protected returns on_reject vocab
 │   └─ codon immutability → emit reason_needed (reorientation)
 └─ _save_turn() calls extract_chains()
@@ -1285,7 +1310,7 @@ loop.py
 │   │   └─ Session(model) → persistent LLM session
 │   │
 │   ├─ 1b. RESUME CHECK
-│   │   └─ _find_dangling_gaps(trajectory) → surface unresolved gaps from prior turns
+│   │   └─ _find_dangling_gaps(trajectory) → surface only explicit carry-forward frontier gaps
 │   │
 │   ├─ 2. FIRST STEP (origin)
 │   │   ├─ render salient trajectory tree + HEAD + user message
@@ -1308,15 +1333,15 @@ loop.py
 │   │   ├─ trajectory.render_chain(entry.chain_id, highlight_gap=gap.hash)
 │   │   │   └─ inject Active Chain Tree for the currently addressed gap
 │   │   ├─ HALT/None → break
-│   │   ├─ REVERT → git revert last commit
+│   │   ├─ REVERT → skip divergent branch / emit rogue diagnostics
 │   │   ├─ Route by vocab:
 │   │   │   ├─ DETERMINISTIC → kernel resolves directly
 │   │   │   ├─ OBSERVATION_ONLY → resolve + inject (blob step)
 │   │   │   ├─ is_observe → tool executes, LLM reasons
 │   │   │   ├─ is_mutate → compose → execute → auto_commit → postcondition
-│   │   │   ├─ clarify_needed → halt, gap persists
+│   │   │   ├─ clarify_needed → merge current-turn clarify frontier → halt
 │   │   │   ├─ reason_needed → reason.st OR skeleton submission OR existing package activation
-│   │   │   ├─ reprogramme_needed → PRINCIPLES.md + registry + Step Network → compose
+│   │   │   ├─ reprogramme_needed → route_mode frame + registry + Step Network → compose
 │   │   │   └─ bridge codons → .st activation / package manifestation
 │   │   └─ Policy auto-route check before each execution
 │   │
@@ -1515,13 +1540,16 @@ compile.py
 └─ Compiler.emit_origin_gaps() → .st steps become ledger entries
 
 loop.py
-├─ Reprogramme prompt: "check existing workflows before building new"
-├─ Entity registry injection → reprogramme agent sees all .st files
-├─ Command registry injection → reprogramme agent sees all /command workflows
-└─ .st gap dispersal → child .st gaps enter as children of current chain
+├─ Reprogramme prompt: reuse existing packages, preserve tree class, route by target tree
+├─ Entity registry injection → reason/reprogramme see entity/spec packages by hash
+├─ Command registry injection → executable packages remain discoverable separately
+└─ `.st` package refs resolve as entity injection or action read based on source tree
 
-skills/*.st
-└─ Steps use relevance descending (1.0 → 0.9 → 0.8) to sequence execution
+skills/
+├─ admin.st → canonical operator primitive at root
+├─ entities/* → context/spec injection packages
+├─ actions/* → executable workflow packages
+└─ codons/* → immutable bridge primitives and chain construction spec
 ```
 
 ---
@@ -1532,19 +1560,25 @@ skills/*.st
 cors/
 ├─ step.py          ← Layer 0: step primitive, gap, chain, trajectory, render
 ├─ compile.py       ← Layer 1: compiler, ledger, governor, vocab, admission
-├─ loop.py          ← Layer 2: turn loop, persistent LLM, hash resolution, git, tools
-├─ skills/          ← .st files: entities, workflows
+├─ execution_engine.py ← Layer 2a: per-gap execution, clarify frontier, route_mode dispatch
+├─ loop.py          ← Layer 2b: turn loop, persistent LLM, hash resolution, git, policy
+├─ manifest_engine.py ← manifestation helpers for `.st` package inspection / activation
+├─ skills/          ← structured semantic trees
 │   ├─ codons/      ← immutable primitive codons (protected by tree_policy)
 │   │   ├─ reason.st      ← START codon: planning + reorientation + heartbeat
 │   │   ├─ await.st       ← PAUSE codon: synchronization checkpoint
 │   │   ├─ commit.st      ← END codon: semantic tree injection + reintegration
-│   │   └─ reprogramme.st ← PERSIST codon: .st world-building (no post_diff)
+│   │   ├─ reprogramme.st ← PERSIST codon: semantic persistence (no post_diff)
+│   │   └─ commitment_chain_construction_spec.st ← immutable planning/spec context
+│   ├─ actions/     ← executable workflows / mutable action packages
+│   ├─ entities/    ← semantic entities and passive spec packages
 │   ├─ loader.py    ← skill registry: load (walks subdirs), resolve, display names
-│   └─ *.st         ← entity and workflow .st files (reprogrammable)
+│   └─ admin.st     ← only root skill, preserved as canonical operator entity
 ├─ tools/           ← tool scripts
-│   ├─ chain_to_st.py    ← deterministic chain → .st extraction
 │   ├─ hash_manifest.py  ← universal file I/O
-│   ├─ st_builder.py     ← .st constructor from semantic intent
+│   ├─ st_builder.py     ← `.st` constructor from semantic intent
+│   ├─ semantic_skeleton_compile.py / security_compile.py / trace_tree_build.py
+│   │   └─ validator and post-observation assessment pipeline
 │   └─ ...               ← file_grep, stitch, code_exec, etc.
 ├─ tree_policy.json ← per-path mutation policy (codons/ immutable + on_reject)
 ├─ trajectory.json  ← persisted trajectory (step dicts in chronological order)

@@ -1,128 +1,212 @@
 # execution_engine.py
 
-[execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py) is the per-gap execution core.
-
-It sits between the lawful sequencer in [compile.py](/Users/k2invested/Desktop/cors/compile.py) and the turn orchestrator in [loop.py](/Users/k2invested/Desktop/cors/loop.py).
+[execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py) is the per-gap execution core. It sits between the compiler’s lawful frontier and the turn loop’s orchestration.
 
 ## What It Owns
 
-The module owns the branch-level execution path for one admitted ledger entry:
+`execute_iteration(...)` owns one admitted ledger entry:
 
-- resolve refs for the current gap
-- route by vocab
-- enforce tree-policy reroutes
-- run deterministic observation paths
-- run mutation composition and execution
-- expand bridge codons
-- auto-commit and inject universal postconditions
-- record the resulting step back into trajectory and chain state
+```text
+gap
+  -> resolve refs
+  -> enforce tree policy
+  -> route by vocab
+  -> observe / mutate / codon handling
+  -> commit if needed
+  -> inject postcondition
+  -> record resulting step
+```
 
-So [loop.py](/Users/k2invested/Desktop/cors/loop.py) no longer needs to inline the whole vocab dispatch tree. It hands the current ledger entry to `execute_iteration(...)`.
+The loop does not inline this routing anymore.
 
-## Main API
+## Main Runtime Objects
 
-The module exposes three small dataclasses and one main function:
+The module exports:
 
 - `ExecutionHooks`
 - `ExecutionConfig`
 - `ExecutionOutcome`
 - `execute_iteration(...)`
 
-`ExecutionHooks` is the runtime boundary back into the rest of the kernel. It carries the concrete helpers the execution core needs without making the module itself own those other subsystems:
+This keeps the execution core narrow. The module receives concrete hooks for git, tool execution, parsing, tree policy, and commit assessment rather than owning those subsystems itself.
 
-- ref resolution
-- subprocess tool execution
-- git-backed auto-commit
-- step parsing
-- JSON / command extraction
-- tree policy helpers
-- entity rendering
-- step-network rendering
-- native reason codon emission
+## Clarify Frontier
 
-`ExecutionConfig` carries the stable execution-time constants:
+Clarification now halts through one merged frontier step rather than a series of single-gap stops.
 
-- repo paths
-- tool map
-- deterministic vocab set
-- observation-only vocab set
+Implemented helpers:
 
-That split keeps the execution core reusable. The same engine now serves ordinary turn-time gap execution and `/command` execution.
+- `_collect_clarify_frontier(...)`
+- `_merged_clarify_desc(...)`
+- `_build_clarify_frontier_step(...)`
 
-## Branch Categories
+Current law:
 
-The module currently handles these major execution classes.
+- only current-turn clarify gaps are merged
+- duplicates are removed by hash
+- one canonical clarification step is appended
+- iteration halts immediately after that step
 
-Observation-only:
-- inject resolved data
-- create a blob-like observation step
-- no mutation commit
+## Observation Paths
 
-Deterministic observation:
-- run a tool directly if configured
-- inject the result
-- ask the model to articulate the observation and any child gaps
+Observation splits into three forms:
 
-Mutation:
-- enforce tree policy
-- enforce OMO
-- ask the model to compose either a patch payload or command
-- execute
-- auto-commit on success
-- inject a universal `hash_resolve_needed` postcondition
+- `observation_only_vocab`
+  - inject resolved data
+  - create a blob-like observation step
+  - no child-gap articulation pass
+- deterministic observation
+  - resolve / tool run
+  - ask the model what it observed
+- normal observation
+  - resolve / tool run
+  - parse a new step and any emitted gaps
 
-Bridge codons:
-- `commit_needed`
-- `reason_needed`
-- `await_needed`
-- `reprogramme_needed`
+`pattern_needed` has a special deterministic helper:
 
-Unknown vocab:
-- fall back to generic reasoning over the current gap
+- `_pattern_tool_params(...)`
+
+It infers `file_grep.py` arguments from the gap description when the model gives a concrete quoted pattern.
+
+## Mutation Routing
+
+Mutation is not direct file editing anymore when `.st` surfaces are involved.
+
+The current flow is:
+
+```text
+mutate gap
+  -> tree policy lookup
+  -> .st auto-reroute if relevant
+  -> determine route_mode
+  -> maybe reroute to reason_needed
+  -> execute mutation branch
+```
+
+Key helpers:
+
+- `_entity_target_for_reprogramme(...)`
+- `_reprogramme_mode_for_source(...)`
+- `_determine_reprogramme_mode(...)`
+- `_new_action_origination_requires_reason(...)`
+
+Deterministic route modes are:
+
+- `entity_editor`
+- `action_editor`
+
+The important law is:
+
+- entity writes can go straight to `reprogramme_needed`
+- existing action updates can go to `reprogramme_needed` in `action_editor`
+- new action or hybrid origination is rerouted to `reason_needed` first
 
 ## Reason Path
 
-`reason_needed` is the richest branch in the execution engine.
+`reason_needed` is now a selective structural branch rather than a generic fallback.
 
 It can:
 
-- emit native `reason.st`
-- submit `skeleton.v1` to [tools/skeleton_compile.py](/Users/k2invested/Desktop/cors/tools/skeleton_compile.py)
-- persist the resulting `stepchain.v1` package through [manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py)
+- emit the native [reason.st](/Users/k2invested/Desktop/cors/skills/codons/reason.st) codon
+- submit `skeleton.v1` for deterministic compilation
 - activate an existing `.st` or compiled chain package by hash
-- schedule the package for current-turn or background activation
 
-That means the execution core is one of the places where the structural side of the OS is now directly expressed.
+When the gap smells like workflow planning, it also injects the immutable chain construction spec:
 
-## Mutation And Protection
+- `_should_inject_chain_spec_for_reason(...)`
+- `_inject_chain_spec(...)`
 
-The execution core is also where the current runtime protections actually bite.
+This spec is not injected into every reasoning turn. It is scoped to planning, chain, workflow, manifest, skeleton, and research-like gaps.
 
-Before mutation proceeds, it checks:
+## Reprogramme Path
 
-- tree-policy reroutes
-- `.st` auto-reroute toward `reprogramme_needed`
-- OMO legality
+`reprogramme_needed` now operates with explicit route guidance.
 
-After execution, it checks commit outcome through `auto_commit()`. If the resulting commit touched a protected surface and was auto-reverted, the execution core handles the reject path and may emit a reorientation gap such as `reason_needed`.
+Implemented behaviors:
 
-So `execution_engine.py` is not just a dispatcher. It is one of the main places where the OS enforces the difference between ordinary worktree mutation, semantic-state persistence, and protected structural law.
+- inject existing entity data when present
+- inject [PRINCIPLES.md](/Users/k2invested/Desktop/cors/docs/PRINCIPLES.md)
+- inject step network
+- inject chain construction spec for `action_editor`
+- surface an editable semantic frame
+- coerce returned frames to the route mode
+
+The frame coercion helper is:
+
+- `_coerce_semantic_frame_for_mode(...)`
+
+For `entity_editor`, it hardens the returned frame to:
+
+- `artifact.kind = entity`
+- `artifact.protected_kind = entity`
+- no `root`
+- no `phases`
+- no `closure`
+
+That is the mechanism that prevents entity packages from drifting into accidental hybrid scaffolding.
+
+## Rogue Handling
+
+Persistence and execution failure no longer disappear into terminal output.
+
+Implemented helpers:
+
+- `_make_rogue_step(...)`
+- `_emit_rogue_with_diagnosis(...)`
+- `_extract_invalid_generated_json(...)`
+
+A rogue step can carry:
+
+- `rogue_kind`
+- `failure_source`
+- `failure_detail`
+- `assessment`
+- one follow-up `reason_needed` diagnosis gap
+
+That diagnosis gap is one of the few places where `carry_forward=True` is still intentionally used.
+
+## Commit And Postcondition
+
+Mutation success now follows one standard rhythm:
+
+```text
+execute
+  -> auto_commit()
+  -> assessment lines
+  -> postcondition step
+  -> hash_resolve_needed observe gap
+  -> compiler sees the consequence before synthesis
+```
+
+This matters most for `reprogramme_needed`, because semantic `.st` persistence is now visible on trajectory in time for the final answer.
+
+## Assessment Vocabulary
+
+The execution engine now depends on commit/step assessment hooks rather than freeform summaries.
+
+These assessments are attached to:
+
+- successful `.st` postconditions
+- rogue persistence failures
+- protected-surface rejections
+
+The emitted family includes:
+
+- `validator.status`
+- `structure.*`
+- `continuity.*`
+- `projection.*`
+- `grounding.*`
+- `policy.*`
+- `semantic.drift`
+- `surface.*`
+- `step_delta`
 
 ## Relationship To Other Modules
 
-[step.py](/Users/k2invested/Desktop/cors/step.py) defines the runtime objects the engine emits and records.
+- [compile.py](/Users/k2invested/Desktop/cors/compile.py): chooses the active frontier
+- [step.py](/Users/k2invested/Desktop/cors/step.py): defines the emitted runtime objects
+- [manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py): activates saved packages
+- [loop.py](/Users/k2invested/Desktop/cors/loop.py): injects context, runs the outer turn, and persists state
 
-[compile.py](/Users/k2invested/Desktop/cors/compile.py) decides which gap the engine is allowed to address next and whether the current chain is done.
-
-[manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py) is used when execution needs to persist or reactivate compiled packages.
-
-[loop.py](/Users/k2invested/Desktop/cors/loop.py) owns the larger turn lifecycle around the engine:
-
-- first-step formation
-- identity injection
-- active-chain rendering
-- pre-synthesis reprogramme
-- heartbeat persistence
-- final synthesis
-
-That is the intended boundary: `loop.py` assembles the world for the turn, and `execution_engine.py` executes the current branch.
+The module’s job is narrower and sharper than older docs suggested: it is the lawful branch executor, not the planner and not the orchestrator.

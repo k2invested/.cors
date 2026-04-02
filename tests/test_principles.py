@@ -258,6 +258,18 @@ P1_CASES = [
     )),
 ]
 
+P1_CASES += [
+    ("step_hash_changes_with_desc", lambda: make_step("alpha").hash != make_step("beta").hash),
+    ("step_hash_changes_with_content_refs", lambda: make_step("alpha", content_refs=["blob_a"]).hash != make_step("alpha", content_refs=["blob_b"]).hash),
+    ("step_hash_changes_with_step_refs", lambda: make_step("alpha", step_refs=["step_a"]).hash != make_step("alpha", step_refs=["step_b"]).hash),
+    ("gap_hash_changes_with_step_refs", lambda: make_gap("alpha", step_refs=["step_a"]).hash != make_gap("alpha", step_refs=["step_b"]).hash),
+    ("gap_hash_changes_with_content_ref_order", lambda: make_gap("alpha", content_refs=["a", "b"]).hash != make_gap("alpha", content_refs=["b", "a"]).hash),
+    ("chain_initial_length_one", lambda: Chain.create("gap", "step_a").length() == 1),
+    ("chain_add_step_increments_length", lambda: (lambda c: (c.add_step("step_b"), c.length())[1] == 2)(Chain.create("gap", "step_a"))),
+    ("trajectory_append_preserves_order", lambda: (lambda traj, s1, s2: (traj.append(s1), traj.append(s2), traj.order == [s1.hash, s2.hash])[2])(Trajectory(), make_step("one"), make_step("two"))),
+    ("step_roundtrip_assessment", lambda: Step.from_dict(make_step("assessed", commit="abc123", gaps=[], chain_id="c1", parent="p1").to_dict()).chain_id == "c1"),
+]
+
 
 P2_CASES = [
     ("fresh_gap_admitted", lambda: build_origin_context().compiler.gap_count() == 1),
@@ -316,6 +328,25 @@ P2_CASES = [
     ("empty_ledger_halts", lambda: Compiler(Trajectory()).next()[1] == GovernorSignal.HALT),
     ("next_pops_entry", lambda: build_origin_context().compiler.next()[0] is not None),
     ("chain_summary_reports_origin", lambda: build_origin_context().compiler.chain_summary()[0]["origin"] == build_origin_context().gap.hash),
+]
+
+P2_CASES += [
+    ("origin_gap_is_indexed_on_append", lambda: (lambda ctx: ctx.traj.resolve_gap(ctx.gap.hash) == ctx.gap)(build_origin_context())),
+    ("dormant_gap_is_still_indexed", lambda: (lambda ctx: ctx.traj.resolve_gap(ctx.gap.hash) == ctx.gap and ctx.gap.dormant)(build_origin_context(relevance=0.1, confidence=0.1))),
+    ("emit_child_increases_ledger_size", lambda: (lambda ctx: (
+        setattr(ctx.compiler, "active_chain", next(iter(ctx.traj.chains.values()))),
+        ctx.compiler.emit(make_step("child", gaps=[make_gap("child", vocab="pattern_needed", content_refs=["blob_alpha"], relevance=0.9, confidence=0.7)])),
+        ctx.compiler.ledger.size() == 2,
+    )[2])(build_origin_context())),
+    ("resolve_current_gap_marks_gap_resolved", lambda: (lambda ctx: (ctx.compiler.resolve_current_gap(ctx.gap.hash), ctx.gap.resolved)[1])(build_origin_context())),
+    ("resolve_current_gap_closes_empty_chain", lambda: (lambda ctx: (
+        (lambda chain_hash: (ctx.compiler.next(), ctx.compiler.resolve_current_gap(ctx.gap.hash), ctx.compiler.ledger.chain_states[chain_hash] == ChainState.CLOSED)[2])(next(iter(ctx.traj.chains)))
+    ))(build_origin_context())),
+    ("readmit_cross_turn_preserves_gap_hash", lambda: (lambda comp, gap: (comp.readmit_cross_turn([gap], "origin"), comp.ledger.peek().gap.hash == gap.hash)[1])(Compiler(seed_trajectory("blob_a"), current_turn=2), make_gap("carry", relevance=0.9, confidence=0.7, vocab="pattern_needed", content_refs=["blob_a"], turn_id=1))),
+    ("readmit_cross_turn_creates_one_new_entry", lambda: (lambda comp, gap: (comp.readmit_cross_turn([gap], "origin"), comp.ledger.size() == 1)[1])(Compiler(seed_trajectory("blob_a"), current_turn=2), make_gap("carry", relevance=0.9, confidence=0.7, vocab="pattern_needed", content_refs=["blob_a"], turn_id=1))),
+    ("emit_origin_multiple_gaps_create_multiple_chains", lambda: (lambda traj, step: (lambda comp: (traj.append(step), comp.emit_origin_gaps(step), len(traj.chains) == 2)[2])(Compiler(traj)))(Trajectory(), make_step("origin", gaps=[make_gap("a", vocab="pattern_needed", content_refs=["blob_a"], relevance=0.8, confidence=0.8), make_gap("b", vocab="email_needed", content_refs=["blob_b"], relevance=0.8, confidence=0.8)]))),
+    ("ledger_pop_reduces_stack", lambda: (lambda ctx: (ctx.compiler.ledger.pop(), ctx.compiler.ledger.size() == 0)[1])(build_origin_context())),
+    ("same_turn_gap_uses_fresh_threshold", lambda: build_origin_context(relevance=0.5, confidence=0.6, current_turn=2, gap_turn_id=2, refs=[]).compiler.gap_count() == 1),
 ]
 
 
@@ -386,6 +417,25 @@ P4_CASES = [
     )),
     ("step_from_dict_preserves_scores", lambda: (lambda restored: restored.gaps[0].scores.relevance == 0.7 and restored.gaps[0].scores.confidence == 0.6)(
         Step.from_dict(make_step("s", gaps=[make_gap("g", relevance=0.7, confidence=0.6)]).to_dict())
+    )),
+]
+
+P4_CASES += [
+    ("gap_axis_turn_id", lambda: hasattr(make_gap("x"), "turn_id")),
+    ("gap_axis_carry_forward", lambda: hasattr(make_gap("x"), "carry_forward")),
+    ("gap_axis_route_mode", lambda: hasattr(make_gap("x"), "route_mode")),
+    ("gap_to_dict_carries_turn_id", lambda: (lambda g: (setattr(g, "turn_id", 4), g.to_dict()["turn_id"] == 4))(make_gap("a"))),
+    ("gap_roundtrip_preserves_turn_id", lambda: (lambda restored: restored.gaps[0].turn_id == 7)(
+        Step.from_dict(make_step("s", gaps=[(lambda g: (setattr(g, "turn_id", 7), g)[1])(make_gap("g"))]).to_dict())
+    )),
+    ("gap_roundtrip_preserves_carry_forward", lambda: (lambda restored: restored.gaps[0].carry_forward is True)(
+        Step.from_dict(make_step("s", gaps=[(lambda g: (setattr(g, "carry_forward", True), g)[1])(make_gap("g"))]).to_dict())
+    )),
+    ("gap_roundtrip_preserves_route_mode", lambda: (lambda restored: restored.gaps[0].route_mode == "entity_editor")(
+        Step.from_dict(make_step("s", gaps=[(lambda g: (setattr(g, "route_mode", "entity_editor"), g)[1])(make_gap("g"))]).to_dict())
+    )),
+    ("gap_roundtrip_preserves_vocab_score", lambda: (lambda restored: restored.gaps[0].vocab_score == 0.9)(
+        Step.from_dict(make_step("s", gaps=[make_gap("g", vocab="pattern_needed")]).to_dict())
     )),
 ]
 
@@ -477,6 +527,19 @@ P6_CASES = [
     ("gap_hash_encodes_step_citation", lambda: make_gap("g", step_refs=["step_a"]).hash != make_gap("g", step_refs=["step_b"]).hash),
     ("co_occurrence_counts_reference_usage", lambda: seed_trajectory("blob_a", count=2).co_occurrence("blob_a") == 2),
     ("resolve_entity_falls_back_to_trajectory", lambda: (lambda traj, step: "step:" in loop._resolve_entity([step.hash], registry(), traj))( *(lambda t, s: (t.append(s), (t, s))[1])(Trajectory(), make_step("fallback")) )),
+]
+
+P6_CASES += [
+    ("entity_source_detects_admin", lambda: loop._is_entity_source("skills/admin.st")),
+    ("entity_source_detects_entity_tree", lambda: loop._is_entity_source("skills/entities/clinton.st")),
+    ("entity_source_detects_chain_spec", lambda: loop._is_entity_source("skills/codons/commitment_chain_construction_spec.st")),
+    ("entity_source_excludes_action_tree", lambda: loop._is_entity_source("skills/actions/hash_edit.st") is False),
+    ("resolve_hash_admin_renders_entity_surface", lambda: (lambda reg: (setattr(loop, "_skill_registry", reg), "## Entity: admin:" in loop.resolve_hash(skill("admin").hash, Trajectory()))[1])(registry())),
+    ("resolve_hash_action_renders_package_json", lambda: (lambda reg: (setattr(loop, "_skill_registry", reg), '"name": "hash_edit"' in loop.resolve_hash(skill("hash_edit").hash, Trajectory()))[1])(registry())),
+    ("resolve_hash_chain_spec_renders_entity_surface", lambda: (lambda reg: (setattr(loop, "_skill_registry", reg), "commitment_chain_construction_spec" in loop.resolve_hash(skill("commitment_chain_construction_spec").hash, Trajectory()))[1])(registry())),
+    ("resolve_entity_top_rate_injects_business_context", lambda: "Top Rate Estates LTD" in loop._resolve_entity([skill("Top Rate Estates LTD").hash], registry(), Trajectory())),
+    ("resolve_entity_clinton_injects_identity", lambda: "Cyber security developer" in loop._resolve_entity([skill("clinton").hash], registry(), Trajectory())),
+    ("render_entity_includes_trigger", lambda: "trigger:" in loop._render_entity(skill("clinton"))),
 ]
 
 
@@ -596,6 +659,18 @@ P7_CASES = [
     ("hash_edit_flexible_steps_helper", lambda: len(skill("hash_edit").flexible_steps()) == 1),
 ]
 
+P7_CASES += [
+    ("clinton_steps_are_all_deterministic", lambda: all(not s.post_diff for s in skill("clinton").steps)),
+    ("top_rate_steps_are_all_deterministic", lambda: all(not s.post_diff for s in skill("Top Rate Estates LTD").steps)),
+    ("cors_ui_steps_are_all_deterministic", lambda: all(not s.post_diff for s in skill("cors_ui").steps)),
+    ("chain_spec_steps_are_all_deterministic", lambda: all(not s.post_diff for s in skill("commitment_chain_construction_spec").steps)),
+    ("clinton_loads_identity_first", lambda: skill("clinton").steps[0].action == "load_identity"),
+    ("clinton_loads_preferences_second", lambda: skill("clinton").steps[1].action == "load_preferences"),
+    ("top_rate_loads_identity_first", lambda: skill("Top Rate Estates LTD").steps[0].action == "load_identity"),
+    ("cors_ui_loads_constraints", lambda: skill("cors_ui").steps[0].action == "load_constraints"),
+    ("chain_spec_load_order_matches_semantics", lambda: [s.action for s in skill("commitment_chain_construction_spec").steps] == ["load_identity", "load_constraints", "load_scope"]),
+]
+
 
 P8_CASES = [
     ("omo_allows_first_mutation", lambda: Compiler(Trajectory()).validate_omo("content_needed")),
@@ -618,6 +693,19 @@ P8_CASES = [
     ("resolve_current_gap_closes_chain", lambda: (lambda ctx: (ctx.compiler.next(), ctx.compiler.resolve_current_gap(ctx.gap.hash), next(iter(ctx.traj.chains.values())).resolved)[2])(build_origin_context())),
     ("render_ledger_empty_message", lambda: Compiler(Trajectory()).render_ledger() == "(ledger empty)"),
     ("chain_summary_contains_state", lambda: "state" in build_origin_context().compiler.chain_summary()[0]),
+]
+
+P8_CASES += [
+    ("govern_allows_observe_gap", lambda: govern(LedgerEntry(make_gap("g", vocab="pattern_needed", confidence=0.7, grounded=0.7), "c"), 1, GovernorState()) == GovernorSignal.ALLOW),
+    ("govern_constrains_past_max_depth", lambda: govern(LedgerEntry(make_gap("g"), "c"), MAX_CHAIN_DEPTH + 1, GovernorState()) == GovernorSignal.CONSTRAIN),
+    ("needs_postcondition_false_initially", lambda: Compiler(Trajectory()).needs_postcondition() is False),
+    ("record_execution_observation_keeps_last_was_mutation_false", lambda: (lambda comp: (comp.record_execution("pattern_needed", False), comp.last_was_mutation is False)[1])(Compiler(Trajectory()))),
+    ("record_execution_mutation_sets_last_was_mutation_true", lambda: (lambda comp: (comp.record_execution("content_needed", True), comp.last_was_mutation is True)[1])(Compiler(Trajectory()))),
+    ("record_execution_observation_clears_postcondition_need", lambda: (lambda comp: (comp.record_execution("content_needed", True), comp.record_execution("pattern_needed", False), comp.needs_postcondition() is False)[2])(Compiler(Trajectory()))),
+    ("governor_state_stagnation_window_constant", lambda: STAGNATION_WINDOW == 3),
+    ("governor_state_saturation_threshold_constant", lambda: SATURATION_THRESHOLD == 0.05),
+    ("validate_omo_allows_observe_after_observe", lambda: (lambda comp: (comp.record_execution("pattern_needed", False), comp.validate_omo("pattern_needed"))[1])(Compiler(Trajectory()))),
+    ("validate_omo_allows_bridge_after_observe", lambda: Compiler(Trajectory()).validate_omo("reason_needed")),
 ]
 
 
@@ -654,6 +742,19 @@ P9_CASES = [
     ("render_recent_orders_recent_chain_first", lambda: build_chain_context().traj.render_recent(1, registry()).startswith("chain:")),
 ]
 
+P9_CASES += [
+    ("chain_desc_roundtrip", lambda: (lambda c: (setattr(c, "desc", "workflow"), Chain.from_dict(c.to_dict()).desc == "workflow")[1])(Chain.create("gap", "step"))),
+    ("chain_resolved_roundtrip", lambda: (lambda c: (setattr(c, "resolved", True), Chain.from_dict(c.to_dict()).resolved is True)[1])(Chain.create("gap", "step"))),
+    ("chain_extracted_roundtrip", lambda: (lambda c: (setattr(c, "extracted", True), Chain.from_dict(c.to_dict()).extracted is True)[1])(Chain.create("gap", "step"))),
+    ("trajectory_recent_limits_size", lambda: (lambda traj: (traj.append(make_step("one")), traj.append(make_step("two")), len(traj.recent(1)) == 1)[2])(Trajectory())),
+    ("trajectory_resolve_missing_step_none", lambda: Trajectory().resolve("missing") is None),
+    ("trajectory_resolve_missing_gap_none", lambda: Trajectory().resolve_gap("missing") is None),
+    ("append_to_passive_chain_appends_hash", lambda: (lambda traj, chain, step: (traj.add_chain(chain), traj.append_to_passive_chain(chain.hash, step), chain.steps[-1] == step.hash)[2])(Trajectory(), Chain.create("gap", "step1"), make_step("step2"))),
+    ("find_passive_chains_excludes_resolved_chain", lambda: (lambda traj, gap, chain: (traj.gap_index.__setitem__(gap.hash, gap), setattr(chain, "resolved", True), traj.add_chain(chain), len(traj.find_passive_chains("blob_a")) == 0)[3])(Trajectory(), make_gap("origin", content_refs=["blob_a"]), Chain.create(make_gap("origin", content_refs=["blob_a"]).hash, "step1"))),
+    ("recent_chains_respects_limit", lambda: len(build_chain_context().traj.recent_chains(1)) == 1),
+    ("chain_length_matches_step_list", lambda: (lambda c: (c.add_step("s2"), c.add_step("s3"), c.length() == len(c.steps))[2])(Chain.create("gap", "s1"))),
+]
+
 
 P10_CASES = [
     ("reason_trigger", lambda: skill("reason").trigger == "on_vocab:reason_needed"),
@@ -682,6 +783,26 @@ P10_CASES = [
     ("commit_steps_count", lambda: skill("commit").step_count() == 3),
 ]
 
+P10_CASES += [
+    ("reason_skill_is_codon", lambda: skill("reason").artifact_kind == "codon"),
+    ("await_skill_is_codon", lambda: skill("await").artifact_kind == "codon"),
+    ("commit_skill_is_codon", lambda: skill("commit").artifact_kind == "codon"),
+    ("reprogramme_skill_is_codon", lambda: skill("reprogramme").artifact_kind == "codon"),
+    ("route_mode_for_admin_source_is_entity_editor", lambda: execution_engine_module._reprogramme_mode_for_source("skills/admin.st") == "entity_editor"),
+    ("route_mode_for_entity_source_is_entity_editor", lambda: execution_engine_module._reprogramme_mode_for_source("skills/entities/clinton.st") == "entity_editor"),
+    ("route_mode_for_action_source_is_action_editor", lambda: execution_engine_module._reprogramme_mode_for_source("skills/actions/hash_edit.st") == "action_editor"),
+    ("new_action_origination_requires_reason", lambda: execution_engine_module._new_action_origination_requires_reason(make_gap("create research workflow", vocab="content_needed"), route_mode="action_editor", target_entity=None)),
+    ("existing_action_update_does_not_require_reason", lambda: execution_engine_module._new_action_origination_requires_reason(make_gap("update hash_edit", vocab="reprogramme_needed"), route_mode="action_editor", target_entity=skill("hash_edit")) is False),
+    ("chain_spec_injection_detects_research", lambda: execution_engine_module._should_inject_chain_spec_for_reason(make_gap("build a research workflow"))),
+    ("chain_spec_injection_skips_simple_preference", lambda: execution_engine_module._should_inject_chain_spec_for_reason(make_gap("remember my favourite colour")) is False),
+    ("entity_editor_coercion_strips_flow_fields", lambda: (lambda frame: ("root" not in frame and "phases" not in frame and "closure" not in frame and frame["artifact"]["kind"] == "entity"))(
+        execution_engine_module._coerce_semantic_frame_for_mode(
+            {"artifact": {"kind": "hybrid"}, "root": "r", "phases": [], "closure": {}},
+            "entity_editor",
+        )
+    )),
+]
+
 
 P11_CASES = [
     ("absolute_time_format_epoch", lambda: bool(TIMESTAMP_RE.fullmatch(absolute_time(0.1)))),
@@ -704,6 +825,19 @@ P11_CASES = [
     ("render_recent_preserves_step_order", lambda: (lambda ctx: (lambda rendered: rendered.find(ctx.step1.hash) < rendered.find(ctx.step2.hash))(ctx.traj.render_recent(5, registry())))(build_chain_context())),
     ("relative_time_zero_or_negative_empty", lambda: relative_time(0) == ""),
     ("absolute_time_zero_or_negative_empty", lambda: absolute_time(0) == ""),
+]
+
+P11_CASES += [
+    ("relative_time_fifty_nine_seconds", lambda: relative_time(time.time() - 59).endswith("s ago")),
+    ("relative_time_fifty_nine_minutes", lambda: relative_time(time.time() - (59 * 60)).endswith("m ago")),
+    ("relative_time_twenty_three_hours", lambda: relative_time(time.time() - (23 * 3600)).endswith("h ago")),
+    ("relative_time_two_days", lambda: relative_time(time.time() - (2 * 86400)).endswith("d ago")),
+    ("relative_time_many_months", lambda: relative_time(time.time() - (365 * 86400)).endswith("mo ago")),
+    ("absolute_time_nonempty_for_positive", lambda: absolute_time(1.0) != ""),
+    ("step_times_are_float_seconds", lambda: isinstance(make_step("timed").t, float)),
+    ("render_step_tree_has_absolute_time", lambda: bool(re.search(r"\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\)", loop._render_step_tree(make_step("timed"), (lambda traj, step: (traj.append(step), traj)[1])(Trajectory(), make_step("timed")))))),
+    ("render_recent_has_chain_header_timestamp_brackets", lambda: "[" in build_chain_context().traj.render_recent(5, registry()).splitlines()[0]),
+    ("absolute_time_stable_for_same_input", lambda: absolute_time(1710000000.0) == absolute_time(1710000000.0)),
 ]
 
 
@@ -733,6 +867,31 @@ P12_CASES = [
     ("resolve_hash_unknown_returns_none", lambda: loop.resolve_hash("missing_hash", Trajectory()) is None),
 ]
 
+P12_CASES += [
+    ("collect_clarify_frontier_merges_current_and_active", lambda: (lambda comp, gap1, gap2: (
+        comp.ledger.push_origin(gap1, "c1"),
+        comp.ledger.push_origin(gap2, "c2"),
+        len(execution_engine_module._collect_clarify_frontier(comp, gap1, current_turn=0)) == 2,
+    )[2])(Compiler(Trajectory()), make_gap("ask one", vocab="clarify_needed", turn_id=0), make_gap("ask two", vocab="clarify_needed", turn_id=0))),
+    ("collect_clarify_frontier_filters_old_turns", lambda: (lambda comp, current_gap, old_gap: (
+        comp.ledger.push_origin(old_gap, "c1"),
+        len(execution_engine_module._collect_clarify_frontier(comp, current_gap, current_turn=2)) == 1,
+    )[1])(Compiler(Trajectory(), current_turn=2), make_gap("current", vocab="clarify_needed", turn_id=2), make_gap("old", vocab="clarify_needed", turn_id=1))),
+    ("build_clarify_frontier_step_merges_refs", lambda: (lambda step: ("blob_a" in step.content_refs and "step_a" in step.step_refs))(execution_engine_module._build_clarify_frontier_step(origin_step=make_step("origin"), merged_gaps=[make_gap("q1", content_refs=["blob_a"], step_refs=["step_a"], vocab="clarify_needed")], chain_id="c1"))),
+    ("build_clarify_frontier_step_desc_prefix", lambda: execution_engine_module._build_clarify_frontier_step(origin_step=make_step("origin"), merged_gaps=[make_gap("q1", vocab="clarify_needed")], chain_id="c1").desc.startswith("clarify frontier:")),
+    ("clone_gap_for_carry_forward_preserves_vocab", lambda: loop._clone_gap_for_carry_forward(make_gap("persist", vocab="reason_needed"), current_turn=5).vocab == "reason_needed"),
+    ("clone_gap_for_carry_forward_sets_new_turn", lambda: loop._clone_gap_for_carry_forward(make_gap("persist", vocab="reason_needed"), current_turn=5).turn_id == 5),
+    ("forced_synth_frontier_none_when_empty", lambda: loop._persist_forced_synth_frontier(Trajectory(), Compiler(Trajectory()), make_step("origin"), 0) is None),
+    ("forced_synth_frontier_marks_gaps_carry_forward", lambda: (lambda ctx: (
+        loop._persist_forced_synth_frontier(ctx.traj, ctx.compiler, ctx.step, 3).gaps[0].carry_forward
+    ))(build_origin_context())),
+    ("dangling_gaps_ignore_clarify_even_if_marked", lambda: (lambda traj, gap: (
+        setattr(gap, "carry_forward", True),
+        traj.append(make_step("s", gaps=[gap])),
+        len(loop._find_dangling_gaps(traj)) == 0,
+    )[2])(Trajectory(), make_gap("clarify", vocab="clarify_needed"))),
+]
+
 
 P13_CASES = [
     ("max_chain_depth_constant", lambda: MAX_CHAIN_DEPTH == 15),
@@ -755,6 +914,19 @@ P13_CASES = [
     ("extract_st_steps_derives_relevance_when_missing", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "observe", "gaps": [{}]}]})[0]["relevance"] == 1.0),
     ("extract_st_steps_slugifies_action", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "Observe target file", "gaps": []}]})[0]["action"] == "observe_target_file"),
     ("compose_over_construction_keeps_codon_steps_short", lambda: all(skill(name).step_count() <= 4 for name in ("reason", "await", "commit", "reprogramme"))),
+]
+
+P13_CASES += [
+    ("root_skills_only_admin", lambda: sorted(path.name for path in SKILLS_DIR.glob("*.st")) == ["admin.st"]),
+    ("action_tree_contains_curated_actions", lambda: sorted(path.name for path in (SKILLS_DIR / "actions").glob("*.st")) == ["architect.st", "debug.st", "hash_edit.st"]),
+    ("entity_tree_contains_runtime_entities", lambda: sorted(path.name for path in (SKILLS_DIR / "entities").glob("*.st")) == ["clinton.st", "cors_ui.st", "top_rate_estates_ltd.st"]),
+    ("codon_tree_contains_bridge_and_spec", lambda: sorted(path.name for path in (SKILLS_DIR / "codons").glob("*.st")) == ["await.st", "commit.st", "commitment_chain_construction_spec.st", "reason.st", "reprogramme.st"]),
+    ("loader_treats_admin_as_entity", lambda: skill("admin").artifact_kind == "entity"),
+    ("loader_treats_hash_edit_as_action", lambda: skill("hash_edit").artifact_kind == "action"),
+    ("loader_treats_reason_as_codon", lambda: skill("reason").artifact_kind == "codon"),
+    ("loader_treats_chain_spec_as_entity_even_in_codon_tree", lambda: skill("commitment_chain_construction_spec").artifact_kind == "entity"),
+    ("policy_marks_codon_tree_immutable", lambda: loop._match_policy("skills/codons/reason.st", loop._load_tree_policy())["immutable"] is True),
+    ("policy_marks_action_tree_action_editor", lambda: loop._match_policy("skills/actions/debug.st", loop._load_tree_policy())["reprogramme_mode"] == "action_editor"),
 ]
 
 
