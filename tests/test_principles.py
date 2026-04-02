@@ -404,6 +404,12 @@ P5_CASES = [
         {"action": "load_preferences", "desc": "surface preferences context for person", "resolve": ["preferences"], "post_diff": False},
     ]),
     ("validate_st_accepts_pure_entity", lambda: st_builder_module.validate_st({"name": "entity", "desc": "d", "steps": []}) == []),
+    ("validate_st_rejects_semantic_entity_without_context_steps", lambda: any(
+        "context-injection steps" in e
+        for e in st_builder_module.validate_st(
+            {"name": "entity", "desc": "d", "identity": {"name": "Ada"}, "steps": []}
+        )
+    )),
     ("validate_st_rejects_invalid_trigger", lambda: any("invalid trigger" in e for e in st_builder_module.validate_st({"name": "x", "desc": "d", "trigger": "bad", "steps": []}))),
     ("builder_preserves_explicit_vocab", lambda: st_builder_module.build_st({"name": "x", "desc": "d", "steps": [{"action": "inspect", "desc": "inspect file", "vocab": "hash_resolve_needed"}]})["steps"][0]["vocab"] == "hash_resolve_needed"),
     ("validate_st_rejects_unknown_runtime_vocab", lambda: any("invalid runtime vocab" in e for e in st_builder_module.validate_st({"name": "x", "desc": "d", "steps": [{"action": "inspect", "desc": "inspect file", "vocab": "research_needed"}]}))),

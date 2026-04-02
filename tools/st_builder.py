@@ -116,6 +116,13 @@ def default_entity_steps(data: dict) -> list[dict]:
     return steps
 
 
+def has_entity_semantics(data: dict) -> bool:
+    return any(
+        field in data and data.get(field) not in ({}, [], "", None)
+        for field in ENTITY_STEP_FIELDS
+    )
+
+
 # ── Schema validation ────────────────────────────────────────────────────
 
 VALID_TRIGGERS = {"manual", "every_turn", "on_mention"}
@@ -163,6 +170,9 @@ def validate_st(data: dict,
 
     if artifact_kind in {"action_update", "hybrid_update"} and not existing_ref:
         errors.append(f"{artifact_kind} requires 'existing_ref' or 'existing_action_ref'")
+
+    if artifact_kind == "entity" and has_entity_semantics(data) and not data.get("steps"):
+        errors.append("entity packages with semantic content require deterministic context-injection steps")
 
     if output_dir and existing_ref and not find_existing_skill_path(existing_ref, output_dir):
         errors.append(f"existing_ref not found: {existing_ref}")
