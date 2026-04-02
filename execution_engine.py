@@ -821,40 +821,38 @@ def execute_iteration(
         print("  → reason (start codon)")
         reason_skill = registry.resolve_by_name("reason")
         if reason_skill:
-            step_result = me.activate_chain_reference(
-                config.chains_dir,
-                reason_skill.hash,
-                "background",
-                gap,
-                origin_step,
-                entry.chain_id,
-                registry,
-                compiler,
-                trajectory,
-                current_turn,
-                task_prompt=gap.desc,
+            _inject_reason_parent_context(session=session, reason_skill=reason_skill)
+            context_step = hooks.emit_reason_skill(reason_skill, gap, origin_step, entry.chain_id)
+            trajectory.append(context_step)
+            compiler.add_step_to_chain(context_step.hash)
+        if _should_inject_chain_spec_for_reason(gap):
+            _inject_chain_spec(
+                session=session,
+                registry=registry,
+                trajectory=trajectory,
+                hooks=hooks,
+                heading="## Chain Construction Spec",
             )
-
-            if step_result:
-                trajectory.append(step_result)
-                if step_result.gaps:
-                    compiler.emit(step_result)
-                compiler.add_step_to_chain(step_result.hash)
-                compiler.resolve_current_gap(gap.hash)
+        if resolved_data:
+            session.inject(f"## Context\n{resolved_data}")
+        raw = session.call(
+            f"Reason inline about: gap:{gap.hash} \"{gap.desc}\".\n"
+            "Choose the next lawful move in the current turn.\n"
+            "- If judgment is enough, emit the next clarified gap(s) or no gaps.\n"
+            "- If new reusable workflow structure is needed, author the concrete creation/update gap(s) needed to actualize it.\n"
+            "- If an existing workflow should be triggered, emit the activation gap(s) for that path.\n"
+            "Keep reasoning stateful and current-turn; do not defer by scheduling background work unless a later gap explicitly does so."
+        )
+        step_result, child_gaps = hooks.parse_step_output(
+            raw,
+            step_refs=[origin_step.hash],
+            content_refs=gap.content_refs,
+            chain_id=entry.chain_id,
+        )
+        if child_gaps:
+            compiler.emit(step_result)
         else:
-            if resolved_data:
-                session.inject(f"## Context\n{resolved_data}")
-            raw = session.call(f"Reason about: gap:{gap.hash} \"{gap.desc}\". Articulate your reasoning chain.")
-            step_result, child_gaps = hooks.parse_step_output(
-                raw,
-                step_refs=[origin_step.hash],
-                content_refs=gap.content_refs,
-                chain_id=entry.chain_id,
-            )
-            if child_gaps:
-                compiler.emit(step_result)
-            else:
-                compiler.resolve_current_gap(gap.hash)
+            compiler.resolve_current_gap(gap.hash)
 
     elif vocab == "await_needed":
         print("  → await (pause codon)")

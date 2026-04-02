@@ -519,10 +519,10 @@ P5_CASES = [
     ("render_identity_pending_bootstrap_shows_initiation", lambda: "## Initiation" in render_bootstrap_identity()),
     ("reprogramme_skill_trigger_is_vocab", lambda: skill("reprogramme").trigger == "on_vocab:reprogramme_needed"),
     ("reprogramme_skill_all_steps_loaded", lambda: skill("reprogramme").step_count() == 3),
-    ("reason_skill_mentions_background_subagent", lambda: "background sub-agent" in skill_data("reason")["desc"].lower()),
+    ("reason_skill_mentions_inline_current_turn", lambda: "inline within the current turn" in skill_data("reason")["desc"].lower()),
     ("reason_skill_forbids_clarify", lambda: "do not use clarify_needed" in skill_data("reason")["desc"].lower()),
-    ("reason_skill_forbids_workflow_building", lambda: "not for activating or building workflows" in skill_data("reason")["desc"].lower()),
-    ("reason_skill_mentions_background_work", lambda: "background" in skill_data("reason")["desc"].lower()),
+    ("reason_skill_mentions_stateful_judgment", lambda: "stateful judgment" in skill_data("reason")["desc"].lower()),
+    ("reason_skill_rejects_passive_deferral", lambda: "not as a passive deferral" in skill_data("reason")["desc"].lower()),
     ("reprogramme_skill_says_it_does_not_own_judgment", lambda: "does not own the judgment layer" in skill_data("reprogramme")["desc"].lower()),
     ("pre_diff_prompt_routes_inferred_preferences_to_reason_first", lambda: "use reason_needed first to judge whether it should become semantic state" in loop.PRE_DIFF_SYSTEM.lower()),
     ("pre_diff_prompt_says_stable_preferences_are_not_no_gap", lambda: "stable user-model updates are not no-gap" in loop.PRE_DIFF_SYSTEM.lower()),
@@ -1831,17 +1831,21 @@ def test_p12_persist_forced_synth_frontier_clones_active_ledger_gaps():
     assert forced.gaps[0].turn_id == 3
 
 
-def test_p12_reason_needed_schedules_background_reason_without_inline_call():
+def test_p12_reason_needed_runs_inline_and_emits_child_gaps():
     class FakeSession:
         def __init__(self):
             self.calls = 0
+            self.injected = []
 
         def inject(self, content: str, role: str = "user"):
-            pass
+            self.injected.append(content)
 
         def call(self, user_content: str = None) -> str:
             self.calls += 1
-            return ""
+            return (
+                "Inline reasoning complete.\n"
+                '{"gaps":[{"desc":"create research workflow artifact","vocab":"content_needed","relevance":0.9,"confidence":0.9}]}'
+            )
 
     traj = Trajectory()
     compiler = Compiler(traj)
@@ -1854,7 +1858,7 @@ def test_p12_reason_needed_schedules_background_reason_without_inline_call():
         resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
         execute_tool=lambda tool, params: ("", 0),
         auto_commit=lambda message, paths=None: (None, None),
-        parse_step_output=lambda raw, step_refs, content_refs, chain_id=None: (make_step("noop"), []),
+        parse_step_output=loop._parse_step_output,
         extract_json=lambda raw: None,
         extract_command=lambda raw: None,
         extract_written_path=lambda output: None,
@@ -1890,10 +1894,11 @@ def test_p12_reason_needed_schedules_background_reason_without_inline_call():
     )
 
     assert outcome.step_result is not None
-    assert outcome.step_result.desc.startswith(f"scheduled background chain:{skill('reason').hash}")
-    assert outcome.step_result.content_refs[0] == skill("reason").hash
-    assert session.calls == 0
-    assert compiler.needs_heartbeat() is True
+    assert outcome.step_result.desc.startswith("Inline reasoning complete.")
+    assert session.calls == 1
+    assert compiler.needs_heartbeat() is False
+    assert any("Delegation Preferences" in content for content in session.injected)
+    assert compiler.ledger.stack[-1].gap.vocab == "content_needed"
 
 
 def test_p12_reprogramme_failure_does_not_commit_without_written_path():
