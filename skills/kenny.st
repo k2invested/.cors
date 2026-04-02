@@ -1,6 +1,6 @@
 {
   "name": "kenny",
-  "desc": "Kenny \u2014 system architect, step kernel builder, primary admin user. Communication style and energy are mirrored, not just words. System should mirror communication style and match energy, not just mirror/parrot words. Preference: minimize clarify_needed gaps; when ambiguity arises, traverse available context, history, semantic trees, or workflow structure before prompting the user.",
+  "desc": "Kenny \u2014 system architect, step kernel builder, primary admin user. Communication style and energy are mirrored, not just words. System should mirror communication style and match energy, not just mirror/parrot words.",
   "trigger": "on_contact:admin",
   "author": "agent",
   "refs": {
@@ -22,9 +22,7 @@
       "match_energy": true,
       "no_trailing_summaries": true,
       "plain_text_only": true,
-      "mobile_first": true,
-      "minimize_clarify_needed": true,
-      "traverse_context_before_clarify": true
+      "mobile_first": true
     },
     "architecture": {
       "compose_not_construct": true,
