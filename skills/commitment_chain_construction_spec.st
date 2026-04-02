@@ -1,6 +1,6 @@
 {
   "name": "commitment_chain_construction_spec",
-  "desc": "Semantic state for the commitment chain construction specification: when planning, write the commitment chain as a semantic tree following the construction spec. Each step encodes full gap configuration (action, desc, vocab, relevance, post_diff, content_refs, step_refs). Embed existing .st files by placing their hash in a step's content_refs\u2014gaps will disperse depth-first when resolved. Embed await_needed after any background trigger. Write new .st embeddings inline as steps with all 7 gap axes specified. Build layers back-to-front: leaf chains first, then mid-level chains that adopt them, then top-level orchestration. The resulting tree is directly extractable to .st via chain_to_st. If refining: hash_edit updates the reasoning chain. If manifesting: compose agent trigger + inject commitment gaps + trailing commit_needed. If heartbeat: emit close/revisit/refine gaps. If reorienting: reconstruct the rejected chain with corrections.",
+  "desc": "Semantic state for the commitment chain construction specification: when planning, write the commitment chain as a semantic tree following this spec. Each step encodes full gap configuration. Embed existing .st files by hash in content_refs. Build layers back-to-front: leaf chains first, then mid-level, then top-level orchestration. Resulting tree is directly extractable to .st via chain_to_st.",
   "trigger": "manual",
   "author": "agent",
   "refs": {
