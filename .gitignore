@@ -7,3 +7,4 @@ trajectory.json
 chains.json
 .env
 .env.*
+bot.log
