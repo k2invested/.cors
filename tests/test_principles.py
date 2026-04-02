@@ -480,8 +480,9 @@ P5_CASES = [
     ("render_identity_has_access_rules_when_present", lambda: "## Access Rules" in loop._render_identity(skill("admin")) if "access_rules" in skill_data("admin") else True),
     ("reprogramme_skill_trigger_is_vocab", lambda: skill("reprogramme").trigger == "on_vocab:reprogramme_needed"),
     ("reprogramme_skill_all_steps_loaded", lambda: skill("reprogramme").step_count() == 3),
-    ("reason_skill_mentions_persistence_judgment", lambda: "persistence" in skill_data("reason")["desc"].lower()),
-    ("reason_skill_mentions_delegation_preferences", lambda: "delegation operating preferences" in skill_data("reason")["desc"].lower()),
+    ("reason_skill_mentions_background_subagent", lambda: "background sub-agent" in skill_data("reason")["desc"].lower()),
+    ("reason_skill_forbids_clarify", lambda: "do not use clarify_needed" in skill_data("reason")["desc"].lower()),
+    ("reason_skill_forbids_workflow_building", lambda: "not for activating or building workflows" in skill_data("reason")["desc"].lower()),
     ("reason_skill_mentions_background_work", lambda: "background" in skill_data("reason")["desc"].lower()),
     ("reprogramme_skill_says_it_does_not_own_judgment", lambda: "does not own the judgment layer" in skill_data("reprogramme")["desc"].lower()),
     ("pre_diff_prompt_routes_inferred_preferences_to_reason_first", lambda: "use reason_needed first to judge whether it should become semantic state" in loop.PRE_DIFF_SYSTEM.lower()),
@@ -644,7 +645,7 @@ P7_CASES = [
     ("hash_edit_has_flexible_steps_again", lambda: any(s.post_diff for s in skill("hash_edit").steps)),
     ("hash_edit_has_deterministic_steps_again", lambda: any(not s.post_diff for s in skill("hash_edit").steps)),
     ("reason_first_step_deterministic", lambda: skill("reason").steps[0].post_diff is False),
-    ("reason_later_steps_flexible", lambda: all(s.post_diff for s in skill("reason").steps[1:])),
+    ("reason_skill_single_policy_step", lambda: len(skill("reason").steps) == 1),
     ("await_first_two_deterministic", lambda: all(not s.post_diff for s in skill("await").steps[:2])),
     ("await_last_step_flexible", lambda: skill("await").steps[-1].post_diff is True),
     ("commit_first_step_deterministic", lambda: skill("commit").steps[0].post_diff is False),
@@ -762,8 +763,7 @@ P9_CASES += [
 P10_CASES = [
     ("reason_trigger", lambda: skill("reason").trigger == "on_vocab:reason_needed"),
     ("reason_step1_observe", lambda: skill("reason").steps[0].vocab == "hash_resolve_needed"),
-    ("reason_step2_flexible", lambda: skill("reason").steps[1].post_diff is True),
-    ("reason_relevance_descends", lambda: [s["relevance"] for s in skill_data("reason")["steps"]] == [1.0, 0.9, 0.8, 0.7]),
+    ("reason_relevance_descends", lambda: [s["relevance"] for s in skill_data("reason")["steps"]] == [1.0]),
     ("await_trigger", lambda: skill("await").trigger == "on_vocab:await_needed"),
     ("await_wait_step_observe", lambda: skill("await").steps[0].vocab == "hash_resolve_needed"),
     ("await_last_step_flexible", lambda: skill("await").steps[-1].post_diff is True),
@@ -781,7 +781,7 @@ P10_CASES = [
     )[2])(Trajectory(), make_gap("active"))),
     ("dangling_gaps_ignore_dormant", lambda: len(loop._find_dangling_gaps((lambda traj: (traj.append(make_step("s", gaps=[make_gap("d", dormant=True)])), traj)[1])(Trajectory()))) == 0),
     ("dangling_gaps_ignore_resolved", lambda: len(loop._find_dangling_gaps((lambda traj: (traj.append(make_step("s", gaps=[make_gap("r", resolved=True)])), traj)[1])(Trajectory()))) == 0),
-    ("reason_steps_count", lambda: skill("reason").step_count() == 4),
+    ("reason_steps_count", lambda: skill("reason").step_count() == 1),
     ("await_steps_count", lambda: skill("await").step_count() == 3),
     ("commit_steps_count", lambda: skill("commit").step_count() == 3),
 ]
@@ -1599,6 +1599,71 @@ def test_p12_persist_forced_synth_frontier_clones_active_ledger_gaps():
     assert forced.gaps[0].carry_forward is True
     assert forced.gaps[0].desc == "pending"
     assert forced.gaps[0].turn_id == 3
+
+
+def test_p12_reason_needed_schedules_background_reason_without_inline_call():
+    class FakeSession:
+        def __init__(self):
+            self.calls = 0
+
+        def inject(self, content: str, role: str = "user"):
+            pass
+
+        def call(self, user_content: str = None) -> str:
+            self.calls += 1
+            return ""
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("design the next clean research plan", vocab="reason_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=lambda raw, step_refs, content_refs, chain_id=None: (make_step("noop"), []),
+        extract_json=lambda raw: None,
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: None,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert outcome.step_result.desc.startswith(f"scheduled background chain:{skill('reason').hash}")
+    assert outcome.step_result.content_refs[0] == skill("reason").hash
+    assert session.calls == 0
+    assert compiler.needs_heartbeat() is True
 
 
 def test_p12_reprogramme_failure_does_not_commit_without_written_path():

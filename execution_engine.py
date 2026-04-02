@@ -285,12 +285,7 @@ def _inject_chain_spec(
 def _inject_reason_parent_context(*, session: Any, reason_skill: Any) -> None:
     session.inject(
         "## Delegation Preferences\n"
-        f"{reason_skill.desc}\n\n"
-        "Rules:\n"
-        "- reason_needed is background only\n"
-        "- return one mode only\n"
-        "- keep the handoff concise\n"
-        "- use available context before clarifying\n"
+        f"{reason_skill.desc}\n"
     )
 
 
@@ -826,154 +821,19 @@ def execute_iteration(
         print("  → reason (start codon)")
         reason_skill = registry.resolve_by_name("reason")
         if reason_skill:
-            session.inject(f"## Reasoning activation: {gap.desc}")
-            if resolved_data:
-                session.inject(f"## Existing context\n{resolved_data}")
-            session.inject(f"## Step Network\n{hooks.render_step_network(registry)}")
-            _inject_reason_parent_context(session=session, reason_skill=reason_skill)
-            if _should_inject_chain_spec_for_reason(gap):
-                _inject_chain_spec(
-                    session=session,
-                    registry=registry,
-                    trajectory=trajectory,
-                    hooks=hooks,
-                    heading="## Chain Construction Spec",
-                )
-            authoring_required = _reason_requires_workflow_authoring(gap, registry)
-            raw = session.call(
-                f"Task: {gap.desc}\n\n"
-                "Return JSON only.\n"
-                "Choose one mode.\n\n"
-                "1. Submit a workflow skeleton:\n"
-                '{"mode":"submit_skeleton","activation":"background","skeleton":{...skeleton.v1...}}\n\n'
-                "2. Delegate an existing workflow by hash:\n"
-                '{"mode":"activate_existing_workflow","workflow_ref":"hash","activation":"background","prompt":"concise task handoff"}\n\n'
-                "Use submit_skeleton for new reusable workflows.\n"
-                "Use activate_existing_workflow when an existing package should handle the task.\n"
-                "New workflow origination requires submit_skeleton.\n"
-                "If you submit a skeleton, it must be valid skeleton.v1."
+            step_result = me.activate_chain_reference(
+                config.chains_dir,
+                reason_skill.hash,
+                "background",
+                gap,
+                origin_step,
+                entry.chain_id,
+                registry,
+                compiler,
+                trajectory,
+                current_turn,
+                task_prompt=gap.desc,
             )
-            intent = hooks.extract_json(raw) or {}
-            mode = intent.get("mode", "")
-
-            if authoring_required and mode != "submit_skeleton":
-                _emit_rogue_with_diagnosis(
-                    desc=f"FAILED: reason path mismatch for {gap.desc}",
-                    origin_step=origin_step,
-                    gap=gap,
-                    chain_id=entry.chain_id,
-                    rogue_kind="reason_mode_invalid",
-                    failure_source="reason_needed",
-                    trajectory=trajectory,
-                    compiler=compiler,
-                    failure_detail="new workflow origination requires submit_skeleton",
-                )
-                compiler.resolve_current_gap(gap.hash)
-                return ExecutionOutcome(control="continue")
-
-            if mode == "submit_skeleton":
-                skeleton = intent.get("skeleton")
-                if isinstance(skeleton, dict) and skeleton.get("version") == "skeleton.v1":
-                    output, code = hooks.execute_tool("tools/skeleton_compile.py", skeleton)
-                    if code == 0:
-                        compile_result = json.loads(output)
-                        stepchain = compile_result["stepchain"]
-                        package_hash = me.persist_chain_package(config.chains_dir, stepchain)
-                        activation = "background"
-                        session.inject(
-                            "## Compiled chain package\n"
-                            f"{me.render_chain_package(stepchain, package_hash)}"
-                        )
-                        step_result = me.activate_chain_reference(
-                            config.chains_dir,
-                            package_hash,
-                            activation,
-                            gap,
-                            origin_step,
-                            entry.chain_id,
-                            registry,
-                            compiler,
-                            trajectory,
-                            current_turn,
-                        )
-                    else:
-                        session.inject(f"## Skeleton compile errors\n{output}")
-                        _emit_rogue_with_diagnosis(
-                            desc=f"FAILED: skeleton compile for {gap.desc}",
-                            origin_step=origin_step,
-                            gap=gap,
-                            chain_id=entry.chain_id,
-                            rogue_kind="compile_invalid",
-                            failure_source="skeleton_compile",
-                            trajectory=trajectory,
-                            compiler=compiler,
-                            failure_detail=output[:500],
-                        )
-                        compiler.resolve_current_gap(gap.hash)
-                        return ExecutionOutcome(control="continue")
-                else:
-                    _emit_rogue_with_diagnosis(
-                        desc=f"FAILED: invalid skeleton submission for {gap.desc}",
-                        origin_step=origin_step,
-                        gap=gap,
-                        chain_id=entry.chain_id,
-                        rogue_kind="skeleton_invalid",
-                        failure_source="reason_needed",
-                        trajectory=trajectory,
-                        compiler=compiler,
-                        failure_detail="missing or invalid skeleton.v1 payload",
-                    )
-                    compiler.resolve_current_gap(gap.hash)
-                    return ExecutionOutcome(control="continue")
-
-            elif mode == "activate_existing_workflow":
-                chain_ref = intent.get("workflow_ref") or intent.get("chain_ref")
-                activation = "background"
-                task_prompt = intent.get("prompt")
-                if isinstance(chain_ref, str):
-                    step_result = me.activate_chain_reference(
-                        config.chains_dir,
-                        chain_ref,
-                        activation,
-                        gap,
-                        origin_step,
-                        entry.chain_id,
-                        registry,
-                        compiler,
-                        trajectory,
-                        current_turn,
-                        task_prompt=task_prompt if isinstance(task_prompt, str) else None,
-                        embedded=False,
-                    )
-                if not step_result:
-                    _emit_rogue_with_diagnosis(
-                        desc=f"FAILED: unknown workflow activation for {gap.desc}",
-                        origin_step=origin_step,
-                        gap=gap,
-                        chain_id=entry.chain_id,
-                        rogue_kind="workflow_missing",
-                        failure_source="reason_needed",
-                        trajectory=trajectory,
-                        compiler=compiler,
-                        failure_detail="missing or unknown workflow_ref",
-                    )
-                    compiler.resolve_current_gap(gap.hash)
-                    return ExecutionOutcome(control="continue")
-            else:
-                reason_prompt = str(intent.get("prompt") or intent.get("desc") or gap.desc)
-                step_result = me.activate_chain_reference(
-                    config.chains_dir,
-                    reason_skill.hash,
-                    "background",
-                    gap,
-                    origin_step,
-                    entry.chain_id,
-                    registry,
-                    compiler,
-                    trajectory,
-                    current_turn,
-                    task_prompt=reason_prompt,
-                )
 
             if step_result:
                 trajectory.append(step_result)
