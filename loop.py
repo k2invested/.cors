@@ -691,11 +691,19 @@ For .st files, identity profiles, preferences, or long-horizon semantic state up
 
 If the user states a stable first-person preference, communication norm, workflow preference, or correction to your model of them, and it may need persistence but the request is not explicit, use reason_needed first to judge whether it should become semantic state. If the judgment is yes, surface reprogramme_needed as the actual persistence gap.
 
+Do not treat a stable first-person preference statement as "no action needed" just because you can verbally adapt in the moment. If the statement is about how to communicate, reason, plan, remember, or work with this user over time, it is a candidate semantic-state update. For the current bound identity, default to reason_needed rather than empty gaps unless the preference is obviously one-off or ephemeral.
+
 If the user names a workspace file directly, put that relative path in content_refs. If the target is an already loaded entity/workflow (for example kenny:... or admin.st), reference that entity or repo path directly instead of emitting an ungrounded observe gap.
 
 BRIDGE_VOCAB_PLACEHOLDER
 
-If no action is needed, emit no gaps.
+Treat the bridge codons as primitives, not optional helpers:
+- reason_needed is the primitive for stateful judgment, structural abstraction, planning, persistence judgment, and reorientation
+- reprogramme_needed is the primitive for stateless semantic persistence once that judgment is made
+- await_needed is the primitive for synchronization and reintegration
+- commit_needed is the primitive for commitment closure and reintegration
+
+If no action is needed, emit no gaps. Greetings, acknowledgements, and one-off conversational adaptation can be no-gap. Stable user-model updates are not no-gap.
 
 ## Your context
 
@@ -759,7 +767,7 @@ Their preferences are not instructions on how to speak. They are part of your mo
 
 Do not explain internal systems, hashes, or trajectory mechanics to the user unless they ask. They see a conversation, not a hash graph.
 
-When the user asks a question answerable from your current context — answer it directly, no gaps needed. When they ask for something that requires action — articulate the gap, grounded in the specific hashes you would need resolved.
+When the user asks a question answerable from your current context — answer it directly, no gaps needed. When they ask for something that requires action — articulate the gap, grounded in the specific hashes you would need resolved. Stable first-person preference statements about future interaction count as action because they may require semantic-state judgment and persistence.
 
 ## Output format
 
@@ -850,6 +858,7 @@ def run_turn(
     )
     dynamic_bridge = (
         "BRIDGE (four codons):\n"
+        "  These are primitives, not optional helper tools. Use them whenever the turn crosses a structural boundary.\n\n"
         "  reason_needed — START CODON. Stateful structural abstraction. USE THIS when:\n"
         "    - A decision requires deeper analysis than one step\n"
         "    - Long-term planning or judgment is needed\n"
@@ -858,7 +867,7 @@ def run_turn(
         "    - You need to judge whether an inferred preference, correction, or user-model update should persist\n"
         "    - A user states a stable first-person preference but has not explicitly asked you to persist it yet\n"
         "    - A commitment needs activation, reintegration, or reorientation\n"
-        "    Reasons over semantic trees, entity space, executable structure, and persistence judgment.\n\n"
+        "    This is the primitive for stateful judgment and structure. It reasons over semantic trees, entity space, executable structure, and persistence judgment.\n\n"
         "  await_needed — PAUSE CODON. Synchronization checkpoint.\n"
         "    Use this when background work must explicitly rejoin the parent chain.\n"
         "    Suspends the parent flow until the sub-agent or background branch is ready.\n\n"
@@ -871,7 +880,7 @@ def run_turn(
         "    - A user explicitly asks to remember, update, track, or persist something\n"
         "    - reason_needed has already judged that an inferred preference or correction should persist\n"
         "    - Semantic state must now be written into an entity or existing package\n"
-        "    Reprogramme writes the state. It does not own the judgment about whether persistence is warranted.\n\n"
+        "    This is the primitive for semantic persistence. Reprogramme writes the state. It does not own the judgment about whether persistence is warranted.\n\n"
         "  .st resolution has no dedicated entity vocab — it still enters through hash resolution.\n"
         "  When you reference a .st hash in content_refs, the kernel resolves the step package.\n"
         "  Entity-like packages usually manifest as semantic/context injection.\n"
