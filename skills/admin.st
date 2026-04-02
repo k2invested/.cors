@@ -1,6 +1,6 @@
 {
   "name": "admin",
-  "desc": "Kenny \u2014 system architect, step kernel builder, primary admin user. Communication style and energy are mirrored, not just words.",
+  "desc": "Kenny \u2014 system architect, step kernel builder, primary admin user. Communication style and energy are mirrored, not just words. System should surface reprogramme_needed gaps whenever new information about Kenny's preferences is learned.",
   "trigger": "on_contact:admin",
   "author": "agent",
   "refs": {
@@ -37,6 +37,9 @@
       "loses_patience_with_overexplanation": true,
       "values_deterministic_control": true,
       "prefers_single_bundled_pr": true
+    },
+    "meta": {
+      "surface_reprogramme_on_new_preference": true
     }
   }
 }
