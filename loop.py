@@ -132,8 +132,9 @@ def git_diff(from_ref: str, to_ref: str = "HEAD") -> str:
 TREE_POLICY_FILE = CORS_ROOT / "tree_policy.json"
 DEFAULT_TREE_POLICY = {
     "skills/codons/":   {"immutable": True, "on_reject": "reason_needed"},
-    "skills/entities/": {"on_mutate": "reprogramme_needed"},
-    "skills/":          {"on_mutate": "reprogramme_needed"},
+    "skills/admin.st":  {"on_mutate": "reprogramme_needed", "reprogramme_mode": "entity_editor"},
+    "skills/entities/": {"on_mutate": "reprogramme_needed", "reprogramme_mode": "entity_editor"},
+    "skills/":          {"on_mutate": "reprogramme_needed", "reprogramme_mode": "action_editor"},
     "ui_output/":       {"on_mutate": "stitch_needed"},
     "logs/":            {"immutable": True},
     "store/":           {"immutable": True},
@@ -150,7 +151,16 @@ def _load_tree_policy() -> dict:
     """Load tree policy from JSON file, falling back to defaults."""
     try:
         with open(TREE_POLICY_FILE) as f:
-            return json.load(f)
+            loaded = json.load(f)
+            if not isinstance(loaded, dict):
+                return DEFAULT_TREE_POLICY
+            merged = {k: dict(v) for k, v in DEFAULT_TREE_POLICY.items()}
+            for path, rule in loaded.items():
+                if isinstance(rule, dict) and isinstance(merged.get(path), dict):
+                    merged[path] = {**merged[path], **rule}
+                else:
+                    merged[path] = rule
+            return merged
     except (FileNotFoundError, json.JSONDecodeError):
         return DEFAULT_TREE_POLICY
 

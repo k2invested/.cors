@@ -347,7 +347,10 @@ P3_CASES = [
     ("priority_await_before_commit", lambda: vocab_priority("await_needed") < vocab_priority("commit_needed")),
     ("priority_commit_before_reprogramme", lambda: vocab_priority("commit_needed") < vocab_priority("reprogramme_needed")),
     ("tree_policy_skills_reroutes_reprogramme", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
+    ("tree_policy_admin_sets_entity_editor_mode", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["reprogramme_mode"] == "entity_editor"),
     ("tree_policy_entities_reroutes_reprogramme", lambda: loop._match_policy("skills/entities/clinton.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
+    ("tree_policy_entities_set_entity_editor_mode", lambda: loop._match_policy("skills/entities/clinton.st", loop._load_tree_policy())["reprogramme_mode"] == "entity_editor"),
+    ("tree_policy_skills_set_action_editor_mode", lambda: loop._match_policy("skills/hash_edit.st", loop._load_tree_policy())["reprogramme_mode"] == "action_editor"),
     ("tree_policy_exact_match_compile_immutable", lambda: loop._match_policy("compile.py", loop._load_tree_policy())["immutable"] is True),
     ("tree_policy_longest_prefix_wins", lambda: loop._match_policy("skills/codons/reason.st", loop._load_tree_policy())["on_reject"] == "reason_needed"),
 ]
@@ -1327,6 +1330,47 @@ def test_p12_reprogramme_failure_does_not_commit_without_written_path():
     assert commit_calls == []
     assert any("ST BUILDER FAILED" in injected for injected in session.injected)
     assert outcome.step_result.assessment == ["builder-error: existing_ref not found: kenny:47824f077e7d", "  validator: ok"]
+
+
+def test_p12_entity_tree_reprogramme_mode_coerces_frame_to_entity():
+    frame = {
+        "version": "semantic_skeleton.v1",
+        "artifact": {"kind": "hybrid", "protected_kind": "action"},
+        "name": "clinton",
+        "root": "phase_root",
+        "phases": [{"id": "phase_root"}],
+        "closure": {"success": {}},
+        "semantics": {"identity": {"role": "developer"}},
+    }
+
+    coerced = execution_engine_module._coerce_semantic_frame_for_mode(frame, "entity_editor")
+
+    assert coerced is not None
+    assert coerced["artifact"]["kind"] == "entity"
+    assert coerced["artifact"]["protected_kind"] == "entity"
+    assert "root" not in coerced
+    assert "phases" not in coerced
+    assert "closure" not in coerced
+
+
+def test_p12_action_tree_reprogramme_mode_preserves_flow_fields():
+    frame = {
+        "version": "semantic_skeleton.v1",
+        "artifact": {"kind": "hybrid", "protected_kind": "action"},
+        "name": "workflow",
+        "root": "phase_root",
+        "phases": [{"id": "phase_root"}],
+        "closure": {"success": {}},
+    }
+
+    preserved = execution_engine_module._coerce_semantic_frame_for_mode(frame, "action_editor")
+
+    assert preserved is not None
+    assert preserved["artifact"]["kind"] == "hybrid"
+    assert preserved["artifact"]["protected_kind"] == "action"
+    assert preserved["root"] == "phase_root"
+    assert preserved["phases"] == [{"id": "phase_root"}]
+    assert preserved["closure"] == {"success": {}}
 
 
 def test_p12_st_builder_reuses_existing_contact_trigger_path(tmp_path):

@@ -163,6 +163,7 @@ class Gap:
     dormant:     bool = False           # True if below threshold, stored but not acted on
     turn_id:     Optional[int] = None  # which turn created this gap (for cross-turn threshold)
     carry_forward: bool = False        # True when explicitly persisted for cross-turn resume
+    route_mode: Optional[str] = None   # deterministic routing hint for execution branches
 
     @staticmethod
     def create(desc: str,
@@ -203,6 +204,8 @@ class Gap:
             d["dormant"] = True
         if self.carry_forward:
             d["carry_forward"] = True
+        if self.route_mode:
+            d["route_mode"] = self.route_mode
         return d
 
 
@@ -348,6 +351,7 @@ class Step:
                 resolved=g.get("resolved", False),
                 dormant=g.get("dormant", False),
                 carry_forward=g.get("carry_forward", False),
+                route_mode=g.get("route_mode"),
             )
             gaps.append(gap)
 

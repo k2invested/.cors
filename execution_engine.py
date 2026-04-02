@@ -218,6 +218,61 @@ def _entity_target_for_reprogramme(gap: Gap, registry: Any) -> Any | None:
     return None
 
 
+def _reprogramme_mode_for_source(path: str | None) -> str | None:
+    if not path:
+        return None
+    source = Path(path)
+    if source.name == "admin.st" or "entities" in source.parts:
+        return "entity_editor"
+    if source.suffix == ".st" and "skills" in source.parts:
+        return "action_editor"
+    return None
+
+
+def _determine_reprogramme_mode(gap: Gap, target_entity: Any | None, policy: dict) -> str:
+    if gap.route_mode:
+        return gap.route_mode
+    if target_entity is not None:
+        mode = _reprogramme_mode_for_source(getattr(target_entity, "source", None))
+        if mode:
+            return mode
+    for ref in gap.content_refs:
+        rule = None
+        if isinstance(ref, str):
+            if ref in policy:
+                rule = policy[ref]
+            else:
+                best_len = 0
+                for prefix, candidate in policy.items():
+                    if prefix.endswith("/") and ref.startswith(prefix) and len(prefix) > best_len:
+                        rule = candidate
+                        best_len = len(prefix)
+        if rule and isinstance(rule, dict) and rule.get("reprogramme_mode"):
+            return str(rule["reprogramme_mode"])
+        mode = _reprogramme_mode_for_source(ref if isinstance(ref, str) else None)
+        if mode:
+            return mode
+    if ".st" in gap.desc.lower() and "entity" not in gap.desc.lower():
+        return "action_editor"
+    return "entity_editor"
+
+
+def _coerce_semantic_frame_for_mode(frame: dict | None, route_mode: str) -> dict | None:
+    if not isinstance(frame, dict):
+        return frame
+    if route_mode != "entity_editor":
+        return frame
+
+    artifact = dict(frame.get("artifact", {}))
+    artifact["kind"] = "entity"
+    artifact["protected_kind"] = "entity"
+    frame["artifact"] = artifact
+    frame.pop("root", None)
+    frame.pop("phases", None)
+    frame.pop("closure", None)
+    return frame
+
+
 def execute_iteration(
     *,
     entry: Any,
@@ -299,12 +354,16 @@ def execute_iteration(
             rule = hooks.match_policy(ref, policy)
             if rule and rule.get("on_mutate") and rule["on_mutate"] != vocab:
                 reroute_vocab = rule["on_mutate"]
+                if reroute_vocab == "reprogramme_needed" and rule.get("reprogramme_mode"):
+                    gap.route_mode = str(rule["reprogramme_mode"])
                 break
         if not reroute_vocab:
             for path_prefix, rule in policy.items():
                 if rule.get("on_mutate") and path_prefix.rstrip("/") in gap.desc.lower():
                     if rule["on_mutate"] != vocab:
                         reroute_vocab = rule["on_mutate"]
+                        if reroute_vocab == "reprogramme_needed" and rule.get("reprogramme_mode"):
+                            gap.route_mode = str(rule["reprogramme_mode"])
                         break
         if not reroute_vocab and vocab != "reprogramme_needed":
             if any(ref.endswith(".st") or registry.resolve(ref) is not None for ref in gap.content_refs):
@@ -312,8 +371,14 @@ def execute_iteration(
             elif ".st" in gap.desc.lower():
                 reroute_vocab = "reprogramme_needed"
 
+        if reroute_vocab == "reprogramme_needed" and not gap.route_mode:
+            target_skill = _entity_target_for_reprogramme(gap, registry)
+            gap.route_mode = _determine_reprogramme_mode(gap, target_skill, policy)
+
         if reroute_vocab:
             print(f"  → policy auto-route: {vocab} → {reroute_vocab}")
+            if gap.route_mode:
+                print(f"    route_mode: {gap.route_mode}")
             gap.vocab = reroute_vocab
             compiler.ledger.stack.append(entry)
             return ExecutionOutcome(control="continue")
@@ -815,7 +880,9 @@ def execute_iteration(
 
     elif vocab == "reprogramme_needed":
         print(f"  → reprogramme ({vocab})")
+        policy = hooks.load_tree_policy()
         target_entity = _entity_target_for_reprogramme(gap, registry)
+        route_mode = _determine_reprogramme_mode(gap, target_entity, policy)
         entity_data = hooks.resolve_entity(gap.content_refs, registry, trajectory)
         if entity_data:
             session.inject(f"## Existing entity data\n{entity_data}")
@@ -855,13 +922,14 @@ def execute_iteration(
                 existing_ref=target_entity.hash,
             )
         else:
-            inferred_kind = "hybrid" if any(token in gap.desc.lower() for token in ("workflow", "flow", "command", ".st package")) else "entity"
+            inferred_kind = "entity" if route_mode == "entity_editor" else "hybrid"
             frame = st_builder_module.blank_semantic_skeleton(
                 name=(target_entity.name if target_entity is not None else "entity_name"),
                 desc=gap.desc,
                 trigger=(target_entity.trigger if target_entity is not None else "manual"),
                 artifact_kind=inferred_kind,
             )
+        frame = _coerce_semantic_frame_for_mode(frame, route_mode)
         session.inject(
             "## Editable semantic frame\n"
             "Edit this frame in place. Keep structure unless the user explicitly asked to change it.\n"
@@ -878,6 +946,16 @@ def execute_iteration(
                 "- Treat requested preference changes as additive semantic updates, not a license to rewrite the package shape.\n"
                 "- Do not rewrite desc, lineage, or package identity unless the user explicitly asked.\n"
             )
+        route_mode_guidance = (
+            "- This target lives in the admin/entity tree.\n"
+            "- Return an entity frame only.\n"
+            "- Do not include root, phases, or closure.\n"
+            "- Preserve or restore deterministic context-injection steps; do not manifest workflow scaffolding.\n\n"
+            if route_mode == "entity_editor" else
+            "- This target lives in the action/workflow tree.\n"
+            "- Preserve executable or hybrid flow shape.\n"
+            "- root, phases, and closure are allowed when they already belong to the package.\n\n"
+        )
         raw = session.call(
             f"You need to reprogramme your knowledge: gap:{gap.hash} \"{gap.desc}\"\n\n"
             "## Known entities (reference by hash, use as building blocks)\n"
@@ -887,6 +965,9 @@ def execute_iteration(
             "## Edit the semantic frame\n\n"
             "Treat .st as step manifestation, not as plain file content.\n"
             "Your job here is to edit the surfaced semantic frame so the persisted state stays structurally stable over time.\n\n"
+            f"### Deterministic route mode\n"
+            f"- route_mode: {route_mode}\n"
+            f"{route_mode_guidance}"
             "### Structural distinction\n"
             "- entity.st: manifests primarily as semantic/context injection.\n"
             "- action.st: manifests primarily as executable step flow.\n"
@@ -964,6 +1045,7 @@ def execute_iteration(
         if isinstance(intent, dict) and target_entity is not None:
             intent.setdefault("existing_ref", target_entity.hash)
             intent.setdefault("trigger", target_entity.trigger)
+        intent = _coerce_semantic_frame_for_mode(intent, route_mode)
         if hooks.is_reprogramme_intent(intent):
             output, code = hooks.execute_tool("tools/st_builder.py", intent)
             print(f"  st_builder: {output[:150]}")
