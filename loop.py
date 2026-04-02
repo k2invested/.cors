@@ -1030,6 +1030,8 @@ For explicit edit/update requests, do not stop at "need to inspect". Emit the ac
 
 For .st files, identity profiles, preferences, or long-horizon semantic state updates, use reprogramme_needed as the actual update gap. Use hash_edit_needed or script_edit_needed for ordinary workspace file edits.
 
+When a user refers to a person's "profile", default to the semantic entity record in their .st file: identity, preferences, stable context, and other persisted person-model fields. Do not treat "profile" as meaning CV, professional bio, or social profile unless the user explicitly indicates that deliverable.
+
 If the user states a stable first-person preference, communication norm, workflow preference, or correction to your model of them, and it may need persistence but the request is not explicit, use reason_needed first to judge whether it should become semantic state. If the judgment is yes, surface reprogramme_needed as the actual persistence gap.
 
 Do not treat a stable first-person preference statement as "no action needed" just because you can verbally adapt in the moment. If the statement is about how to communicate, reason, plan, remember, or work with this user over time, it is a candidate semantic-state update. For the current bound identity, default to reason_needed rather than empty gaps unless the preference is obviously one-off or ephemeral.
