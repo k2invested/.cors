@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT))
 import compile as compile_module
 import execution_engine as execution_engine_module
 import loop
+import manifest_engine as manifest_engine_module
 from compile import (
     ADMISSION_THRESHOLD,
     BRIDGE_VOCAB,
@@ -481,7 +482,7 @@ P5_CASES = [
     ("reprogramme_skill_all_steps_loaded", lambda: skill("reprogramme").step_count() == 3),
     ("reason_skill_mentions_persistence_judgment", lambda: "persistence" in skill_data("reason")["desc"].lower()),
     ("reason_skill_mentions_parent_context", lambda: "parent reasoning context" in skill_data("reason")["desc"].lower()),
-    ("reason_skill_mentions_justified_decision", lambda: "justified decision" in skill_data("reason")["desc"].lower()),
+    ("reason_skill_mentions_background_delegation", lambda: "background delegation boundary" in skill_data("reason")["desc"].lower()),
     ("reprogramme_skill_says_it_does_not_own_judgment", lambda: "does not own the judgment layer" in skill_data("reprogramme")["desc"].lower()),
     ("pre_diff_prompt_routes_inferred_preferences_to_reason_first", lambda: "use reason_needed first to judge whether it should become semantic state" in loop.PRE_DIFF_SYSTEM.lower()),
     ("pre_diff_prompt_says_stable_preferences_are_not_no_gap", lambda: "stable user-model updates are not no-gap" in loop.PRE_DIFF_SYSTEM.lower()),
@@ -883,8 +884,6 @@ P12_CASES += [
     )[1])(Compiler(Trajectory(), current_turn=2), make_gap("current", vocab="clarify_needed", turn_id=2), make_gap("old", vocab="clarify_needed", turn_id=1))),
     ("build_clarify_frontier_step_merges_refs", lambda: (lambda step: ("blob_a" in step.content_refs and "step_a" in step.step_refs))(execution_engine_module._build_clarify_frontier_step(origin_step=make_step("origin"), merged_gaps=[make_gap("q1", content_refs=["blob_a"], step_refs=["step_a"], vocab="clarify_needed")], chain_id="c1"))),
     ("build_clarify_frontier_step_desc_prefix", lambda: execution_engine_module._build_clarify_frontier_step(origin_step=make_step("origin"), merged_gaps=[make_gap("q1", vocab="clarify_needed")], chain_id="c1").desc.startswith("clarify frontier:")),
-    ("reason_continue_step_persists_decision_in_assessment", lambda: "decision: proceed" in execution_engine_module._build_reason_continue_step(intent={"desc": "judged", "decision": "proceed", "justification": "tree proves it"}, origin_step=make_step("origin"), gap=make_gap("reason about this"), chain_id="c1", current_turn=0).assessment),
-    ("reason_continue_step_links_child_gap_to_reason_step", lambda: (lambda step: step.gaps[0].step_refs[0] == step.hash)(execution_engine_module._build_reason_continue_step(intent={"desc": "judged", "gaps": [{"desc": "next", "vocab": "pattern_needed"}]}, origin_step=make_step("origin"), gap=make_gap("reason about this"), chain_id="c1", current_turn=0))),
     ("clone_gap_for_carry_forward_preserves_vocab", lambda: loop._clone_gap_for_carry_forward(make_gap("persist", vocab="reason_needed"), current_turn=5).vocab == "reason_needed"),
     ("clone_gap_for_carry_forward_sets_new_turn", lambda: loop._clone_gap_for_carry_forward(make_gap("persist", vocab="reason_needed"), current_turn=5).turn_id == 5),
     ("forced_synth_frontier_none_when_empty", lambda: loop._persist_forced_synth_frontier(Trajectory(), Compiler(Trajectory()), make_step("origin"), 0) is None),
@@ -897,6 +896,21 @@ P12_CASES += [
         len(loop._find_dangling_gaps(traj)) == 0,
     )[2])(Trajectory(), make_gap("clarify", vocab="clarify_needed"))),
     ("emit_reason_skill_is_context_only", lambda: len(loop._emit_reason_skill(skill("reason"), make_gap("reason about this"), make_step("origin"), "c1").gaps) == 0),
+    ("activate_chain_reference_background_schedules_without_gaps", lambda: (lambda comp, step: (comp.record_background_trigger("c1"), True)[1] if step.desc.startswith("scheduled background chain:") and not step.gaps else False)(
+        Compiler(Trajectory()),
+        manifest_engine_module.activate_chain_reference(
+            ROOT / "chains",
+            skill("reason").hash,
+            "background",
+            make_gap("reason about this"),
+            make_step("origin"),
+            "c1",
+            registry(),
+            Compiler(Trajectory()),
+            Trajectory(),
+            0,
+        ),
+    )),
 ]
 
 

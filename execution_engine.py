@@ -291,71 +291,15 @@ def _inject_reason_parent_context(*, session: Any, reason_skill: Any) -> None:
         "It is not the workflow being activated.\n"
         "- The live origin gap is the task.\n"
         "- Choose exactly one output mode.\n"
-        "- continue_with_gaps: proceed with better-formed next gaps or a justified decision.\n"
         "- submit_skeleton: author one new validator-passing skeleton.v1 for reusable workflow origination.\n"
         "- activate_existing_workflow: choose an existing package by hash and delegate it.\n"
-        "- Embedded/composed activations stay current_turn even without a classifiable vocab.\n"
-        "- Background is only for delegated autonomous work.\n"
-        "- Do not recurse by emitting the generic reason codon as the answer to workflow origination.\n"
+        "- reason_needed itself is always a background delegation boundary.\n"
+        "- Natural vocab mapping is what runs current_turn inline.\n"
+        "- Embedded/composed activations stay current_turn inside authored workflows.\n"
+        "- Workflow delegation selected by reason is background work.\n"
+        "- Do not recurse by emitting the generic reason codon as the answer.\n"
         "- Do not ask clarify if trajectory, entities, packages, or workspace structure can narrow the choice.\n"
     )
-
-
-def _build_reason_continue_step(
-    *,
-    intent: dict,
-    origin_step: Step,
-    gap: Gap,
-    chain_id: str | None,
-    current_turn: int,
-) -> Step:
-    step_refs = list(dict.fromkeys([origin_step.hash] + list(intent.get("step_refs", []))))
-    content_refs = list(dict.fromkeys(list(gap.content_refs) + list(intent.get("content_refs", []))))
-    decision = intent.get("decision")
-    justification = intent.get("justification")
-    outcome = intent.get("outcome")
-    decision_lines: list[str] = []
-    if isinstance(decision, str) and decision.strip():
-        decision_lines.append(f"decision: {decision.strip()}")
-    if isinstance(justification, str) and justification.strip():
-        decision_lines.append(f"justification: {justification.strip()}")
-    if isinstance(outcome, str) and outcome.strip():
-        decision_lines.append(f"outcome: {outcome.strip()}")
-    desc = str(intent.get("desc") or f"reasoned: {gap.desc}")
-    if decision_lines and "decision:" not in desc.lower():
-        desc = f"{desc}\n\n" + "\n".join(decision_lines)
-    step_result = Step.create(
-        desc=desc,
-        step_refs=step_refs,
-        content_refs=content_refs,
-        chain_id=chain_id,
-        assessment=decision_lines,
-    )
-    for item in intent.get("gaps", []):
-        if not isinstance(item, dict):
-            continue
-        desc = item.get("desc")
-        if not isinstance(desc, str) or not desc.strip():
-            continue
-        child_gap = Gap.create(
-            desc=desc,
-            content_refs=list(dict.fromkeys(list(gap.content_refs) + list(item.get("content_refs", [])))),
-            step_refs=list(dict.fromkeys([step_result.hash] + list(item.get("step_refs", [])))),
-        )
-        child_gap.scores = Epistemic(
-            relevance=float(item.get("relevance", 0.8)),
-            confidence=float(item.get("confidence", 0.8)),
-            grounded=0.0,
-        )
-        vocab = item.get("vocab")
-        if isinstance(vocab, str) and vocab.strip():
-            child_gap.vocab = vocab
-        route_mode = item.get("route_mode")
-        if isinstance(route_mode, str) and route_mode.strip():
-            child_gap.route_mode = route_mode
-        child_gap.turn_id = current_turn
-        step_result.gaps.append(child_gap)
-    return step_result
 
 
 def _collect_clarify_frontier(compiler: Any, current_gap: Gap, *, current_turn: int | None = None) -> list[Gap]:
@@ -907,23 +851,18 @@ def execute_iteration(
             raw = session.call(
                 "Choose one manifestation for this reason_needed activation.\n"
                 "Return JSON only.\n\n"
-                "1. Continue locally with better-formed next gaps or a justified decision:\n"
-                '{"mode":"continue_with_gaps","desc":"what was decided or clarified","decision":"explicit judgment or decision","justification":"why this follows from trajectory / semantic tree / packages","outcome":"what later steps should treat as established","gaps":[{"desc":"optional next gap","vocab":"...","relevance":0.8,"confidence":0.7,"content_refs":[],"step_refs":[]}],"content_refs":[],"step_refs":[]}\n\n'
-                "2. Submit a workflow skeleton for deterministic compilation:\n"
-                '{"mode":"submit_skeleton","activation":"none|current_turn|background","skeleton":{...skeleton.v1...}}\n\n'
-                "3. Activate an existing workflow/package by hash (.st skill hash or saved stepchain .json hash):\n"
-                '{"mode":"activate_existing_workflow","workflow_ref":"hash","activation":"current_turn|background","embedded":false,"prompt":"optional task prompt"}\n\n'
-                "Use continue_with_gaps when judgment, decision, or better clarity is enough to proceed now.\n"
-                "If you choose continue_with_gaps, prefer to emit an explicit decision/justification/outcome when later steps should be able to rely on it.\n"
+                "1. Submit a workflow skeleton for deterministic compilation:\n"
+                '{"mode":"submit_skeleton","activation":"background","skeleton":{...skeleton.v1...}}\n\n'
+                "2. Activate an existing workflow/package by hash (.st skill hash or saved stepchain .json hash):\n"
+                '{"mode":"activate_existing_workflow","workflow_ref":"hash","activation":"background","prompt":"optional task prompt"}\n\n'
                 "Use submit_skeleton when constructing a new reusable action/workflow package.\n"
                 "Use activate_existing_workflow when an existing package should handle the task.\n"
-                "If activation is embedded/composed inline, it must stay current_turn.\n"
-                "Background is only for delegated autonomous work.\n"
+                "reason_needed is always a background delegation boundary.\n"
                 "If this gap is new workflow origination, submit_skeleton is required.\n"
                 "If you submit a skeleton, it must be valid skeleton.v1."
             )
             intent = hooks.extract_json(raw) or {}
-            mode = intent.get("mode", "continue_with_gaps")
+            mode = intent.get("mode", "")
 
             if authoring_required and mode != "submit_skeleton":
                 _emit_rogue_with_diagnosis(
@@ -948,31 +887,23 @@ def execute_iteration(
                         compile_result = json.loads(output)
                         stepchain = compile_result["stepchain"]
                         package_hash = me.persist_chain_package(config.chains_dir, stepchain)
-                        activation = intent.get("activation", "none")
+                        activation = "background"
                         session.inject(
                             "## Compiled chain package\n"
                             f"{me.render_chain_package(stepchain, package_hash)}"
                         )
-                        if activation in {"current_turn", "background"}:
-                            step_result = me.activate_chain_reference(
-                                config.chains_dir,
-                                package_hash,
-                                activation,
-                                gap,
-                                origin_step,
-                                entry.chain_id,
-                                registry,
-                                compiler,
-                                trajectory,
-                                current_turn,
-                            )
-                        else:
-                            step_result = Step.create(
-                                desc=f"compiled chain package:{package_hash} for {gap.desc}",
-                                step_refs=[origin_step.hash],
-                                content_refs=[package_hash] + gap.content_refs,
-                                chain_id=entry.chain_id,
-                            )
+                        step_result = me.activate_chain_reference(
+                            config.chains_dir,
+                            package_hash,
+                            activation,
+                            gap,
+                            origin_step,
+                            entry.chain_id,
+                            registry,
+                            compiler,
+                            trajectory,
+                            current_turn,
+                        )
                     else:
                         session.inject(f"## Skeleton compile errors\n{output}")
                         _emit_rogue_with_diagnosis(
@@ -1005,10 +936,7 @@ def execute_iteration(
 
             elif mode == "activate_existing_workflow":
                 chain_ref = intent.get("workflow_ref") or intent.get("chain_ref")
-                activation = intent.get("activation", "current_turn")
-                embedded = bool(intent.get("embedded"))
-                if embedded or activation not in {"current_turn", "background"}:
-                    activation = "current_turn"
+                activation = "background"
                 task_prompt = intent.get("prompt")
                 if isinstance(chain_ref, str):
                     step_result = me.activate_chain_reference(
@@ -1023,7 +951,7 @@ def execute_iteration(
                         trajectory,
                         current_turn,
                         task_prompt=task_prompt if isinstance(task_prompt, str) else None,
-                        embedded=embedded,
+                        embedded=False,
                     )
                 if not step_result:
                     _emit_rogue_with_diagnosis(
@@ -1040,12 +968,19 @@ def execute_iteration(
                     compiler.resolve_current_gap(gap.hash)
                     return ExecutionOutcome(control="continue")
             else:
-                step_result = _build_reason_continue_step(
-                    intent=intent,
-                    origin_step=origin_step,
-                    gap=gap,
-                    chain_id=entry.chain_id,
-                    current_turn=current_turn,
+                reason_prompt = str(intent.get("prompt") or intent.get("desc") or gap.desc)
+                step_result = me.activate_chain_reference(
+                    config.chains_dir,
+                    reason_skill.hash,
+                    "background",
+                    gap,
+                    origin_step,
+                    entry.chain_id,
+                    registry,
+                    compiler,
+                    trajectory,
+                    current_turn,
+                    task_prompt=reason_prompt,
                 )
 
             if step_result:
