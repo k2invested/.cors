@@ -1,13 +1,14 @@
 {
   "name": "admin",
-  "desc": "Kenny — system architect, step kernel builder, primary admin user",
+  "desc": "Kenny's identity and preferences for system orchestration, communication, architecture, and workflow. Includes explicit preferences for reasoning and clarification handling.",
   "trigger": "on_contact:discord:784778107013431296",
+  "author": "agent",
   "refs": {
-    "identity": null,
-    "principles": null,
-    "recent_chains": null,
-    "commitments": null
+    "commitment_chain_construction_spec": "eefcf9ff7e17",
+    "clinton": "e4ac2f28e8bc",
+    "cors_ui": "052eee58c273"
   },
+  "steps": [],
   "identity": {
     "name": "Kenny",
     "role": "architect",
@@ -42,40 +43,26 @@
     },
     "meta": {
       "surface_reprogramme_on_new_preference": true
+    },
+    "reasoning": {
+      "surface_reason_needed_for_open_decisions": true,
+      "reason_needed_scope": [
+        "open decisions",
+        "planning",
+        "judgment under uncertainty or complexity"
+      ],
+      "resolve_ambiguity_via_context": true,
+      "context_resolution_methods": [
+        "traverse available context",
+        "review history",
+        "inspect semantic trees",
+        "analyze workflow structure"
+      ],
+      "clarify_needed_only_when": [
+        "missing info is genuinely only available from user",
+        "multiple plausible paths would waste effort or create real risk"
+      ],
+      "do_not_ask_for_clarification_without_reasoning_first": true
     }
-  },
-  "steps": [
-    {
-      "action": "load_identity",
-      "desc": "surface who Kenny is, how he thinks, how he works",
-      "resolve": [
-        "identity"
-      ],
-      "post_diff": false
-    },
-    {
-      "action": "load_principles",
-      "desc": "surface system principles Kenny defined — step primitive, OMO, hash layers",
-      "resolve": [
-        "principles"
-      ],
-      "post_diff": false
-    },
-    {
-      "action": "load_recent",
-      "desc": "surface recent reasoning chains from prior interactions",
-      "resolve": [
-        "recent_chains"
-      ],
-      "post_diff": false
-    },
-    {
-      "action": "load_commitments",
-      "desc": "surface active commitments and tracked work",
-      "resolve": [
-        "commitments"
-      ],
-      "post_diff": false
-    }
-  ]
+  }
 }
