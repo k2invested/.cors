@@ -8,7 +8,8 @@
     "recent_chains": null,
     "commitments": null,
     "commitment_chain_construction_spec": "eefcf9ff7e17",
-    "top_rate_estates_ltd": "0c106388cfe2"
+    "top_rate_estates_ltd": "0c106388cfe2",
+    "clinton": "7d5e36e7721b"
   },
   "artifact": {
     "kind": "entity",
@@ -22,7 +23,15 @@
     "username": "k2authorized",
     "discord_user_id": "784778107013431296",
     "email": "krepchequesupply@gmail.com",
-    "context": "Built this system from scratch. Thinks in primitives and recursive structures. Prefers composable solutions over constructions. Will push back hard on overengineering. Speaks fast, thinks in analogies."
+    "context": "Built this system from scratch. Thinks in primitives and recursive structures. Prefers composable solutions over constructions. Will push back hard on overengineering. Speaks fast, thinks in analogies.",
+    "relationships": {
+      "blood_brother": [
+        {
+          "entity": "clinton:7d5e36e7721b",
+          "name": "Clinton"
+        }
+      ]
+    }
   },
   "preferences": {
     "communication": {
