@@ -296,6 +296,21 @@ def test_st_builder_detects_semantic_skeleton_input():
     }) is True
 
 
+def test_semantic_skeleton_with_flow_fields_is_not_misclassified_as_skeleton():
+    assert st_builder_module.looks_like_skeleton({
+        "version": "semantic_skeleton.v1",
+        "artifact": {"kind": "entity"},
+        "name": "entity",
+        "desc": "d",
+        "trigger": "manual",
+        "refs": {},
+        "semantics": {},
+        "root": "phase_root",
+        "phases": [],
+        "closure": {},
+    }) is False
+
+
 def test_st_builder_cli_rejects_skeleton_input():
     payload = json.dumps(example_skeleton())
     result = subprocess.run(

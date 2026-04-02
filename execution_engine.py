@@ -896,6 +896,7 @@ def execute_iteration(
             "- Use semantic_skeleton.v1 as the author-time frame.\n"
             "- This uses the same primitive flow shape as reason-built chains: root + phases + closure.\n"
             "- For semantic-only entity updates, edit semantics and keep artifact.kind = entity.\n"
+            "- For plain entity or admin preference updates, do not include root, phases, or closure in the returned frame.\n"
             "- For packages that also carry flow, edit root/phases/closure rather than freehand step blobs.\n"
             "- The persistence layer will lower this frame back into the current .st runtime format.\n\n"
             "### What reprogramme is for\n"

@@ -183,6 +183,8 @@ def validate_st(data: dict,
 
 def looks_like_skeleton(data: dict) -> bool:
     """Detect skeleton.v1/compiler-style input so it can be routed elsewhere."""
+    if looks_like_semantic_skeleton(data):
+        return False
     if data.get("version") == "skeleton.v1":
         return True
     return {"root", "phases", "closure"}.issubset(set(data))
@@ -722,16 +724,16 @@ def main():
         print(f"Error: invalid JSON input — {e}")
         return
 
-    if looks_like_skeleton(intent):
-        print(
-            "Error: skeleton.v1 input should be compiled with tools/skeleton_compile.py, "
-            "not built through st_builder."
-        )
-        raise SystemExit(1)
-
     if looks_like_semantic_skeleton(intent):
         st, artifact_kind, existing_ref = lower_semantic_skeleton(intent)
     else:
+        if looks_like_skeleton(intent):
+            print(
+                "Error: skeleton.v1 input should be compiled with tools/skeleton_compile.py, "
+                "not built through st_builder."
+            )
+            raise SystemExit(1)
+
         if looks_like_new_action_request(intent):
             print(
                 "Error: new action or hybrid workflow origination belongs to skeleton.v1 "
