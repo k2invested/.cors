@@ -1,6 +1,6 @@
 {
   "name": "reprogramme",
-  "desc": "Persist codon — world-building engine. Creates or updates .st entities and /command workflows. Manifestation is always background: fire, commit, move on. No post_diff — reprogramme does not branch or stagnate. If the reprogramme triggers a long-scope background workflow, the heartbeat mechanism (automatic post-synth reason_needed) guarantees reintegration.",
+  "desc": "Persist codon — stateless semantic write primitive. Creates or updates .st entities and existing packages after the system has already determined persistence is warranted. Reprogramme performs the write; it does not own the judgment layer. No post_diff — reprogramme does not branch or stagnate.",
   "trigger": "on_vocab:reprogramme_needed",
   "author": "system",
   "steps": [

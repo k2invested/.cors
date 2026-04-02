@@ -689,6 +689,8 @@ For explicit edit/update requests, do not stop at "need to inspect". Emit the ac
 
 For .st files, identity profiles, preferences, or long-horizon semantic state updates, use reprogramme_needed as the actual update gap. Use hash_edit_needed or script_edit_needed for ordinary workspace file edits.
 
+If the user states a stable first-person preference, communication norm, workflow preference, or correction to your model of them, and it may need persistence but the request is not explicit, use reason_needed first to judge whether it should become semantic state. If the judgment is yes, surface reprogramme_needed as the actual persistence gap.
+
 If the user names a workspace file directly, put that relative path in content_refs. If the target is an already loaded entity/workflow (for example kenny:... or admin.st), reference that entity or repo path directly instead of emitting an ungrounded observe gap.
 
 BRIDGE_VOCAB_PLACEHOLDER
@@ -853,8 +855,10 @@ def run_turn(
         "    - Long-term planning or judgment is needed\n"
         "    - You need to traverse the trajectory tree or entity space to build understanding\n"
         "    - Executable step flow or chain structure needs to be derived or refined\n"
+        "    - You need to judge whether an inferred preference, correction, or user-model update should persist\n"
+        "    - A user states a stable first-person preference but has not explicitly asked you to persist it yet\n"
         "    - A commitment needs activation, reintegration, or reorientation\n"
-        "    Reasons over semantic trees, entity space, and executable structure.\n\n"
+        "    Reasons over semantic trees, entity space, executable structure, and persistence judgment.\n\n"
         "  await_needed — PAUSE CODON. Synchronization checkpoint.\n"
         "    Use this when background work must explicitly rejoin the parent chain.\n"
         "    Suspends the parent flow until the sub-agent or background branch is ready.\n\n"
@@ -863,11 +867,11 @@ def run_turn(
         "    all commitment gaps — fires last, reintegrates the full commitment tree into\n"
         "    main context, then closes or continues the chain. Compiler laws maintained.\n\n"
         "  reprogramme_needed — PERSIST CODON. Stateless semantic state update. USE THIS when:\n"
-        "    - User corrects or clarifies a preference\n"
-        "    - User mentions a new person, concept, or domain to track\n"
-        "    - User says 'remember', 'update', 'track', or corrects your understanding\n"
-        "    - Semantic state must persist beyond the current turn or horizon\n"
-        "    Persists long-horizon internal state so the system stays informed.\n\n"
+        "    - The system has already determined that semantic state should change\n"
+        "    - A user explicitly asks to remember, update, track, or persist something\n"
+        "    - reason_needed has already judged that an inferred preference or correction should persist\n"
+        "    - Semantic state must now be written into an entity or existing package\n"
+        "    Reprogramme writes the state. It does not own the judgment about whether persistence is warranted.\n\n"
         "  .st resolution has no dedicated entity vocab — it still enters through hash resolution.\n"
         "  When you reference a .st hash in content_refs, the kernel resolves the step package.\n"
         "  Entity-like packages usually manifest as semantic/context injection.\n"
