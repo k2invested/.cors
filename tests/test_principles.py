@@ -420,6 +420,7 @@ P3_CASES = [
     ("tree_policy_admin_sets_entity_editor_mode", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["reprogramme_mode"] == "entity_editor"),
     ("tree_policy_entities_reroutes_reprogramme", lambda: loop._match_policy("skills/entities/clinton.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
     ("tree_policy_entities_set_entity_editor_mode", lambda: loop._match_policy("skills/entities/clinton.st", loop._load_tree_policy())["reprogramme_mode"] == "entity_editor"),
+    ("tree_policy_actions_reroute_to_reason", lambda: loop._match_policy("skills/actions/hash_edit.st", loop._load_tree_policy())["on_mutate"] == "reason_needed"),
     ("tree_policy_actions_set_action_editor_mode", lambda: loop._match_policy("skills/actions/hash_edit.st", loop._load_tree_policy())["reprogramme_mode"] == "action_editor"),
     ("tree_policy_exact_match_compile_immutable", lambda: loop._match_policy("compile.py", loop._load_tree_policy())["immutable"] is True),
     ("tree_policy_longest_prefix_wins", lambda: loop._match_policy("skills/codons/reason.st", loop._load_tree_policy())["on_reject"] == "reason_needed"),
@@ -1004,6 +1005,7 @@ P13_CASES += [
     ("loader_treats_reason_as_codon", lambda: skill("reason").artifact_kind == "codon"),
     ("loader_treats_chain_spec_as_entity_even_in_codon_tree", lambda: skill("commitment_chain_construction_spec").artifact_kind == "entity"),
     ("policy_marks_codon_tree_immutable", lambda: loop._match_policy("skills/codons/reason.st", loop._load_tree_policy())["immutable"] is True),
+    ("policy_marks_action_tree_reason_first", lambda: loop._match_policy("skills/actions/debug.st", loop._load_tree_policy())["on_mutate"] == "reason_needed"),
     ("policy_marks_action_tree_action_editor", lambda: loop._match_policy("skills/actions/debug.st", loop._load_tree_policy())["reprogramme_mode"] == "action_editor"),
 ]
 
