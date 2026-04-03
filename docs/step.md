@@ -39,7 +39,7 @@ Two newer fields matter:
 - `carry_forward`
   - explicit cross-turn persistence marker
 - `route_mode`
-  - deterministic execution hint such as `entity_editor` or `action_editor`
+  - deterministic execution hint such as `entity_editor`; low-level action-editor coercion still exists, but action-tree ownership now belongs to `reason_needed`
 
 ## Step
 
@@ -118,6 +118,18 @@ Examples:
 
 - a merged clarification prompt is one explicit `Step`
 - a forced-synth carry-forward packet is one explicit `Step`
+
+## Contract Visibility
+
+The live chain render now exposes compact contract tags when a runtime step is backed by a canonical foundation contract.
+
+Examples:
+
+- `gap=hash_edit_needed`
+- `embed=named_default`
+- `omo=observe->mutate`
+
+The semantic-tree render also exposes a fuller `effective_contract` payload. This keeps default/public activation and hash-embedded specialization visible in the same runtime surface the model reasons from.
 - future turns can reason over those steps by hash
 
 ## Rendering

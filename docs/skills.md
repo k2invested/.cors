@@ -84,7 +84,7 @@ It lives in `skills/codons/` so the agent cannot mutate it casually, but the loa
 - immutable by tree policy
 - resolved as context injection
 - selectively injected into `reason_needed`
-- also injected into `reprogramme_needed` for action-editor workflow persistence
+- used as the executable authoring contract for staged `semantic_skeleton.v1` action layers
 
 ## Entity Packages
 
@@ -112,8 +112,9 @@ Action packages live in [skills/actions](/Users/k2invested/Desktop/cors/skills/a
 
 Important current law:
 
-- updates to existing action packages can use `reprogramme_needed` in `action_editor`
-- new action or hybrid origination must go through `reason_needed` first
+- anything involving `skills/actions/*.st` belongs to `reason_needed`
+- action layers should be built inside-out / back-to-front
+- lower layers usually stay `manual` until the highest-order completed workflow owns the public `on_vocab:*` trigger
 
 So action `.st` persistence is no longer treated as just another file write.
 
@@ -151,4 +152,4 @@ It can:
 - route new entity writes into `skills/entities/`
 - route new action writes into `skills/actions/`
 
-It does not own new workflow origination. New workflow structure belongs to the `reason_needed -> skeleton_compile` side first.
+It does not own workflow ownership. New and existing action-tree structure belong to the `reason_needed -> semantic_skeleton` side first; `st_builder.py` is the validator/actualizer beneath that path.

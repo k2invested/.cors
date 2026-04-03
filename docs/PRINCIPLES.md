@@ -64,7 +64,7 @@ step.py
 │   ├─ .dormant        — below threshold, stored but not acted on
 │   ├─ .turn_id        — which turn created this gap (for cross-turn threshold)
 │   ├─ .carry_forward  — explicit cross-turn persistence marker
-│   └─ .route_mode     — deterministic routing hint (entity_editor/action_editor)
+│   └─ .route_mode     — deterministic routing hint (for example entity_editor; action coercion remains a low-level frame, not the public ownership law)
 │
 ├─ Step
 │   ├─ .create(desc, step_refs, content_refs, gaps, commit, chain_id, parent)
@@ -180,6 +180,13 @@ The important separation is not merely WHAT versus HOW. It is:
 
 Primitive kernel vocab still matters, but only as the stable execution algebra for the kernel's native mechanisms. For curated workflows, exact activation can be carried by step-file hash while priority, grouping, routing, and analytics remain derivable from gap structure itself. The hash does not need to carry semantic meaning. It only needs to identify the exact package to manifest.
 
+The current runtime makes one further distinction explicit:
+
+- **Name/vocab activation** uses the block's canonical public contract
+- **Hash embedding** preserves identity but may specialize manifestation only through explicit embedding configuration
+
+So the same committed block can have one public/default activation surface and many lawful contextualized embeddings without losing identity.
+
 This is what makes `.st` structural rather than cosmetic. A `.st` file is not “a file the system reads.” It is a step primitive whose resolution manifests further structure.
 
 ### Structural distinction: `entity.st` vs `action.st`
@@ -288,8 +295,8 @@ Mutations targeting protected paths are intercepted before execution — the tre
 |---------------|-------------|-----------|
 | `skills/admin.st` | `reprogramme_needed` (`entity_editor`) | Canonical admin primitive — semantic persistence only |
 | `skills/entities/*` or entity hash | `reprogramme_needed` (`entity_editor`) | Entity packages persist through semantic entity editor |
-| `skills/actions/*` or existing action hash | `reprogramme_needed` (`action_editor`) | Existing executable packages update through action editor |
-| New action/hybrid `.st` origination | `reason_needed` | New executable structure must be designed before persistence |
+| `skills/actions/*` or existing action hash | `reason_needed` | Action-tree creation, repair, and update belong to structural reasoning |
+| New tool/blob layer for a workflow | normal mutate vocab/tool path | Foundational block is authored first, then reason composes upward |
 | `ui_output/` or screenshots | `stitch_needed` | Generated assets regenerated, not manually edited |
 | Immutable paths (codons, system code, stores, logs) | Auto-revert + warning | Protected path violation |
 
@@ -302,10 +309,23 @@ Every `auto_commit()` injects a `hash_resolve_needed` gap targeting the commit. 
 ### Code mechanisms
 
 ```
+vocab_registry.py
+├─ VOCABS
+│   ├─ observe  → {hash_resolve_needed, pattern_needed, email_needed, external_context, clarify_needed}
+│   ├─ mutate   → {hash_edit_needed, stitch_needed, content_needed, script_edit_needed, command_needed, message_needed, json_patch_needed, git_revert_needed}
+│   └─ bridge   → {reason_needed, await_needed, commit_needed, reprogramme_needed}
+├─ DETERMINISTIC_VOCAB = {hash_resolve_needed}
+├─ OBSERVATION_ONLY_VOCAB = {external_context}
+├─ TOOL_MAP
+│   ├─ pattern_needed → tools/file_grep.py
+│   ├─ hash_edit_needed → tools/hash_manifest.py
+│   ├─ stitch_needed → tools/stitch_generate.py (+ post_observe ui_output/)
+│   └─ ... (full routing lives in canonical vocab registry)
+└─ validate_tree_policy_targets(policy)
+    └─ prevents stale or unknown reroute targets
+
 compile.py
-├─ OBSERVE_VOCAB = {pattern_needed, hash_resolve_needed, email_needed, external_context, clarify_needed}
-├─ MUTATE_VOCAB  = {hash_edit_needed, stitch_needed, content_needed, script_edit_needed, command_needed, message_needed, json_patch_needed, git_revert_needed}
-├─ BRIDGE_VOCAB  = {reason_needed, commit_needed, reprogramme_needed, await_needed}
+├─ imports canonical vocab families from vocab_registry.py
 ├─ is_observe(vocab) / is_mutate(vocab) / is_bridge(vocab)
 └─ vocab_priority(vocab)
     ├─ observe → 20
@@ -317,16 +337,13 @@ compile.py
     └─ reprogramme_needed → 99
 
 loop.py
-├─ TOOL_MAP
-│   ├─ hash_resolve_needed → kernel resolution
-│   ├─ pattern_needed → tools/file_grep.py
-│   ├─ hash_edit_needed → tools/hash_manifest.py
-│   ├─ stitch_needed → tools/stitch_generate.py
-│   └─ ... (full routing lives in TOOL_MAP)
-├─ DETERMINISTIC_VOCAB = {hash_resolve_needed}
-├─ OBSERVATION_ONLY_VOCAB = {hash_resolve_needed, external_context}
 ├─ PRE_DIFF_SYSTEM
-│   └─ reason before clarify is explicit bridge law when available context can narrow ambiguity
+│   ├─ reason before clarify is explicit bridge law when available context can narrow ambiguity
+│   ├─ trigger vocab is derived automatically from loaded on_vocab: skills
+│   └─ final public on_vocab trigger belongs to the highest-order completed workflow
+├─ dynamic bridge injection
+│   ├─ Available Trigger Vocab
+│   └─ Canonical Trigger Owners
 ├─ resolve_hash(ref, trajectory)
 │   ├─ entity/admin/chain-spec package hash → entity-style deterministic injection
 │   ├─ action package hash → read-only package render
@@ -336,7 +353,7 @@ loop.py
 ├─ tree policy
 │   ├─ skills/admin.st → reprogramme_needed + entity_editor
 │   ├─ skills/entities/* → reprogramme_needed + entity_editor
-│   ├─ skills/actions/* → reprogramme_needed + action_editor
+│   ├─ skills/actions/* → reason_needed + action-tree ownership
 │   ├─ skills/codons/* → immutable + on_reject: reason_needed
 │   └─ ui_output/* / immutable code / logs / stores → policy enforcement
 ├─ auto_commit(message)
@@ -352,33 +369,41 @@ execution_engine.py
 ├─ execute_iteration(...)
 │   ├─ merges current-turn clarify gaps into one frontier step
 │   ├─ applies deterministic route_mode hints before execution
-│   ├─ reroutes new action/hybrid origination to reason_needed
-│   ├─ runs reprogramme in entity_editor vs action_editor mode
+│   ├─ keeps action-tree creation, repair, and update under reason_needed
+│   ├─ sanitizes reason output so reprogramme_needed is only emitted for entity-tree persistence
+│   ├─ iterates one action layer at a time via next_layer_desc
 │   └─ emits rogue steps with reason_needed diagnosis when execution fails
 ├─ _collect_clarify_frontier(...)
 │   └─ current-turn bounded, deduped clarify frontier
-├─ _reprogramme_mode_for_source(path)
-│   └─ derives entity_editor vs action_editor from the target tree
-└─ _new_action_origination_requires_reason(...)
-    └─ new executable structure routes through reason before persistence
+├─ reason authoring prompt
+│   ├─ injects Step Network
+│   ├─ injects Action Foundations
+│   ├─ teaches semantic_tree vs described_blob distinction
+│   └─ teaches named_default vs hash_embedded contract law
+└─ _reprogramme_mode_for_source(path)
+    └─ derives deterministic semantic persistence frame for entity-like targets
 
 tree_policy.json
 ├─ "skills/admin.st"  → {on_mutate: "reprogramme_needed", reprogramme_mode: "entity_editor"}
 ├─ "skills/entities/" → {on_mutate: "reprogramme_needed", reprogramme_mode: "entity_editor"}
-├─ "skills/actions/"  → {on_mutate: "reprogramme_needed", reprogramme_mode: "action_editor"}
+├─ "skills/actions/"  → {on_mutate: "reason_needed", reprogramme_mode: "action_editor"}
 ├─ "skills/codons/"   → {immutable: true, on_reject: "reason_needed"}
 ├─ "ui_output/"       → {on_mutate: "stitch_needed"}
 ├─ "logs/"            → {immutable: true}
 └─ core runtime files → {immutable: true}
 
-tools/
-├─ hash_manifest.py   — universal file I/O and mutation dispatch
-├─ st_builder.py      — semantic `.st` persistence, entity/action validation, context-step enforcement
-├─ stitch_generate.py — prompt → HTML + Tailwind CSS
-├─ file_grep.py       — pattern search across workspace
-├─ security_compile.py / trace_tree_build.py / semantic_skeleton_compile.py
-│   └─ validator / assessment / structural projection tooling used by post-observation
-└─ supporting writers/editors/ops
+action_foundations.py
+├─ FoundationSpec(ref, kind, surface, source, desc, activation, default_gap, omo_role)
+├─ resolve_default_contract(ref)
+├─ resolve_trigger_owner(term)
+└─ render_action_foundations(...)
+
+tools/st_builder.py
+├─ effective_phase_contract(...)
+├─ validates named_default vs hash_embedded
+├─ rejects decorative tool/blob refs with no runtime-effective linkage
+├─ rejects lower layers that claim final public on_vocab trigger
+└─ actualizes lawful semantic_skeleton.v1 action/entity writes
 ```
 
 ---
@@ -541,9 +566,8 @@ loop.py
 ├─ Reprogramme branch (iteration loop)
 │   ├─ if vocab == "reprogramme_needed"
 │   ├─ injects current step network + registry + protected editing law
-│   ├─ injects chain construction spec selectively for action_editor / planning contexts
 │   ├─ preserves admin as canonical root entity primitive
-│   └─ routes through deterministic entity_editor vs action_editor mode
+│   └─ routes through deterministic entity_editor mode for entity-like persistence
 │
 ├─ _reprogramme_pass() → automatic pre-synthesis safety net
 │   └─ reviews turn for knowledge updates, fires if needed
@@ -581,9 +605,10 @@ tools/st_builder.py
 │   ├─ preserves pure entity shape
 │   ├─ strips root/phases/closure
 │   └─ writes to skills/entities/ (or skills/admin.st when editing admin)
-├─ action_editor
-│   ├─ preserves executable package structure
-│   └─ writes to skills/actions/
+├─ semantic_skeleton action validation
+│   ├─ staged L0/L1/L2/L3 authoring checks
+│   ├─ public-trigger ownership checks
+│   └─ explicit embedding contract checks
 └─ Forwards semantic fields (identity, constraints, scope, refs, preferences, etc.)
 ```
 
@@ -1219,11 +1244,12 @@ execution_engine.py
 │   ├─ can emit native `reason.st`
 │   ├─ can submit skeleton / semantic_skeleton for deterministic compilation
 │   ├─ can activate existing hash-addressed packages
-│   └─ injects commitment_chain_construction_spec selectively for planning/workflow/research
+│   ├─ injects commitment_chain_construction_spec selectively for planning/workflow/research
+│   ├─ injects Action Foundations inventory
+│   └─ stages one layer at a time, surfacing next_layer_desc after successful commits
 ├─ reprogramme_needed execution
 │   ├─ entity_editor → semantic entity persistence
-│   ├─ action_editor → executable package persistence
-│   ├─ new action/hybrid origination → rerouted back to reason_needed
+│   ├─ action origination/update is not the public owner path
 │   └─ successful write → assessment-bearing post-observation step before synth
 └─ clarify frontier
     └─ current-turn clarify gaps merge into one canonical clarification step hash
@@ -1426,7 +1452,7 @@ loop.py
 ├─ _extract_json(text) → extracts JSON object from LLM output
 ├─ _extract_command(text) → extracts shell command from LLM JSON
 │
-├─ TOOL_MAP → vocab → {tool: path, post_observe: target}
+├─ vocab_registry.TOOL_MAP → vocab → {tool: path, post_observe: target}
 ├─ MAX_ITERATIONS = 30 → safety limit on iteration loop
 ├─ TRAJECTORY_WINDOW = 10 → recent chains rendered at turn start
 │

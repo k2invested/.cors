@@ -37,8 +37,10 @@ Observation-only hash resolution remains inline in the kernel.
 - restores or requires deterministic entity context-injection steps
 - writes new entities into `skills/entities/`
 - writes new actions into `skills/actions/`
-- can update existing action packages explicitly
-- does not own new workflow origination
+- validates staged `semantic_skeleton.v1` action layers
+- enforces public-trigger ownership and explicit embedding contracts
+- rejects decorative tool/blob refs that are not linked by runtime-effective fields
+- does not own new workflow origination; it is the validator/actualizer behind reason-owned action authoring
 
 [tools/skeleton_compile.py](/Users/k2invested/Desktop/cors/tools/skeleton_compile.py)
 
@@ -69,8 +71,8 @@ The important routing rules are now:
 ```text
 ordinary file mutation          -> normal mutate vocab/tool path
 .st entity/admin mutation       -> reprogramme_needed (entity_editor)
-.st action update               -> reprogramme_needed (action_editor)
-new action/hybrid origination   -> reason_needed first
+.st action tree work            -> reason_needed
+new tool layer for workflow     -> normal mutate vocab/tool path, then reason composes upward
 codon mutation                  -> reject / auto-revert / reason_needed
 ```
 
@@ -85,7 +87,7 @@ It is:
 - immutable by tree location
 - resolved as a spec/context package
 - selectively injected into `reason_needed`
-- injected into `reprogramme_needed` for action-editor workflow persistence
+- used as the executable contract for staged action authoring and hash embedding
 
 That makes it part of the authoring/tool bench for chain construction.
 
@@ -96,10 +98,11 @@ The clean split is now:
 - `reason_needed`
   - structural authoring
   - chain design
-  - skeleton compilation
+  - staged action/workflow authoring
+  - hash-native composition over packages, chains, and tool blobs
 - `reprogramme_needed`
   - semantic persistence
   - entity calibration
-  - bounded updates to existing action packages
+  - entity/admin state updates
 
 The tool layer serves both sides, but it no longer erases the distinction between them.

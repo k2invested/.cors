@@ -98,8 +98,9 @@ Deterministic route modes are:
 The important law is:
 
 - entity writes can go straight to `reprogramme_needed`
-- existing action updates can go to `reprogramme_needed` in `action_editor`
-- new action or hybrid origination is rerouted to `reason_needed` first
+- action-tree creation, repair, and update stay under `reason_needed`
+- `reason_needed` may surface `reprogramme_needed` only for entity-tree persistence
+- lower workflow layers should remain `manual` while higher layers are still needed
 
 ## Reason Path
 
@@ -110,6 +111,8 @@ It can:
 - emit the native [reason.st](/Users/k2invested/Desktop/cors/skills/codons/reason.st) codon
 - submit `skeleton.v1` for deterministic compilation
 - activate an existing `.st` or compiled chain package by hash
+- author foundational `tools/*.py` blocks before composing higher-order `.st` layers
+- build one layer per iteration and surface `next_layer_desc` when a higher layer should follow a successful commit
 
 When the gap smells like workflow planning, it also injects the immutable chain construction spec:
 
@@ -117,6 +120,14 @@ When the gap smells like workflow planning, it also injects the immutable chain 
 - `_inject_chain_spec(...)`
 
 This spec is not injected into every reasoning turn. It is scoped to planning, chain, workflow, manifest, skeleton, and research-like gaps.
+
+When action authoring is active, `reason_needed` also sees a unified Action Foundations inventory:
+
+- action/codon packages by committed skill hash
+- extracted chains by committed chain hash
+- tool scripts by committed blob hash
+
+Public/classified activation uses the block's canonical default gap contract. Hash embedding may specialize manifestation only through explicit `embedding.gap_override`.
 
 ## Reprogramme Path
 
@@ -127,7 +138,6 @@ Implemented behaviors:
 - inject existing entity data when present
 - inject [PRINCIPLES.md](/Users/k2invested/Desktop/cors/docs/PRINCIPLES.md)
 - inject step network
-- inject chain construction spec for `action_editor`
 - surface an editable semantic frame
 - coerce returned frames to the route mode
 
@@ -143,7 +153,7 @@ For `entity_editor`, it hardens the returned frame to:
 - no `phases`
 - no `closure`
 
-That is the mechanism that prevents entity packages from drifting into accidental hybrid scaffolding.
+That is the mechanism that prevents entity packages from drifting into accidental hybrid scaffolding. `reprogramme_needed` is not the owner of action workflow origination.
 
 ## Rogue Handling
 

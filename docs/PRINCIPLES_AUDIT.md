@@ -20,7 +20,7 @@ Status terms:
 | `§7 Post-Diff` | `partial` | Deterministic/flexible package surfaces are real, but `post_diff` is still stronger on package/runtime-shape law than as a universal kernel branch dial. |
 | `§8 Compiler Laws` | `validated` | OMO, LIFO, governor signals, heartbeat bookkeeping, and carry-forward discipline are implemented. |
 | `§9 Chains And Trajectory` | `validated` | Chain lifecycle, passive chains, extraction, rogue steps, and assessment-bearing steps are implemented. |
-| `§10 Activation And Codons` | `partial` | Codon activation, package activation, chain-spec injection, and action-origination rerouting are implemented, but the cognitive quality of `reason_needed` chain authoring is still the main live limitation. |
+| `§10 Activation And Codons` | `validated` | Codon activation, package activation, trigger ownership, staged action authoring, and hash-native foundation contracts are materially implemented in source. |
 | `§11 Temporal Signatures` | `validated` | Absolute timestamp rendering and relative time helpers are implemented in the live render surface. |
 | `§12 Supporting Infrastructure` | `validated` | Clarify frontier merge, turn-bounded clarify, forced-synth carry, Discord diff routing, and bootstrap identity are implemented. |
 | `§13 Curation` | `validated` | Tree organization, immutable codons, curated package split, and principle-anchored regression coverage are all materially present. |
@@ -80,10 +80,23 @@ The deterministic rule now is:
 
 - new entity => `reprogramme_needed`
 - existing entity update => `reprogramme_needed`
-- existing action update => `reprogramme_needed` in `action_editor`
-- new action origination => `reason_needed` first
+- action-tree creation, repair, and update => `reason_needed`
+- public trigger ownership => highest-order completed workflow only
 
 That is the correct separation between semantic persistence and structural design.
+
+### 5. Composition now has one canonical hash-native foundation model
+
+`reason_needed` now sees:
+
+- action/codon packages by committed skill hash
+- extracted chains by committed chain hash
+- tool scripts by committed blob hash
+
+And the runtime now distinguishes:
+
+- name/vocab activation => canonical default gap contract
+- hash embedding => explicit contextual specialization only
 
 ## Main Remaining Partial
 
@@ -118,4 +131,4 @@ The system is now strong on:
 - postcondition visibility
 - principle-backed regression structure
 
-The live frontier is no longer basic runtime integrity. It is the cognitive quality of `reason_needed` when it has to assemble complex validator-passing stepchains.
+The live frontier is no longer basic runtime integrity. It is higher-order composition quality when `reason_needed` has to decide which committed blocks to build next and how rich a top-level workflow should become.

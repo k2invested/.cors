@@ -47,6 +47,19 @@ The step network includes:
 
 This is the package ecology injected into `reason_needed` and `reprogramme_needed`.
 
+For action authoring, the manifest layer now also supports a hash-native Action Foundations view:
+
+- action/codon packages by committed skill hash
+- extracted chains by committed chain hash
+- tool scripts by committed blob hash
+
+Each foundation carries:
+
+- `activation`
+- `default_gap`
+- `surface`
+- `omo_role`
+
 ## Activation
 
 The current activation surfaces are:
@@ -54,6 +67,12 @@ The current activation surfaces are:
 - `activate_skill_package(...)`
 - `activate_stepchain_package(...)`
 - `activate_chain_reference(...)`
+
+Activation is now contract-aware rather than just package-shape-aware:
+
+- public/name activation uses a block's canonical default gap contract
+- hash embedding may specialize manifestation only through explicit override
+- runtime nodes render `effective_contract` so the active chain shows what will actually execute
 
 The important boundary is unchanged:
 

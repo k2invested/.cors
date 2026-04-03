@@ -122,15 +122,16 @@ Tree policy and target-path inference now deterministically choose reprogramme m
 ```text
 skills/admin.st    -> reprogramme_needed (entity_editor)
 skills/entities/*  -> reprogramme_needed (entity_editor)
-skills/actions/*   -> reprogramme_needed (action_editor)
+skills/actions/*   -> reason_needed (action tree ownership)
 skills/codons/*    -> immutable -> reason_needed on reject
 ```
 
 Action origination is split from entity persistence:
 
 - entity creation and entity updates can go straight to `reprogramme_needed`
-- existing action updates can go through `reprogramme_needed` in `action_editor` mode
-- new action or hybrid workflow origination is rerouted to `reason_needed` first
+- anything involving `skills/actions/*.st` now stays under `reason_needed`
+- lower action layers stay `manual` while higher layers are still being built
+- the final public `on_vocab:*` trigger belongs to the highest-order completed workflow
 
 ## Reprogramme And Reason
 
@@ -139,14 +140,15 @@ The implemented split is:
 - `reason_needed`
   - structural design
   - chain planning
-  - `skeleton.v1` compilation
+  - iterative action/workflow authoring
+  - hash-native composition over existing foundations
   - existing package activation
 - `reprogramme_needed`
   - semantic persistence
   - entity updates
-  - bounded edits to existing action packages
+  - stateless entity/admin calibration only
 
-`reason_needed` and `reprogramme_needed` selectively inject the immutable chain construction spec when workflow structure matters.
+`reason_needed` now also receives the unified Action Foundations inventory: action/codon package hashes, extracted chain hashes, and tool blob hashes with canonical default contracts and OMO roles.
 
 ## Commit Assessment
 

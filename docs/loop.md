@@ -26,6 +26,8 @@ Two important runtime laws are encoded there:
 
 - use `reason_needed` before `clarify_needed` when existing context, trajectory, semantic trees, or workflows can reduce ambiguity
 - treat bridge codons as primitives rather than ordinary tool routing
+- derive public trigger vocab from loaded `on_vocab:` skills rather than hand-editing `vocab_registry.py`
+- reserve the final public `on_vocab:*` trigger for the highest-order completed workflow
 
 This matters because first-step behavior is the main place where the runtime decides whether a vague request becomes:
 
@@ -44,6 +46,8 @@ The loop injects these live surfaces:
 ## Resolved Hash Data
 ## Identity / Entity Context
 ## Step Network
+## Available Trigger Vocab
+## Canonical Trigger Owners
 ```
 
 The current chain render is especially important. The LLM does not work a ledger entry blind; it sees the branch it is currently inside.
@@ -77,7 +81,7 @@ The current default tree policy is:
 skills/codons/   -> immutable, reject to reason_needed
 skills/admin.st  -> reprogramme_needed, entity_editor
 skills/entities/ -> reprogramme_needed, entity_editor
-skills/actions/  -> reprogramme_needed, action_editor
+skills/actions/  -> reason_needed, action tree ownership
 ui_output/       -> stitch_needed
 kernel files     -> immutable
 ```
