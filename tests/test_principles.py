@@ -2819,13 +2819,38 @@ def test_p12_reason_needed_retries_inside_reason_loop_until_success():
     )
 
     assert outcome.step_result is not None
+    assert outcome.step_result.commit is None
+    assert outcome.step_result.desc.startswith("reason loop: validation failed")
+    assert outcome.step_result.gaps
+    assert outcome.step_result.gaps[0].vocab == "reason_needed"
+    assert session.calls == 1
+    assert chain.chain_kind == "reason_loop"
+    assert chain.loop_state["status"] == "active"
+    assert chain.loop_state["attempt_count"] == 1
+    assert any(step.desc.startswith("reason loop attempt 1/5:") for step in traj.steps.values())
+
+    next_entry, next_signal = compiler.next()
+    assert next_entry is not None
+    assert next_entry.gap.vocab == "reason_needed"
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=next_entry,
+        signal=next_signal,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
     assert outcome.step_result.commit == "abc123"
     assert session.calls == 2
-    assert chain.chain_kind == "reason_loop"
     assert chain.loop_state["status"] == "succeeded"
     assert chain.loop_state["attempt_count"] == 2
-    assert any(step.desc.startswith("reason loop attempt 1/5:") for step in traj.steps.values())
-    assert any("## Reason Loop" in content for content in session.injected)
 
 
 def test_p12_reason_needed_exhausts_reason_loop_after_five_attempts():
@@ -2915,11 +2940,36 @@ def test_p12_reason_needed_exhausts_reason_loop_after_five_attempts():
     )
 
     assert outcome.step_result is not None
-    assert outcome.step_result.rogue is True
-    assert session.calls == 5
+    assert outcome.step_result.desc.startswith("reason loop: validation failed")
+    assert outcome.step_result.gaps
+    assert outcome.step_result.gaps[0].vocab == "reason_needed"
+    assert session.calls == 1
     assert chain.chain_kind == "reason_loop"
+    assert chain.loop_state["status"] == "active"
+    assert chain.loop_state["attempt_count"] == 1
+
+    final_outcome = outcome
+    for expected_attempt in range(2, 6):
+        next_entry, next_signal = compiler.next()
+        assert next_entry is not None
+        final_outcome = execution_engine_module.execute_iteration(
+            entry=next_entry,
+            signal=next_signal,
+            session=session,
+            origin_step=origin_step,
+            trajectory=traj,
+            compiler=compiler,
+            registry=registry(),
+            current_turn=0,
+            hooks=hooks,
+            config=config,
+        )
+        assert chain.loop_state["attempt_count"] == expected_attempt
+
+    assert final_outcome.step_result is not None
+    assert final_outcome.step_result.rogue is True
+    assert session.calls == 5
     assert chain.loop_state["status"] == "exhausted"
-    assert chain.loop_state["attempt_count"] == 5
 
 
 def test_p12_reason_normalizes_trigger_to_manual_when_next_layer_remains():
