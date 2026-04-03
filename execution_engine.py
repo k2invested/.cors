@@ -294,6 +294,83 @@ def _new_action_origination_requires_reason(
     )
 
 
+STRUCTURAL_BOUNDARY_TARGETS = ("skills/actions/", "tools/")
+STRUCTURAL_BOUNDARY_MARKERS = (
+    "embedding",
+    "embed ",
+    "block_ref",
+    "activation_ref",
+    "on_vocab:",
+    "public trigger",
+    "next_layer_desc",
+    "higher-order layer",
+    "higher order layer",
+)
+
+
+def _structural_ref_candidate(ref: str) -> str:
+    if ":" in ref:
+        prefix, suffix = ref.split(":", 1)
+        if "/" in suffix or suffix.endswith((".st", ".py", ".json", ".md", ".txt", ".yaml", ".yml")):
+            return suffix
+    return ref
+
+
+def _gap_mentions_structural_target(gap: Gap, target: str) -> bool:
+    lowered = gap.desc.lower()
+    if target in lowered:
+        return True
+    for ref in gap.content_refs:
+        if target in _structural_ref_candidate(str(ref)).lower():
+            return True
+    return False
+
+
+def _infer_reason_judgment_route_mode(
+    gap: Gap,
+    *,
+    registry: Any,
+    policy: dict,
+    target_entity: Any | None,
+    route_mode: str | None = None,
+) -> str | None:
+    if route_mode:
+        return route_mode
+    if _gap_mentions_structural_target(gap, "tools/"):
+        return "action_editor"
+    if any(_gap_mentions_structural_target(gap, target) for target in STRUCTURAL_BOUNDARY_TARGETS):
+        return "action_editor"
+    lowered = gap.desc.lower()
+    if any(marker in lowered for marker in STRUCTURAL_BOUNDARY_MARKERS):
+        return "action_editor"
+    return _determine_reprogramme_mode(gap, target_entity, policy) if (target_entity is not None or ".st" in lowered) else None
+
+
+def _requires_reason_judgment(
+    gap: Gap,
+    *,
+    registry: Any,
+    policy: dict,
+    route_mode: str | None,
+    target_entity: Any | None,
+) -> bool:
+    if gap.vocab == "reason_needed":
+        return False
+    effective_route_mode = _infer_reason_judgment_route_mode(
+        gap,
+        registry=registry,
+        policy=policy,
+        target_entity=target_entity,
+        route_mode=route_mode,
+    )
+    lowered = gap.desc.lower()
+    if effective_route_mode == "action_editor" and target_entity is None:
+        return True
+    if any(marker in lowered for marker in STRUCTURAL_BOUNDARY_MARKERS):
+        return True
+    return any(_gap_mentions_structural_target(gap, target) for target in STRUCTURAL_BOUNDARY_TARGETS)
+
+
 def _should_inject_chain_spec_for_reason(gap: Gap) -> bool:
     lowered = gap.desc.lower()
     return any(token in lowered for token in (
@@ -644,7 +721,7 @@ def execute_iteration(
             rule = hooks.match_policy(ref, policy)
             if rule and rule.get("on_mutate") and rule["on_mutate"] != vocab:
                 reroute_vocab = rule["on_mutate"]
-                if reroute_vocab == "reprogramme_needed" and rule.get("reprogramme_mode"):
+                if rule.get("reprogramme_mode"):
                     gap.route_mode = str(rule["reprogramme_mode"])
                 break
         if not reroute_vocab:
@@ -652,7 +729,7 @@ def execute_iteration(
                 if rule.get("on_mutate") and path_prefix.rstrip("/") in gap.desc.lower():
                     if rule["on_mutate"] != vocab:
                         reroute_vocab = rule["on_mutate"]
-                        if reroute_vocab == "reprogramme_needed" and rule.get("reprogramme_mode"):
+                        if rule.get("reprogramme_mode"):
                             gap.route_mode = str(rule["reprogramme_mode"])
                         break
         if not reroute_vocab and vocab != "reprogramme_needed":
@@ -660,6 +737,25 @@ def execute_iteration(
                 reroute_vocab = "reprogramme_needed"
             elif ".st" in gap.desc.lower():
                 reroute_vocab = "reprogramme_needed"
+
+        if not reroute_vocab:
+            structural_route_mode = _infer_reason_judgment_route_mode(
+                gap,
+                registry=registry,
+                policy=policy,
+                target_entity=target_skill,
+                route_mode=gap.route_mode,
+            )
+            if _requires_reason_judgment(
+                gap,
+                registry=registry,
+                policy=policy,
+                route_mode=structural_route_mode,
+                target_entity=target_skill,
+            ):
+                reroute_vocab = "reason_needed"
+                if structural_route_mode:
+                    gap.route_mode = structural_route_mode
 
         if reroute_vocab == "reprogramme_needed" and not gap.route_mode:
             gap.route_mode = _determine_reprogramme_mode(gap, target_skill, policy)
@@ -1032,6 +1128,7 @@ def execute_iteration(
                 "If you are authoring the current .st layer, return JSON only through this semantic_skeleton.v1 frame.\n"
                 "Build inside out / back to front: foundational lower-order layers must already exist before a higher-order layer embeds them.\n"
                 "Foundational Python tools under tools/*.py are lawful lower-order layers. If one is missing, emit the concrete tool-authoring gap(s) first instead of forcing a premature skeleton.\n"
+                "Tool-script authoring is part of your structural judgment surface here: decide whether the next lawful move is to author a tool foundation, reuse an existing foundation hash, or continue the current .st layer.\n"
                 "Treat action packages/codons and tool scripts as one hash-native action environment.\n"
                 "In the Action Foundations inventory, surface=semantic_tree means an embeddable compositional unit; surface=described_blob means a foundational executable/data block.\n"
                 "When activated by name/vocab, a block uses its canonical default gap contract. When embedded by hash, you may specialize manifestation only through an explicit embedding.gap_override.\n"
@@ -1045,6 +1142,7 @@ def execute_iteration(
             "Choose the next lawful move in the current turn.\n"
             "- If judgment is enough, emit the next clarified gap(s) or no gaps.\n"
             "- Anything involving skills/actions/*.st is your domain under reason_needed.\n"
+            "- Foundational tool-script authoring under tools/*.py for workflow construction is also your domain.\n"
             "- Do not hand action/workflow creation, repair, schema alignment, or restructuring to reprogramme_needed.\n"
             "- reprogramme_needed may only be surfaced from reason_needed for entity-tree persistence.\n"
             f"- {'If this is new skills/actions/*.st origination, you own workflow authoring. Return one concrete semantic_skeleton.v1 action layer and actualize it now; do not emit another generic create/write file gap.' if author_actions else 'If new reusable workflow structure is needed, author the concrete creation/update gap(s) needed to actualize it.'}\n"
@@ -1230,9 +1328,16 @@ def execute_iteration(
         policy = hooks.load_tree_policy()
         target_entity = _entity_target_for_reprogramme(gap, registry)
         route_mode = _determine_reprogramme_mode(gap, target_entity, policy)
-        if _new_action_origination_requires_reason(gap, route_mode=route_mode, target_entity=target_entity):
-            print("  → action origination requires reason_needed first")
+        if _requires_reason_judgment(
+            gap,
+            registry=registry,
+            policy=policy,
+            route_mode=route_mode,
+            target_entity=target_entity,
+        ) and route_mode == "action_editor":
+            print("  → structural boundary requires reason_needed first")
             gap.vocab = "reason_needed"
+            gap.route_mode = route_mode
             compiler.ledger.stack.append(entry)
             return ExecutionOutcome(control="continue")
         if route_mode == "action_editor":

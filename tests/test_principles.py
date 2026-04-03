@@ -430,6 +430,7 @@ P3_CASES = [
     ("priority_await_before_commit", lambda: vocab_priority("await_needed") < vocab_priority("commit_needed")),
     ("priority_commit_before_reprogramme", lambda: vocab_priority("commit_needed") < vocab_priority("reprogramme_needed")),
     ("pre_diff_prompt_says_actions_are_reason_domain", lambda: "Anything involving skills/actions/*.st is reason_needed's domain." in loop.PRE_DIFF_SYSTEM),
+    ("pre_diff_prompt_routes_tooling_and_chain_building_to_reason", lambda: "Anything involving tooling/tool-script authoring, workflow building/editing, or chain/stepchain building/editing should route to reason_needed first." in loop.PRE_DIFF_SYSTEM),
     ("tree_policy_skills_reroutes_reprogramme", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
     ("tree_policy_admin_sets_entity_editor_mode", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["reprogramme_mode"] == "entity_editor"),
     ("tree_policy_entities_reroutes_reprogramme", lambda: loop._match_policy("skills/entities/clinton.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
@@ -903,6 +904,27 @@ P10_CASES += [
     ("new_action_origination_requires_reason", lambda: execution_engine_module._new_action_origination_requires_reason(make_gap("create research workflow", vocab="content_needed"), route_mode="action_editor", target_entity=None)),
     ("existing_action_update_does_not_require_reason", lambda: execution_engine_module._new_action_origination_requires_reason(make_gap("update hash_edit", vocab="reprogramme_needed"), route_mode="action_editor", target_entity=skill("hash_edit")) is False),
     ("new_action_reprogramme_does_not_rebounce_to_reason", lambda: execution_engine_module._new_action_origination_requires_reason(make_gap("actualize research workflow", vocab="reprogramme_needed"), route_mode="action_editor", target_entity=None) is False),
+    ("reason_judgment_required_for_public_trigger_assignment", lambda: execution_engine_module._requires_reason_judgment(
+        make_gap("Assign on_vocab:research_needed as the public trigger for the highest-order research workflow in skills/actions/research.st.", vocab="content_needed"),
+        registry=registry(),
+        policy=loop._load_tree_policy(),
+        route_mode="action_editor",
+        target_entity=None,
+    ) is True),
+    ("reason_judgment_required_for_hash_embedding", lambda: execution_engine_module._requires_reason_judgment(
+        make_gap("Embed the committed research leaf by block_ref into the higher-order orchestration workflow.", vocab="content_needed"),
+        registry=registry(),
+        policy=loop._load_tree_policy(),
+        route_mode=None,
+        target_entity=None,
+    ) is True),
+    ("reason_judgment_not_required_for_ordinary_repo_file_edit", lambda: execution_engine_module._requires_reason_judgment(
+        make_gap("Fix a typo in docs/ARCHITECTURE.md.", vocab="hash_edit_needed", content_refs=["docs/ARCHITECTURE.md"]),
+        registry=registry(),
+        policy=loop._load_tree_policy(),
+        route_mode=None,
+        target_entity=None,
+    ) is False),
     ("reason_requires_workflow_authoring_for_new_actions", lambda: execution_engine_module._reason_requires_workflow_authoring(make_gap("Create a new research workflow in skills/actions/"), registry())),
     ("reason_skips_workflow_authoring_for_existing_target", lambda: execution_engine_module._reason_requires_workflow_authoring(make_gap("Update existing hash_edit workflow", content_refs=[skill("hash_edit").hash]), registry()) is False),
     ("chain_spec_injection_detects_research", lambda: execution_engine_module._should_inject_chain_spec_for_reason(make_gap("build a research workflow"))),
@@ -968,6 +990,7 @@ P12_CASES = [
     ("match_policy_exact_path", lambda: loop._match_policy("loop.py", loop._load_tree_policy())["immutable"] is True),
     ("match_policy_prefix_path", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
     ("match_policy_longest_prefix", lambda: loop._match_policy("skills/codons/await.st", loop._load_tree_policy())["on_reject"] == "reason_needed"),
+    ("match_policy_tools_prefix_routes_to_reason", lambda: loop._match_policy("tools/research_web.py", loop._load_tree_policy())["on_mutate"] == "reason_needed"),
     ("chain_spec_in_codon_tree_still_resolves_as_entity_source", lambda: loop._is_entity_source("skills/codons/commitment_chain_construction_spec.st")),
     ("execute_tool_missing_file_nonzero", lambda: loop.execute_tool("tools/does_not_exist.py", {})[1] == 1),
     ("find_identity_skill_admin", lambda: loop._find_identity_skill("discord:784778107013431296", registry()) == skill("admin")),
@@ -2220,6 +2243,170 @@ def test_p12_reason_needed_cannot_surface_reprogramme_for_action_tree():
     assert compiler.ledger.stack[-1].gap.vocab == "reason_needed"
     assert "skills/actions/research.st" in compiler.ledger.stack[-1].gap.desc
     assert any("Anything involving skills/actions/*.st is your domain under reason_needed." in content for content in session.prompts)
+
+
+def test_p12_reprogramme_trigger_assignment_reroutes_to_reason_needed():
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap(
+        "Assign on_vocab:research_needed as the public trigger for the highest-order research workflow in skills/actions/research.st.",
+        vocab="reprogramme_needed",
+        content_refs=["skills/actions/research.st"],
+    )
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("should not run", 1),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: None,
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: None,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=loop._load_tree_policy,
+        match_policy=loop._match_policy,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=loop._emit_reason_skill,
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=SimpleNamespace(inject=lambda *args, **kwargs: None, call=lambda *args, **kwargs: ""),
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.control == "continue"
+    assert compiler.ledger.stack[-1].gap.vocab == "reason_needed"
+    assert compiler.ledger.stack[-1].gap.route_mode == "action_editor"
+
+
+def test_p12_hash_edit_tool_write_reroutes_to_reason_needed():
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap(
+        "Patch tools/research_web.py to add domain-aware scraping.",
+        vocab="hash_edit_needed",
+        content_refs=["tools/research_web.py"],
+    )
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("should not run", 1),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: None,
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: None,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=loop._load_tree_policy,
+        match_policy=loop._match_policy,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=loop._emit_reason_skill,
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=SimpleNamespace(inject=lambda *args, **kwargs: None, call=lambda *args, **kwargs: ""),
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.control == "continue"
+    assert compiler.ledger.stack[-1].gap.vocab == "reason_needed"
+    assert compiler.ledger.stack[-1].gap.route_mode == "action_editor"
+
+
+def test_p12_content_needed_tool_write_reroutes_to_reason_needed_from_desc():
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap(
+        "Create tools/research_image.py as a foundational workflow tool for image-aware research classification.",
+        vocab="content_needed",
+    )
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("should not run", 1),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: None,
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: None,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=loop._load_tree_policy,
+        match_policy=loop._match_policy,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=loop._emit_reason_skill,
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=SimpleNamespace(inject=lambda *args, **kwargs: None, call=lambda *args, **kwargs: ""),
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.control == "continue"
+    assert compiler.ledger.stack[-1].gap.vocab == "reason_needed"
+    assert compiler.ledger.stack[-1].gap.route_mode == "action_editor"
 
 
 def test_p12_turn_outcome_facts_forbid_future_write_promises_without_success():

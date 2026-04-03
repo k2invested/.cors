@@ -144,6 +144,7 @@ DEFAULT_TREE_POLICY = {
     "skills/admin.st":  {"on_mutate": "reprogramme_needed", "reprogramme_mode": "entity_editor"},
     "skills/entities/": {"on_mutate": "reprogramme_needed", "reprogramme_mode": "entity_editor"},
     "skills/actions/":  {"on_mutate": "reason_needed", "reprogramme_mode": "action_editor"},
+    "tools/":           {"on_mutate": "reason_needed", "reprogramme_mode": "action_editor"},
     "ui_output/":       {"on_mutate": "stitch_needed"},
     "logs/":            {"immutable": True},
     "store/":           {"immutable": True},
@@ -1128,6 +1129,7 @@ For .st files, identity profiles, preferences, or long-horizon semantic state up
 
 Action/workflow ownership:
   - Anything involving skills/actions/*.st is reason_needed's domain.
+  - Anything involving tooling/tool-script authoring, workflow building/editing, or chain/stepchain building/editing should route to reason_needed first.
   - New action/workflow creation, repair, restructuring, or schema alignment stays under reason_needed.
   - Do not surface reprogramme_needed for skills/actions/*.st work.
   - reprogramme_needed is for semantic persistence in admin/entity trees and other entity-like state, not action-package authoring.
