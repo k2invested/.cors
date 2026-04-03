@@ -30,7 +30,7 @@ SKILLS_DIR = str(ROOT / "skills")
 ENTITY_SKILLS_DIR = str(ROOT / "skills" / "entities")
 
 VALID_RUNTIME_VOCAB = set(OBSERVE_VOCAB) | set(MUTATE_VOCAB) | set(BRIDGE_VOCAB)
-VALID_ARTIFACT_KINDS = {"entity", "action_update", "hybrid_update"}
+VALID_ARTIFACT_KINDS = {"entity", "action", "hybrid", "action_update", "hybrid_update"}
 SEMANTIC_FIELDS = {
     "identity",
     "preferences",
@@ -402,6 +402,73 @@ def _build_flow_from_steps(steps: list[dict]) -> tuple[str, list[dict], dict] | 
     return phases[0]["id"], phases, _default_closure()
 
 
+def _normalize_semantic_flow(root: str | None, phases: list[dict] | None, closure: dict | None) -> tuple[str | None, list[dict], dict | None]:
+    if not isinstance(phases, list):
+        return root, [], closure
+
+    normalized: list[dict] = []
+    actionable: list[dict] = []
+    for idx, raw_phase in enumerate(phases):
+        phase = dict(raw_phase or {})
+        if phase.get("kind") == "terminal":
+            normalized.append(phase)
+            continue
+        action = phase.get("action") or slugify(phase.get("goal", "") or f"step {idx + 1}")
+        goal = phase.get("goal") or phase.get("gap_template", {}).get("desc") or action
+        post_diff = bool(phase.get("post_diff", False))
+        manifestation = dict(phase.get("manifestation", {}) or {})
+        runtime_vocab = manifestation.get("runtime_vocab")
+        step_like = {
+            "action": action,
+            "desc": goal,
+            "post_diff": post_diff,
+        }
+        if runtime_vocab:
+            step_like["vocab"] = runtime_vocab
+        gap_template = dict(phase.get("gap_template", {}) or {})
+        if gap_template.get("content_refs"):
+            step_like["resolve"] = list(gap_template.get("content_refs") or [])
+        kind = phase.get("kind") or _phase_kind_for_step(step_like)
+        phase.setdefault("id", _flow_phase_id(action, idx))
+        phase["action"] = action
+        phase["goal"] = goal
+        phase["kind"] = kind
+        gap_template.setdefault("desc", goal)
+        gap_template.setdefault("content_refs", list(gap_template.get("content_refs", []) or []))
+        gap_template.setdefault("step_refs", list(gap_template.get("step_refs", []) or []))
+        phase["gap_template"] = gap_template
+        phase.setdefault("manifestation", _manifestation_for_phase(kind, step_like))
+        phase.setdefault("generation", _default_generation(kind, post_diff))
+        phase.setdefault("allowed_vocab", _allowed_vocab_for_phase(kind, step_like))
+        phase["post_diff"] = post_diff
+        normalized.append(phase)
+        actionable.append(phase)
+
+    if actionable:
+        for idx, phase in enumerate(actionable):
+            if phase.get("kind") == "clarify":
+                phase.setdefault("terminal", True)
+                continue
+            if "transitions" not in phase:
+                if idx < len(actionable) - 1:
+                    phase["transitions"] = {"on_done": actionable[idx + 1]["id"]}
+                else:
+                    phase["transitions"] = {"on_close": "phase_done"}
+        if not any(phase.get("kind") == "terminal" for phase in normalized):
+            normalized.append(
+                {
+                    "id": "phase_done",
+                    "kind": "terminal",
+                    "goal": "done",
+                    "action": "close_loop",
+                    "terminal": True,
+                }
+            )
+        root = root or actionable[0]["id"]
+
+    return root, normalized, closure or _default_closure()
+
+
 def _resolve_symbolic_ref(ref: str, refs: dict[str, str]) -> str | None:
     if ref.startswith("@"):
         return refs.get(ref[1:], ref)
@@ -535,9 +602,9 @@ def lower_semantic_skeleton(intent: dict) -> tuple[dict, str, str | None]:
     if artifact_kind == "entity":
         lowered_kind = "entity"
     elif artifact_kind == "action":
-        lowered_kind = "action_update"
+        lowered_kind = "action_update" if existing_ref else "action"
     else:
-        lowered_kind = "hybrid_update"
+        lowered_kind = "hybrid_update" if existing_ref else "hybrid"
 
     st: dict = {
         "name": intent.get("name", "untitled"),
@@ -556,11 +623,16 @@ def lower_semantic_skeleton(intent: dict) -> tuple[dict, str, str | None]:
     if root is not None:
         st["root"] = root
     if phases is not None:
-        st["phases"] = phases
-        st["steps"] = [step for phase in phases if (step := _phase_to_step(phase, st["refs"])) is not None]
+        normalized_root, normalized_phases, normalized_closure = _normalize_semantic_flow(root, phases, closure)
+        if normalized_root is not None:
+            st["root"] = normalized_root
+        st["phases"] = normalized_phases
+        st["steps"] = [step for phase in normalized_phases if (step := _phase_to_step(phase, st["refs"])) is not None]
+        if normalized_closure is not None:
+            st["closure"] = normalized_closure
     else:
         st["steps"] = []
-    if closure is not None:
+    if closure is not None and "closure" not in st:
         st["closure"] = closure
     if artifact_kind == "entity" and not st["steps"]:
         st["steps"] = default_entity_steps(st)

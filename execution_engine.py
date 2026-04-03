@@ -211,9 +211,12 @@ def _pattern_tool_params(gap: Gap) -> dict[str, str] | None:
 
 
 def _entity_target_for_reprogramme(gap: Gap, registry: Any) -> Any | None:
+    requested_name = _explicit_action_name_from_gap(gap)
     for ref in gap.content_refs:
         skill = registry.resolve(ref)
         if skill is not None:
+            if requested_name and getattr(skill, "name", None) != requested_name:
+                continue
             return skill
     return None
 
@@ -293,11 +296,22 @@ def _inject_reason_parent_context(*, session: Any, reason_skill: Any) -> None:
     )
 
 
-def _inferred_action_name_from_gap(gap: Gap) -> str:
+def _explicit_action_name_from_gap(gap: Gap) -> str | None:
     lowered = gap.desc.lower()
     path_match = re.search(r"skills/actions/([a-z0-9_]+)\.st", lowered)
     if path_match:
         return path_match.group(1)
+    file_match = re.search(r"\b([a-z0-9_]+)\.st\b", lowered)
+    if file_match:
+        return file_match.group(1)
+    return None
+
+
+def _inferred_action_name_from_gap(gap: Gap) -> str:
+    lowered = gap.desc.lower()
+    explicit_name = _explicit_action_name_from_gap(gap)
+    if explicit_name:
+        return explicit_name
     trigger_match = re.search(r"triggered by(?: the vocab(?: term)?)? ([a-z_]+)", lowered)
     if trigger_match:
         name = trigger_match.group(1)
@@ -311,6 +325,44 @@ def _inferred_action_name_from_gap(gap: Gap) -> str:
         if token.endswith("_needed"):
             return token[:-7]
     return "new_action"
+
+
+def _assessment_validator_ok(lines: list[str] | None) -> bool:
+    if not lines:
+        return True
+    for line in lines:
+        stripped = line.strip().lower()
+        if stripped.startswith("validator.status:"):
+            return stripped.endswith("ok")
+    return True
+
+
+def _load_json_doc(path: str | None) -> dict | None:
+    if not path:
+        return None
+    candidate = Path(path)
+    if not candidate.exists():
+        return None
+    try:
+        return json.loads(candidate.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _restore_written_step(path: str | None, previous_doc: dict | None) -> None:
+    if not path:
+        return
+    candidate = Path(path)
+    if previous_doc is None:
+        try:
+            candidate.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return
+    try:
+        candidate.write_text(json.dumps(previous_doc, indent=2))
+    except OSError:
+        pass
 
 
 def _collect_clarify_frontier(compiler: Any, current_gap: Gap, *, current_turn: int | None = None) -> list[Gap]:
@@ -889,16 +941,26 @@ def execute_iteration(
         intent = hooks.extract_json(raw)
         if author_actions and isinstance(intent, dict):
             artifact = intent.get("artifact", {}) or {}
+            intent.pop("existing_ref", None)
+            intent.pop("existing_action_ref", None)
+            intent.setdefault("name", inferred_name)
             if intent.get("version") == "semantic_skeleton.v1" and artifact.get("kind") in {"action", "hybrid"}:
                 output, code = hooks.execute_tool("tools/st_builder.py", intent)
                 print(f"  st_builder: {output[:150]}")
                 written_path = hooks.extract_written_path(output)
                 commit_sha = None
                 if code == 0 and written_path:
-                    commit_sha, _ = hooks.auto_commit(
-                        f"reason actualized workflow: {gap.desc[:50]}",
-                        paths=[written_path],
-                    )
+                    precommit_assessment = hooks.step_assessment(None, _load_json_doc(written_path), written_path)
+                    if _assessment_validator_ok(precommit_assessment):
+                        commit_sha, _ = hooks.auto_commit(
+                            f"reason actualized workflow: {gap.desc[:50]}",
+                            paths=[written_path],
+                        )
+                    else:
+                        _restore_written_step(written_path, None)
+                        session.inject("## ST BUILDER FAILED\n" + "\n".join(precommit_assessment))
+                        code = 1
+                        output = "\n".join(precommit_assessment)
                 if commit_sha:
                     print(f"  → committed: {commit_sha}")
                     step_result = Step.create(
@@ -1201,14 +1263,23 @@ def execute_iteration(
             intent.setdefault("trigger", target_entity.trigger)
         intent = _coerce_semantic_frame_for_mode(intent, route_mode)
         if hooks.is_reprogramme_intent(intent):
+            previous_doc = target_entity.payload if target_entity is not None else None
             output, code = hooks.execute_tool("tools/st_builder.py", intent)
             print(f"  st_builder: {output[:150]}")
             written_path = hooks.extract_written_path(output)
             if code == 0 and written_path:
-                commit_sha, _ = hooks.auto_commit(
-                    f"reprogramme: {gap.desc[:50]}",
-                    paths=[written_path],
-                )
+                precommit_assessment = hooks.step_assessment(previous_doc, _load_json_doc(written_path), written_path)
+                if _assessment_validator_ok(precommit_assessment):
+                    commit_sha, _ = hooks.auto_commit(
+                        f"reprogramme: {gap.desc[:50]}",
+                        paths=[written_path],
+                    )
+                else:
+                    _restore_written_step(written_path, previous_doc)
+                    session.inject("## ST BUILDER FAILED\n" + "\n".join(precommit_assessment))
+                    output = "\n".join(precommit_assessment)
+                    code = 1
+                    commit_sha = None
             else:
                 commit_sha = None
             if commit_sha:

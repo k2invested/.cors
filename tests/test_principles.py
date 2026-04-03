@@ -2124,6 +2124,148 @@ def test_p12_new_action_origination_allows_reason_authored_reprogramme():
     ) is False
 
 
+def test_p12_new_action_gap_ignores_example_action_refs_for_target_resolution():
+    gap = make_gap(
+        "Compose research.st in skills/actions/ with trigger on_vocab:research_needed, matching architect.st, debug.st, and hash_edit.st.",
+        content_refs=[skill("hash_edit").hash],
+        vocab="reprogramme_needed",
+    )
+
+    target = execution_engine_module._entity_target_for_reprogramme(gap, registry())
+
+    assert target is None
+
+
+def test_p12_reason_authored_action_strips_existing_ref_before_actualization():
+    captured: dict[str, dict] = {}
+
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps({
+                "version": "semantic_skeleton.v1",
+                "artifact": {"kind": "action", "protected_kind": "action"},
+                "name": "research",
+                "desc": "research workflow",
+                "trigger": "on_vocab:research_needed",
+                "existing_ref": skill("hash_edit").hash,
+                "phases": [
+                    {
+                        "id": "phase_resolve_1",
+                        "kind": "observe",
+                        "goal": "resolve target",
+                        "action": "resolve_target",
+                        "gap_template": {"desc": "resolve target", "content_refs": [], "step_refs": []},
+                        "manifestation": {
+                            "kernel_class": "observe",
+                            "dispersal": "context",
+                            "execution_mode": "runtime_vocab",
+                            "runtime_vocab": "hash_resolve_needed",
+                        },
+                        "post_diff": False,
+                    }
+                ],
+                "closure": {"success": {}},
+            })
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap(
+        "Create a new workflow file at skills/actions/research.st that implements a research workflow triggered by the vocab research_needed.",
+        vocab="reason_needed",
+    )
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    def execute_tool(tool: str, params: dict):
+        captured["params"] = params
+        return ("Written: /Users/k2invested/Desktop/cors/skills/actions/research.st", 0)
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=execute_tool,
+        auto_commit=lambda message, paths=None: ("abc123", None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=loop._is_reprogramme_intent,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=loop._emit_reason_skill,
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: ["skills/actions/research.st [step] +10 -0", "  validator.status: ok"],
+        step_assessment=lambda before, after, path=None: ["  validator.status: ok"],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert captured["params"]["name"] == "research"
+    assert "existing_ref" not in captured["params"]
+
+
+def test_p12_st_builder_normalizes_phases_missing_generation():
+    skeleton = {
+        "version": "semantic_skeleton.v1",
+        "artifact": {"kind": "action", "protected_kind": "action"},
+        "name": "research",
+        "desc": "research workflow",
+        "trigger": "on_vocab:research_needed",
+        "root": "phase_clarify_1",
+        "phases": [
+            {
+                "id": "phase_clarify_1",
+                "kind": "clarify",
+                "goal": "Clarify the research question.",
+                "action": "clarify_question",
+                "gap_template": {"desc": "Clarify the research question."},
+                "manifestation": {
+                    "kernel_class": "clarify",
+                    "dispersal": "context",
+                    "execution_mode": "runtime_vocab",
+                    "runtime_vocab": "clarify_needed",
+                },
+                "post_diff": False,
+            }
+        ],
+        "closure": {"success": {}},
+    }
+
+    lowered, artifact_kind, existing_ref = st_builder_module.lower_semantic_skeleton(skeleton)
+
+    assert artifact_kind == "action"
+    assert existing_ref is None
+    assert lowered["phases"][0]["generation"]["branch_policy"] == "depth_first_to_parent"
+    assert lowered["steps"][0]["vocab"] == "clarify_needed"
+
+
 def test_p12_existing_action_update_does_not_require_reason():
     gap = make_gap("update hash_edit", vocab="reprogramme_needed")
     gap.route_mode = "action_editor"
