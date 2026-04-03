@@ -239,6 +239,24 @@ def test_build_trace_tree_from_realized_chain():
     assert trace_tree["traces"][1]["outcome"]["terminal_state"] == "resolved"
 
 
+def test_build_trace_tree_derives_from_canonical_semantic_tree(monkeypatch):
+    calls = []
+    original = trace_tree_build_module.manifest_engine_module.build_semantic_tree
+
+    def wrapped(doc, *, source_type, source_ref=None):
+        calls.append((source_type, source_ref))
+        return original(doc, source_type=source_type, source_ref=source_ref)
+
+    monkeypatch.setattr(trace_tree_build_module.manifest_engine_module, "build_semantic_tree", wrapped)
+    result = trace_tree_build_module.build_trace_tree({
+        "artifact_type": "stepchain",
+        "candidate": example_stepchain(),
+        "source_ref": "pkg123",
+    })
+    assert result["status"] == "ok"
+    assert calls == [("stepchain", "pkg123")]
+
+
 def test_build_trace_tree_from_skeleton():
     result = trace_tree_build_module.build_trace_tree({
         "artifact_type": "skeleton",

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import sys
-from collections import deque
 from pathlib import Path
 
 
@@ -25,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import manifest_engine as manifest_engine_module
 from step import score_band, vocab_class
 from tools.skeleton_compile import compile_skeleton
 from tools.semantic_skeleton_compile import compile_semantic_skeleton
@@ -149,153 +149,147 @@ def _trace_summary(traces: list[dict]) -> dict:
     }
 
 
-def build_from_stepchain(stepchain: dict, *, source_type: str = "stepchain", source_ref: str | None = None) -> dict:
-    nodes_by_id = {node["id"]: node for node in stepchain.get("nodes", [])}
-    root = stepchain.get("root")
+def _trace_tree_from_semantic_tree(semantic_tree: dict, *, source_type: str, source_ref: str | None = None) -> dict:
+    nodes = list(semantic_tree.get("nodes", []) or [])
+    nodes_by_id = {node.get("id"): node for node in nodes if node.get("id")}
     traces: list[dict] = []
-    children_map: dict[str, list[str]] = {}
-    seen: set[str] = set()
-    queue = deque([(root, None, 0, 0)])
+    root_id = semantic_tree.get("root_id")
 
-    while queue:
-        node_id, parent_id, depth, generation = queue.popleft()
-        if node_id in seen or node_id not in nodes_by_id:
-            continue
-        seen.add(node_id)
-        node = nodes_by_id[node_id]
-        if node.get("terminal"):
-            continue
+    if source_type in {"stepchain", "skeleton", "semantic_skeleton"}:
+        top_level_trace_ids = [f"trace_{node['id']}" for node in nodes if int(node.get("depth", 0)) == 0]
+        for node in nodes:
+            node_id = node.get("id")
+            transitions = dict(node.get("transitions", {}) or {})
+            child_ids = [f"trace_{target}" for target in transitions.values() if target in nodes_by_id]
+            gap = dict(node.get("gap", {}) or {})
+            topology = {
+                "depth": int(node.get("depth", 0)),
+                "generation": int(node.get("depth", 0)),
+                "child_ids": child_ids,
+                "sibling_index": top_level_trace_ids.index(f"trace_{node_id}") if int(node.get("depth", 0)) == 0 and f"trace_{node_id}" in top_level_trace_ids else 0,
+                "sibling_count": len(top_level_trace_ids) if int(node.get("depth", 0)) == 0 else 1,
+                "sibling_policy": "after_descendants",
+                "blocked_siblings": [],
+            }
+            if int(node.get("depth", 0)) == 0 and f"trace_{node_id}" in top_level_trace_ids:
+                idx = top_level_trace_ids.index(f"trace_{node_id}")
+                topology["blocked_siblings"] = top_level_trace_ids[idx + 1:]
+            if node.get("parent_id"):
+                topology["parent_id"] = f"trace_{node['parent_id']}"
+            trace = {
+                "id": f"trace_{node_id}",
+                "source_phase": node_id,
+                "gap": _node_gap_expression(
+                    desc=gap.get("desc", node.get("goal", "")),
+                    vocab=gap.get("runtime_vocab"),
+                    status="resolved" if not child_ids else "active",
+                    step_refs=list(gap.get("step_refs", []) or []),
+                    content_refs=list(gap.get("content_refs", []) or []),
+                    relevance=gap.get("relevance", 0.0),
+                    confidence=gap.get("confidence", 0.0),
+                    grounded=gap.get("grounded", 0.0),
+                ),
+                "manifestation": _stepchain_manifestation(
+                    {
+                        "kind": node.get("kind"),
+                        "manifestation": node.get("manifestation", {}) or {},
+                        "generation": node.get("generation", {}) or {},
+                        "post_diff": gap.get("post_diff", False),
+                    }
+                ),
+                "topology": topology,
+                "outcome": {
+                    "terminal_state": "resolved" if not child_ids else "active",
+                    "closure_reason": "compiled transition node" if not child_ids else "transitions remain open",
+                },
+            }
+            if child_ids:
+                trace["outcome"]["return_target"] = child_ids[0]
+            traces.append(trace)
+    else:
+        previous_trace_id: str | None = None
+        generation = 0
+        for node in nodes:
+            step_id = node.get("id")
+            gaps = list(node.get("gaps", []) or ([] if not node.get("gap") else [node.get("gap")]))
+            sibling_ids = [f"trace_{gap.get('hash', f'{step_id}_gap_{idx}')}" for idx, gap in enumerate(gaps)]
+            for gap_idx, gap in enumerate(gaps):
+                gap_hash = gap.get("hash", f"{step_id}_gap_{gap_idx}")
+                trace_id = f"trace_{gap_hash}"
+                topology = {
+                    "depth": 0 if previous_trace_id is None else 1,
+                    "generation": generation,
+                    "child_ids": [],
+                    "sibling_index": gap_idx,
+                    "sibling_count": max(1, len(sibling_ids)),
+                    "sibling_policy": "after_descendants",
+                    "blocked_siblings": sibling_ids[gap_idx + 1:],
+                }
+                if previous_trace_id:
+                    topology["parent_id"] = previous_trace_id
+                traces.append(
+                    {
+                        "id": trace_id,
+                        "source_step": step_id,
+                        "gap": _node_gap_expression(
+                            desc=gap.get("desc", ""),
+                            vocab=gap.get("runtime_vocab"),
+                            status=gap.get("status", "active"),
+                            step_refs=list(gap.get("step_refs", []) or []),
+                            content_refs=list(gap.get("content_refs", []) or []),
+                            relevance=gap.get("relevance", 0.0),
+                            confidence=gap.get("confidence", 0.0),
+                            grounded=gap.get("grounded", 0.0),
+                            gap_hash=gap_hash,
+                        ),
+                        "manifestation": _realized_gap_manifestation(
+                            {
+                                "vocab": gap.get("runtime_vocab"),
+                                "resolved": gap.get("status") == "resolved",
+                                "dormant": gap.get("status") == "dormant",
+                            }
+                        ),
+                        "topology": topology,
+                        "outcome": {
+                            "terminal_state": gap.get("status", "active"),
+                            "closure_reason": "recorded runtime gap state",
+                        },
+                    }
+                )
+                previous_trace_id = trace_id
+                generation += 1
 
-        gap_template = node.get("gap_template", {})
-        trace_id = f"trace_{node_id}"
-        next_ids = list((node.get("transitions") or {}).values())
-        child_ids = [f"trace_{next_id}" for next_id in next_ids if next_id in nodes_by_id and not nodes_by_id[next_id].get("terminal")]
-        children_map[trace_id] = child_ids
-
-        topology = {
-            "depth": depth,
-            "generation": generation,
-            "child_ids": child_ids,
-            "sibling_index": 0,
-            "sibling_count": 1,
-            "sibling_policy": "after_descendants",
-            "blocked_siblings": [],
-        }
-        if parent_id:
-            topology["parent_id"] = parent_id
-
-        trace = {
-            "id": trace_id,
-            "source_phase": node_id,
-            "gap": _node_gap_expression(
-                desc=gap_template.get("desc", node.get("goal", "")),
-                vocab=(node.get("manifestation", {}) or {}).get("runtime_vocab")
-                or (node.get("allowed_vocab") or [None])[0],
-                status="resolved" if not child_ids else "active",
-                step_refs=list(gap_template.get("step_refs", []) or []),
-                content_refs=list(gap_template.get("content_refs", []) or []),
-                relevance=node.get("relevance", 0.0),
-                confidence=0.0,
-                grounded=0.0,
-            ),
-            "manifestation": _stepchain_manifestation(node),
-            "topology": topology,
-            "outcome": {
-                "terminal_state": "resolved" if not child_ids else "active",
-                "closure_reason": "compiled transition node" if not child_ids else "transitions remain open",
-            },
-        }
-        if child_ids:
-            trace["outcome"]["return_target"] = child_ids[0]
-        traces.append(trace)
-
-        for next_id in next_ids:
-            next_node = nodes_by_id.get(next_id)
-            if next_node and not next_node.get("terminal"):
-                queue.append((next_id, trace_id, depth + 1, generation + 1))
-
-    trace_ids = [trace["id"] for trace in traces]
-    sibling_count = len(trace_ids)
-    for idx, trace_id in enumerate(trace_ids):
-        trace = next(trace for trace in traces if trace["id"] == trace_id)
-        trace["topology"]["sibling_index"] = idx
-        trace["topology"]["sibling_count"] = sibling_count
-        trace["topology"]["blocked_siblings"] = trace_ids[idx + 1:] if idx + 1 < sibling_count and trace["topology"]["depth"] == 0 else []
-
-    root_trace = f"trace_{root}" if root else (traces[0]["id"] if traces else "")
+    root_trace = (
+        f"trace_{root_id}"
+        if source_type in {"stepchain", "skeleton", "semantic_skeleton"} and root_id
+        else (traces[0]["id"] if traces else "")
+    )
     return {
         "version": "trace_tree.v1",
         "source_type": source_type,
-        "source_ref": source_ref or root_trace,
+        "source_ref": source_ref or semantic_tree.get("source_ref") or root_trace,
         "root_trace": root_trace,
         "traces": traces,
         "summary": _trace_summary(traces),
     }
+
+
+def build_from_stepchain(stepchain: dict, *, source_type: str = "stepchain", source_ref: str | None = None) -> dict:
+    semantic_tree = manifest_engine_module.build_semantic_tree(
+        stepchain,
+        source_type=source_type,
+        source_ref=source_ref or stepchain.get("name"),
+    )
+    return _trace_tree_from_semantic_tree(semantic_tree, source_type=source_type, source_ref=source_ref)
 
 
 def build_from_realized_chain(chain_doc: dict, *, source_ref: str | None = None) -> dict:
-    steps = chain_doc.get("steps", []) or chain_doc.get("resolved_steps", []) or []
-    traces: list[dict] = []
-    root_trace = ""
-    previous_trace_id: str | None = None
-    generation = 0
-
-    for step_idx, step in enumerate(steps):
-        step_hash = step.get("hash", f"step_{step_idx}")
-        gaps = step.get("gaps", []) or []
-        sibling_ids = [f"trace_{gap.get('hash', f'{step_hash}_gap_{idx}')}" for idx, gap in enumerate(gaps)]
-
-        for gap_idx, gap in enumerate(gaps):
-            gap_hash = gap.get("hash", f"{step_hash}_gap_{gap_idx}")
-            trace_id = f"trace_{gap_hash}"
-            if not root_trace:
-                root_trace = trace_id
-            status = "dormant" if gap.get("dormant") else "resolved" if gap.get("resolved") else "active"
-            topology = {
-                "depth": 0 if previous_trace_id is None else 1,
-                "generation": generation,
-                "child_ids": [],
-                "sibling_index": gap_idx,
-                "sibling_count": max(1, len(sibling_ids)),
-                "sibling_policy": "after_descendants",
-                "blocked_siblings": sibling_ids[gap_idx + 1:],
-            }
-            if previous_trace_id:
-                topology["parent_id"] = previous_trace_id
-
-            trace = {
-                "id": trace_id,
-                "source_step": step_hash,
-                "gap": _node_gap_expression(
-                    desc=gap.get("desc", ""),
-                    vocab=gap.get("vocab"),
-                    status=status,
-                    step_refs=list(gap.get("step_refs", []) or []),
-                    content_refs=list(gap.get("content_refs", []) or []),
-                    relevance=(gap.get("scores") or {}).get("relevance", 0.0),
-                    confidence=(gap.get("scores") or {}).get("confidence", 0.0),
-                    grounded=(gap.get("scores") or {}).get("grounded", 0.0),
-                    gap_hash=gap_hash,
-                ),
-                "manifestation": _realized_gap_manifestation(gap),
-                "topology": topology,
-                "outcome": {
-                    "terminal_state": status,
-                    "closure_reason": "recorded runtime gap state",
-                },
-            }
-            traces.append(trace)
-            previous_trace_id = trace_id
-            generation += 1
-
-    return {
-        "version": "trace_tree.v1",
-        "source_type": "realized_chain",
-        "source_ref": source_ref or chain_doc.get("hash") or root_trace,
-        "root_trace": root_trace,
-        "traces": traces,
-        "summary": _trace_summary(traces),
-    }
+    semantic_tree = manifest_engine_module.build_semantic_tree(
+        chain_doc,
+        source_type="realized_chain",
+        source_ref=source_ref or chain_doc.get("hash"),
+    )
+    return _trace_tree_from_semantic_tree(semantic_tree, source_type="realized_chain", source_ref=source_ref)
 
 
 def build_trace_tree(doc: dict) -> dict:

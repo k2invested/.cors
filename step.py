@@ -713,13 +713,20 @@ class Trajectory:
             └─ ...
         """
         chains = self.recent_chains(n)
+        import manifest_engine as manifest_engine_module
 
         if not chains:
             # No chains yet — render steps as a flat tree
             steps = self.recent(n)
             if not steps:
                 return "(empty trajectory)"
-            rendered = self._render_steps_as_tree(steps, registry)
+            tree = manifest_engine_module.build_runtime_semantic_tree(
+                [step.to_dict() for step in steps],
+                source_type="trajectory_recent",
+                source_ref="recent",
+                summary_desc="recent trajectory",
+            )
+            rendered = "\n".join(self._render_semantic_tree_lines(tree, registry=registry))
             rogue_lines = self._render_rogue_lines(registry=registry)
             if rogue_lines:
                 return f"{rendered}\n\n" + "\n".join(rogue_lines)
@@ -727,7 +734,8 @@ class Trajectory:
 
         lines = []
         for chain in chains:
-            lines.extend(self._render_chain_lines(chain, registry=registry))
+            tree = manifest_engine_module.build_semantic_tree_from_trajectory(self, chain_id=chain.hash)
+            lines.extend(self._render_semantic_tree_lines(tree, registry=registry))
 
         rogue_lines = self._render_rogue_lines(registry=registry)
         if rogue_lines:
@@ -745,7 +753,143 @@ class Trajectory:
         chain = self.chains.get(chain_id)
         if not chain:
             return f"(missing chain: {chain_id})"
-        return "\n".join(self._render_chain_lines(chain, registry=registry, highlight_gap=highlight_gap))
+        import manifest_engine as manifest_engine_module
+        tree = manifest_engine_module.build_semantic_tree_from_trajectory(self, chain_id=chain_id)
+        return "\n".join(self._render_semantic_tree_lines(tree, registry=registry, highlight_gap=highlight_gap))
+
+    def _render_semantic_tree_lines(self, tree: dict, registry=None,
+                                    highlight_gap: str | None = None) -> list[str]:
+        nodes = list(tree.get("nodes", []) or [])
+        if tree.get("source_type") == "realized_chain":
+            desc = tree.get("desc") or "in progress"
+            status = "resolved" if tree.get("resolved") else f"active, {len(nodes)} steps"
+            time_str = ""
+            if nodes:
+                last_meta = dict(nodes[-1].get("meta", {}) or {})
+                if last_meta.get("timestamp", 0) > 0:
+                    time_str = f" [{absolute_time(last_meta['timestamp'])}]"
+            lines = [f"chain:{tree.get('source_ref')}  \"{desc}\" ({status}){time_str}"]
+            origin_marker = " [focus]" if highlight_gap and tree.get("origin_gap") == highlight_gap else ""
+            lines.append(f"  origin: {tree.get('origin_gap')}{origin_marker}")
+            for index, node in enumerate(nodes):
+                is_last_step = index == len(nodes) - 1
+                branch = "└" if is_last_step else "├"
+                cont = " " if is_last_step else "│"
+                meta = dict(node.get("meta", {}) or {})
+                refs = dict(node.get("refs", {}) or {})
+                ref_str = self._render_refs(refs.get("step_refs", []) or [], refs.get("content_refs", []) or [], registry)
+                commit_str = f" → commit:{meta.get('commit')}" if meta.get("commit") else ""
+                time_tag = f" ({absolute_time(meta['timestamp'])})" if meta.get("timestamp", 0) > 0 else ""
+                rogue_tag = ""
+                if meta.get("rogue"):
+                    extras = [part for part in [meta.get("rogue_kind"), meta.get("failure_source")] if part]
+                    rogue_tag = f" (rogue:{', '.join(extras)})" if extras else " (rogue)"
+                lines.append(
+                    f"  {branch}─ {node.get('signature')} step:{node.get('id')} "
+                    f"\"{node.get('goal', '')}\"{ref_str}{commit_str}{time_tag}{rogue_tag}"
+                )
+                for assessment_line in meta.get("assessment", []) or []:
+                    lines.append(f"  {cont}   assessment: {assessment_line}")
+                gaps = list(node.get("gaps", []) or ([] if not node.get("gap") else [node.get("gap")]))
+                active = [gap for gap in gaps if gap.get("status") == "active"]
+                resolved = [gap for gap in gaps if gap.get("status") == "resolved"]
+                dormant = [gap for gap in gaps if gap.get("status") == "dormant"]
+                for gap_index, gap in enumerate(active + resolved + dormant):
+                    is_last_gap = gap_index == len(active + resolved + dormant) - 1
+                    gbranch = "└" if is_last_gap else "├"
+                    gap_obj = Gap(
+                        hash=gap.get("hash", ""),
+                        desc=gap.get("desc", ""),
+                        content_refs=list(gap.get("content_refs", []) or []),
+                        step_refs=list(gap.get("step_refs", []) or []),
+                        origin=gap.get("origin"),
+                        scores=Epistemic(
+                            relevance=gap.get("relevance") or 0.0,
+                            confidence=gap.get("confidence") or 0.0,
+                            grounded=gap.get("grounded") or 0.0,
+                        ),
+                        vocab=gap.get("runtime_vocab"),
+                        resolved=gap.get("status") == "resolved",
+                        dormant=gap.get("status") == "dormant",
+                    )
+                    focus = " [focus]" if highlight_gap and gap_obj.hash == highlight_gap else ""
+                    if gap_obj.dormant:
+                        score = gap_obj.scores.magnitude()
+                        lines.append(
+                            f"  {cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
+                            f"gap:{gap_obj.hash} \"{gap_obj.desc}\" (dormant, score:{score:.2f}){focus}"
+                        )
+                    elif gap_obj.resolved:
+                        lines.append(
+                            f"  {cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
+                            f"gap:{gap_obj.hash} \"{gap_obj.desc}\" (resolved){focus}"
+                        )
+                    else:
+                        gref_str = self._render_refs(gap_obj.step_refs, gap_obj.content_refs, registry)
+                        vocab_str = f" [{gap_obj.vocab}]" if gap_obj.vocab else ""
+                        lines.append(
+                            f"  {cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
+                            f"gap:{gap_obj.hash} \"{gap_obj.desc}\"{vocab_str}{gref_str}{focus}"
+                        )
+            return lines
+
+        lines = []
+        for index, node in enumerate(nodes):
+            is_last = index == len(nodes) - 1
+            branch = "└" if is_last else "├"
+            cont = " " if is_last else "│"
+            meta = dict(node.get("meta", {}) or {})
+            refs = dict(node.get("refs", {}) or {})
+            ref_str = self._render_refs(refs.get("step_refs", []) or [], refs.get("content_refs", []) or [], registry)
+            commit_str = f" → commit:{meta.get('commit')}" if meta.get("commit") else ""
+            time_tag = f" ({absolute_time(meta['timestamp'])})" if meta.get("timestamp", 0) > 0 else ""
+            rogue_tag = ""
+            if meta.get("rogue"):
+                extras = [part for part in [meta.get("rogue_kind"), meta.get("failure_source")] if part]
+                rogue_tag = f" (rogue:{', '.join(extras)})" if extras else " (rogue)"
+            lines.append(
+                f"{branch}─ {node.get('signature')} step:{node.get('id')} "
+                f"\"{node.get('goal', '')}\"{ref_str}{commit_str}{time_tag}{rogue_tag}"
+            )
+            for assessment_line in meta.get("assessment", []) or []:
+                lines.append(f"{cont}   assessment: {assessment_line}")
+            gaps = list(node.get("gaps", []) or ([] if not node.get("gap") else [node.get("gap")]))
+            for gap_index, gap in enumerate(gaps):
+                is_last_gap = gap_index == len(gaps) - 1
+                gbranch = "└" if is_last_gap else "├"
+                gap_obj = Gap(
+                    hash=gap.get("hash", ""),
+                    desc=gap.get("desc", ""),
+                    content_refs=list(gap.get("content_refs", []) or []),
+                    step_refs=list(gap.get("step_refs", []) or []),
+                    origin=gap.get("origin"),
+                    scores=Epistemic(
+                        relevance=gap.get("relevance") or 0.0,
+                        confidence=gap.get("confidence") or 0.0,
+                        grounded=gap.get("grounded") or 0.0,
+                    ),
+                    vocab=gap.get("runtime_vocab"),
+                    resolved=gap.get("status") == "resolved",
+                    dormant=gap.get("status") == "dormant",
+                )
+                if gap_obj.dormant:
+                    lines.append(
+                        f"{cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
+                        f"gap:{gap_obj.hash} \"{gap_obj.desc}\" (dormant)"
+                    )
+                elif gap_obj.resolved:
+                    lines.append(
+                        f"{cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
+                        f"gap:{gap_obj.hash} \"{gap_obj.desc}\" (resolved)"
+                    )
+                else:
+                    gref_str = self._render_refs(gap_obj.step_refs, gap_obj.content_refs, registry)
+                    vocab_str = f" [{gap_obj.vocab}]" if gap_obj.vocab else ""
+                    lines.append(
+                        f"{cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
+                        f"gap:{gap_obj.hash} \"{gap_obj.desc}\"{vocab_str}{gref_str}"
+                    )
+        return lines
 
     def _render_chain_lines(self, chain: "Chain", registry=None,
                             highlight_gap: str | None = None) -> list[str]:

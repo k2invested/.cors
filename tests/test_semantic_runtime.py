@@ -43,7 +43,8 @@ def test_resolve_hash_injects_entity_but_reads_action_package():
     action_rendered = loop.resolve_hash(hash_edit.hash, traj)
 
     assert admin_rendered is not None and admin_rendered.startswith("## Entity:")
-    assert action_rendered is not None and '"name": "hash_edit"' in action_rendered
+    assert action_rendered is not None and action_rendered.startswith("action_tree:hash_edit:")
+    assert "trigger: on_vocab:hash_edit_needed" in action_rendered
     assert not action_rendered.startswith("## Entity:")
 
 

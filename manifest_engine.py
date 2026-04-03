@@ -161,6 +161,72 @@ def _semantic_gap_from_phase(phase: dict) -> dict:
     }
 
 
+def _runtime_gap_status(gap: dict) -> str:
+    if gap.get("dormant"):
+        return "dormant"
+    if gap.get("resolved"):
+        return "resolved"
+    return "active"
+
+
+def _semantic_gap_from_runtime_gap(gap: dict, *, fallback_desc: str = "", post_diff: bool = False) -> dict:
+    scores = dict(gap.get("scores", {}) or {})
+    vocab = gap.get("vocab")
+    desc = gap.get("desc") or fallback_desc
+    expression = {
+        "hash": gap.get("hash"),
+        "desc": desc,
+        "status": _runtime_gap_status(gap),
+        "step_refs": list(gap.get("step_refs", []) or []),
+        "content_refs": list(gap.get("content_refs", []) or []),
+        "step_ref_count": len(gap.get("step_refs", []) or []),
+        "content_ref_count": len(gap.get("content_refs", []) or []),
+        "runtime_vocab": vocab,
+        "allowed_vocab": [vocab] if vocab else [],
+        "post_diff": post_diff,
+        "relevance": scores.get("relevance"),
+        "confidence": scores.get("confidence"),
+        "grounded": scores.get("grounded"),
+    }
+    if gap.get("origin"):
+        expression["origin"] = gap["origin"]
+    if gap.get("route_mode"):
+        expression["route_mode"] = gap["route_mode"]
+    return expression
+
+
+def _runtime_step_kind(step: dict, gaps: list[dict]) -> str:
+    if step.get("rogue"):
+        return "higher_order"
+    if step.get("commit"):
+        return "mutate"
+    primary = next((gap for gap in gaps if gap.get("status") == "active"), None)
+    if primary is None:
+        primary = next((gap for gap in gaps if gap.get("status") == "resolved"), None)
+    if primary is None:
+        primary = next((gap for gap in gaps if gap.get("status") == "dormant"), None)
+    vocab = (primary or {}).get("runtime_vocab")
+    klass = vocab_class(vocab)
+    return {
+        "o": "observe",
+        "m": "mutate",
+        "b": "reason",
+        "c": "clarify",
+    }.get(klass, "observe")
+
+
+def _runtime_step_signature(step: dict, gaps: list[dict]) -> str:
+    active = sum(1 for gap in gaps if gap.get("status") == "active")
+    dormant = sum(1 for gap in gaps if gap.get("status") == "dormant")
+    if step.get("rogue"):
+        kind = "r"
+    else:
+        kind = "m" if step.get("commit") else "o"
+    flow = "+" if active else "~" if dormant else "="
+    count = str(active) if active else ""
+    return f"{{{kind}{flow}{count}}}"
+
+
 def _semantic_parent_map(phases: list[dict]) -> dict[str, str]:
     parents: dict[str, str] = {}
     ids = {phase.get("id") for phase in phases}
@@ -182,6 +248,90 @@ def _semantic_summary(nodes: list[dict], root_id: str | None) -> dict:
         "mutation_nodes": sum(1 for node in nodes if node.get("kind") == "mutate"),
         "max_depth": max((node.get("depth", 0) for node in nodes), default=0),
     }
+
+
+def build_runtime_semantic_tree(steps: list[dict], *, source_type: str, source_ref: str | None = None,
+                                root_id: str | None = None, summary_desc: str | None = None,
+                                origin_gap: str | None = None, resolved: bool | None = None) -> dict:
+    nodes = []
+    previous_id = None
+    for depth, step in enumerate(steps):
+        step_id = step.get("hash", f"step_{depth}")
+        gaps = [
+            _semantic_gap_from_runtime_gap(gap or {}, fallback_desc=step.get("desc", ""), post_diff=bool(step.get("commit")))
+            for gap in (step.get("gaps", []) or [])
+        ]
+        primary_gap = next((gap for gap in gaps if gap.get("status") == "active"), None)
+        if primary_gap is None:
+            primary_gap = next((gap for gap in gaps if gap.get("status") == "resolved"), None)
+        if primary_gap is None:
+            primary_gap = next((gap for gap in gaps if gap.get("status") == "dormant"), None)
+        if primary_gap is None:
+            primary_gap = {
+                "desc": step.get("desc", ""),
+                "status": "resolved" if not gaps else "active",
+                "step_refs": [],
+                "content_refs": [],
+                "step_ref_count": 0,
+                "content_ref_count": 0,
+                "runtime_vocab": None,
+                "allowed_vocab": [],
+                "post_diff": bool(step.get("commit")),
+                "relevance": None,
+                "confidence": None,
+                "grounded": None,
+            }
+        nodes.append(
+            {
+                "id": step_id,
+                "parent_id": previous_id,
+                "depth": depth,
+                "signature": _runtime_step_signature(step, gaps),
+                "kind": _runtime_step_kind(step, gaps),
+                "action": step.get("desc"),
+                "goal": step.get("desc"),
+                "gap": primary_gap,
+                "gaps": gaps,
+                "manifestation": {
+                    "execution_mode": "runtime_vocab" if primary_gap.get("runtime_vocab") else "inline",
+                    "background": False,
+                },
+                "generation": {"return_policy": "resume_parent"},
+                "transitions": {},
+                "refs": {
+                    "step_refs": list(step.get("step_refs", []) or []),
+                    "content_refs": list(step.get("content_refs", []) or []),
+                },
+                "meta": {
+                    "timestamp": step.get("t", 0.0),
+                    "commit": step.get("commit"),
+                    "chain_id": step.get("chain_id"),
+                    "parent": step.get("parent"),
+                    "rogue": bool(step.get("rogue")),
+                    "rogue_kind": step.get("rogue_kind"),
+                    "failure_source": step.get("failure_source"),
+                    "failure_detail": step.get("failure_detail"),
+                    "assessment": list(step.get("assessment", []) or []),
+                },
+            }
+        )
+        previous_id = step_id
+
+    semantic_tree = {
+        "version": "semantic_tree.v1",
+        "source_type": source_type,
+        "source_ref": source_ref or (nodes[0]["id"] if nodes else ""),
+        "root_id": root_id or (nodes[0]["id"] if nodes else None),
+        "nodes": nodes,
+        "summary": _semantic_summary(nodes, root_id or (nodes[0]["id"] if nodes else None)),
+    }
+    if summary_desc is not None:
+        semantic_tree["desc"] = summary_desc
+    if origin_gap is not None:
+        semantic_tree["origin_gap"] = origin_gap
+    if resolved is not None:
+        semantic_tree["resolved"] = resolved
+    return semantic_tree
 
 
 def build_semantic_tree(doc: dict, *, source_type: str, source_ref: str | None = None) -> dict:
@@ -219,47 +369,15 @@ def build_semantic_tree(doc: dict, *, source_type: str, source_ref: str | None =
         }
 
     if doc.get("origin_gap") is not None and isinstance(doc.get("steps"), list):
-        nodes = []
-        previous_id = None
-        for depth, step in enumerate(doc.get("steps", [])):
-            step_id = step.get("hash", f"step_{depth}")
-            active_gaps = [gap for gap in (step.get("gaps", []) or []) if not gap.get("dormant")]
-            gap = (active_gaps or (step.get("gaps", []) or [{}]))[0]
-            nodes.append(
-                {
-                    "id": step_id,
-                    "parent_id": previous_id,
-                    "depth": depth,
-                    "signature": step.get("hash", step_id),
-                    "kind": vocab_class(gap.get("vocab")),
-                    "action": step.get("desc"),
-                    "goal": step.get("desc"),
-                    "gap": {
-                        "desc": gap.get("desc", step.get("desc", "")),
-                        "step_refs": list(gap.get("step_refs", []) or []),
-                        "content_refs": list(gap.get("content_refs", []) or []),
-                        "step_ref_count": len(gap.get("step_refs", []) or []),
-                        "content_ref_count": len(gap.get("content_refs", []) or []),
-                        "runtime_vocab": gap.get("vocab"),
-                        "allowed_vocab": [gap.get("vocab")] if gap.get("vocab") else [],
-                        "post_diff": bool(step.get("commit")),
-                        "relevance": (gap.get("scores") or {}).get("relevance"),
-                    },
-                    "manifestation": {"execution_mode": "runtime_vocab" if gap.get("vocab") else "inline"},
-                    "generation": {"return_policy": "resume_parent"},
-                    "transitions": {},
-                }
-            )
-            previous_id = step_id
-        root_id = nodes[0]["id"] if nodes else None
-        return {
-            "version": "semantic_tree.v1",
-            "source_type": source_type,
-            "source_ref": source_ref or doc.get("hash") or root_id or "",
-            "root_id": root_id,
-            "nodes": nodes,
-            "summary": _semantic_summary(nodes, root_id),
-        }
+        return build_runtime_semantic_tree(
+            list(doc.get("steps", []) or []),
+            source_type=source_type,
+            source_ref=source_ref or doc.get("hash"),
+            root_id=None,
+            summary_desc=doc.get("desc"),
+            origin_gap=doc.get("origin_gap"),
+            resolved=doc.get("resolved"),
+        )
 
     normalized = doc
     if not (normalized.get("root") and isinstance(normalized.get("phases"), list) and isinstance(normalized.get("closure"), dict)):
@@ -302,6 +420,31 @@ def build_semantic_tree(doc: dict, *, source_type: str, source_ref: str | None =
             "closure": dict(normalized.get("closure", {}) or {}),
         },
     }
+
+
+def build_semantic_tree_from_trajectory(traj: Trajectory, *, chain_id: str | None = None,
+                                        recent_n: int = 5) -> dict:
+    if chain_id:
+        chain = traj.chains.get(chain_id)
+        if chain is None:
+            chain = next((candidate for candidate in traj.chains.values() if candidate.hash == chain_id), None)
+        if chain:
+            steps = [traj.steps[step_hash].to_dict() for step_hash in chain.steps if step_hash in traj.steps]
+            return build_runtime_semantic_tree(
+                steps,
+                source_type="realized_chain",
+                source_ref=chain.hash,
+                summary_desc=chain.desc,
+                origin_gap=chain.origin_gap,
+                resolved=chain.resolved,
+            )
+    steps = [step.to_dict() for step in traj.recent(recent_n)]
+    return build_runtime_semantic_tree(
+        steps,
+        source_type="trajectory_recent",
+        source_ref="recent",
+        summary_desc="recent trajectory",
+    )
 
 
 def render_skill_package(skill: Skill) -> str:
