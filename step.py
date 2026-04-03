@@ -393,6 +393,11 @@ class Chain:
     desc:       str = ""          # semantic summary (set when chain completes)
     resolved:   bool = False
     extracted:  bool = False      # True if saved to chains/*.json
+    chain_kind: str = "normal"    # normal | reason_loop
+    controller_vocab: Optional[str] = None
+    target_desc: str = ""
+    target_refs: list[str] = field(default_factory=list)
+    loop_state: dict = field(default_factory=dict)
 
     @staticmethod
     def create(origin_gap: str, first_step: str) -> "Chain":
@@ -412,7 +417,7 @@ class Chain:
         return len(self.steps)
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "hash": self.hash,
             "origin_gap": self.origin_gap,
             "steps": self.steps,
@@ -420,6 +425,17 @@ class Chain:
             "resolved": self.resolved,
             "extracted": self.extracted,
         }
+        if self.chain_kind != "normal":
+            data["chain_kind"] = self.chain_kind
+        if self.controller_vocab:
+            data["controller_vocab"] = self.controller_vocab
+        if self.target_desc:
+            data["target_desc"] = self.target_desc
+        if self.target_refs:
+            data["target_refs"] = self.target_refs
+        if self.loop_state:
+            data["loop_state"] = self.loop_state
+        return data
 
     @staticmethod
     def from_dict(d: dict) -> "Chain":
@@ -430,6 +446,11 @@ class Chain:
             desc=d.get("desc", ""),
             resolved=d.get("resolved", False),
             extracted=d.get("extracted", False),
+            chain_kind=d.get("chain_kind", "normal"),
+            controller_vocab=d.get("controller_vocab"),
+            target_desc=d.get("target_desc", ""),
+            target_refs=d.get("target_refs", []),
+            loop_state=d.get("loop_state", {}) or {},
         )
 
 
@@ -848,7 +869,19 @@ class Trajectory:
                 last_meta = dict(nodes[-1].get("meta", {}) or {})
                 if last_meta.get("timestamp", 0) > 0:
                     time_str = f" [{absolute_time(last_meta['timestamp'])}]"
-            lines = [f"chain:{tree.get('source_ref')}  \"{desc}\" ({status}){time_str}"]
+            chain_meta = self.chains.get(tree.get("source_ref"))
+            controller_suffix = ""
+            if chain_meta and chain_meta.chain_kind == "reason_loop":
+                loop_state = dict(chain_meta.loop_state or {})
+                attempts = loop_state.get("attempt_count", 0)
+                max_attempts = loop_state.get("max_attempts", 0)
+                loop_status = loop_state.get("status", "active")
+                target = loop_state.get("target_path") or chain_meta.target_desc or desc
+                controller_suffix = (
+                    f" [reason_loop {loop_status} attempts={attempts}/{max_attempts} "
+                    f"target={target}]"
+                )
+            lines = [f"chain:{tree.get('source_ref')}  \"{desc}\" ({status}){time_str}{controller_suffix}"]
             origin_marker = " [focus]" if highlight_gap and tree.get("origin_gap") == highlight_gap else ""
             lines.append(f"  origin: {tree.get('origin_gap')}{origin_marker}")
             lines.append(f"  {self._runtime_tree_legend()}")

@@ -1924,6 +1924,8 @@ def _recent_structural_attempts(trajectory: Trajectory, limit: int = 5) -> list[
     keywords = (
         "reason actualized workflow:",
         "reason actualization failed:",
+        "reason loop attempt",
+        "reason loop retry",
         "failed attempt:",
         "next layer frontier:",
         "reprogrammed discord profile:",
