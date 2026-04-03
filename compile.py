@@ -498,13 +498,15 @@ class Compiler:
 
     # ── 4. Chain Management ──
 
-    def resolve_current_gap(self, gap_hash: str):
+    def resolve_current_gap(self, gap_hash: str, *, resolution_kind: str | None = None):
         """Mark the current gap as resolved. Check chain completion.
         If chain is complete and exceeds extract length, mark for extraction."""
         self.ledger.resolve_gap(gap_hash)
         gap = self.trajectory.resolve_gap(gap_hash)
         if gap is not None:
             gap.resolved = True
+            if resolution_kind:
+                gap.resolution_kind = resolution_kind
 
         if self.active_chain:
             chain_id = self.active_chain.hash

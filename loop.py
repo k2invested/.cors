@@ -691,6 +691,7 @@ def _render_gap_semantic_tree(gap: Gap) -> str:
                     "hash": gap.hash,
                     "desc": gap.desc,
                     "status": "dormant" if gap.dormant else "resolved" if gap.resolved else "active",
+                    "resolution_kind": gap.resolution_kind,
                     "step_refs": list(gap.step_refs),
                     "content_refs": list(gap.content_refs),
                     "step_ref_count": len(gap.step_refs),
@@ -781,7 +782,8 @@ def _render_step_tree(step, trajectory: Trajectory, depth: int = 0,
                 f"(dormant, score:{gap.scores.magnitude():.2f})"
             )
         elif gap.resolved:
-            lines.append(f"{indent}  └─ {gap_prefix}gap:{gap.hash} \"{gap.desc}\" (resolved)")
+            resolved_label = "resolved -> rogue handoff" if getattr(gap, "resolution_kind", None) == "rogue_handoff" else "resolved"
+            lines.append(f"{indent}  └─ {gap_prefix}gap:{gap.hash} \"{gap.desc}\" ({resolved_label})")
         else:
             grefs = []
             for r in gap.step_refs:

@@ -86,7 +86,7 @@ def _record_step(step_result: Step, *, entry: Any, trajectory: Any, compiler: An
 def _make_rogue_step(
     *,
     desc: str,
-    origin_step: Step,
+    reference_step: Step,
     gap: Gap,
     chain_id: str | None,
     rogue_kind: str,
@@ -97,15 +97,38 @@ def _make_rogue_step(
 ) -> Step:
     return Step.create(
         desc=desc,
-        step_refs=[origin_step.hash],
+        step_refs=[reference_step.hash],
         content_refs=gap.content_refs,
         commit=commit,
         chain_id=chain_id,
+        parent=reference_step.hash,
         rogue=True,
         rogue_kind=rogue_kind,
         failure_source=failure_source,
         failure_detail=failure_detail,
         assessment=assessment or [],
+    )
+
+
+def _make_failure_attempt_step(
+    *,
+    origin_step: Step,
+    gap: Gap,
+    chain_id: str | None,
+    failure_source: str,
+    failure_detail: str | None = None,
+) -> Step:
+    assessment = [f"failure_source: {failure_source}"]
+    if failure_detail:
+        first_line = failure_detail.strip().splitlines()[0]
+        if first_line:
+            assessment.append(f"failure_detail: {first_line[:200]}")
+    return Step.create(
+        desc=f"failed attempt: {gap.desc}",
+        step_refs=[origin_step.hash],
+        content_refs=gap.content_refs,
+        chain_id=chain_id,
+        assessment=assessment,
     )
 
 
@@ -123,13 +146,22 @@ def _emit_rogue_with_diagnosis(
     commit: str | None = None,
     assessment: list[str] | None = None,
 ) -> Step:
+    attempt_step = _make_failure_attempt_step(
+        origin_step=origin_step,
+        gap=gap,
+        chain_id=chain_id,
+        failure_source=failure_source,
+        failure_detail=failure_detail,
+    )
+    trajectory.append(attempt_step)
+    compiler.add_step_to_chain(attempt_step.hash)
     diagnose_gap = Gap.create(
         desc=(
             f"Diagnose rogue step: classify the failure, determine whether state changed or was reverted, "
             f"and choose the next safe correction path for {rogue_kind} from {failure_source}."
         ),
         content_refs=gap.content_refs,
-        step_refs=[origin_step.hash],
+        step_refs=[attempt_step.hash],
     )
     diagnose_gap.scores = Epistemic(relevance=1.0, confidence=0.9, grounded=0.0)
     diagnose_gap.vocab = "reason_needed"
@@ -137,7 +169,7 @@ def _emit_rogue_with_diagnosis(
 
     rogue_step = _make_rogue_step(
         desc=desc,
-        origin_step=origin_step,
+        reference_step=attempt_step,
         gap=gap,
         chain_id=chain_id,
         rogue_kind=rogue_kind,
@@ -707,6 +739,7 @@ def execute_iteration(
                 compiler=compiler,
                 failure_detail=output[:500] if output else None,
             )
+            compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
             return ExecutionOutcome(control="continue", step_result=step_result)
 
         if executed:
@@ -803,7 +836,7 @@ def execute_iteration(
                             failure_detail=f"immutable path violation → {on_reject}",
                             assessment=_policy_drift_assessment("tree_policy", f"immutable path violation → {on_reject}"),
                         )
-                        compiler.resolve_current_gap(gap.hash)
+                        compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
                         return ExecutionOutcome(control="continue", step_result=diagnose_step)
                     session.inject(
                         "## PROTECTED PATH VIOLATION\n"
@@ -824,6 +857,7 @@ def execute_iteration(
                         failure_detail=output[:500] if output else "protected path violation",
                         assessment=_policy_drift_assessment("tree_policy", output[:500] if output else "protected path violation"),
                     )
+                    compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
                     return ExecutionOutcome(control="continue", step_result=step_result)
 
                 session.inject(f"## Command output (no mutation)\n{output}")
@@ -1047,7 +1081,7 @@ def execute_iteration(
                         compiler=compiler,
                         failure_detail=output[:500] if output else None,
                     )
-                    compiler.resolve_current_gap(gap.hash)
+                    compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
             else:
                 step_result, child_gaps = hooks.parse_step_output(
                     raw,
@@ -1386,7 +1420,7 @@ def execute_iteration(
                     failure_detail=output[:500] if output else None,
                     assessment=assessment_lines,
                 )
-                compiler.resolve_current_gap(gap.hash)
+                compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
         else:
             print("  → no valid st_builder intent extracted")
             step_result = Step.create(

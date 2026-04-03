@@ -703,9 +703,31 @@ def test_p13_reprogramme_failure_materializes_rogue_step():
     assert outcome.step_result.rogue is True
     assert outcome.step_result.rogue_kind == "validation_error"
     assert outcome.step_result.failure_source == "st_builder"
+    assert len(outcome.step_result.step_refs) == 1
+    failure_attempt = traj.resolve(outcome.step_result.step_refs[0])
+    assert failure_attempt is not None
+    assert failure_attempt.desc == "failed attempt: persist admin preference"
     assert len(outcome.step_result.gaps) == 1
     assert outcome.step_result.gaps[0].vocab == "reason_needed"
+    assert outcome.step_result.gaps[0].step_refs == [failure_attempt.hash]
     assert "Diagnose rogue step" in outcome.step_result.gaps[0].desc
+
+
+def test_p13_render_recent_labels_rogue_handoff_resolution():
+    traj = Trajectory()
+    gap = make_gap("build workflow", resolved=True)
+    gap.resolution_kind = "rogue_handoff"
+    traj.append(make_step("author workflow", gaps=[gap]))
+
+    rendered = traj.render_recent(5, registry())
+    assert "resolved -> rogue handoff" in rendered
+
+
+def test_p13_compiler_resolve_current_gap_records_resolution_kind():
+    ctx = build_origin_context()
+    ctx.compiler.resolve_current_gap(ctx.gap.hash, resolution_kind="rogue_handoff")
+    assert ctx.gap.resolved is True
+    assert ctx.gap.resolution_kind == "rogue_handoff"
 
 
 P7_CASES = [

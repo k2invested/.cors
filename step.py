@@ -162,6 +162,7 @@ class Gap:
     vocab:       Optional[str] = None   # mapped precondition (scan_needed, script_edit_needed, etc.)
     vocab_score: float = 0.0            # confidence in the vocab mapping
     resolved:    bool = False           # True when chain closed this gap
+    resolution_kind: Optional[str] = None  # how the gap closed: rogue_handoff, success, etc.
     dormant:     bool = False           # True if below threshold, stored but not acted on
     turn_id:     Optional[int] = None  # which turn created this gap (for cross-turn threshold)
     carry_forward: bool = False        # True when explicitly persisted for cross-turn resume
@@ -202,6 +203,8 @@ class Gap:
             d["vocab_score"] = self.vocab_score
         if self.resolved:
             d["resolved"] = True
+        if self.resolution_kind:
+            d["resolution_kind"] = self.resolution_kind
         if self.dormant:
             d["dormant"] = True
         if self.turn_id is not None:
@@ -353,6 +356,7 @@ class Step:
                 vocab=g.get("vocab"),
                 vocab_score=g.get("vocab_score", 0.0),
                 resolved=g.get("resolved", False),
+                resolution_kind=g.get("resolution_kind"),
                 dormant=g.get("dormant", False),
                 turn_id=g.get("turn_id"),
                 carry_forward=g.get("carry_forward", False),
@@ -700,8 +704,14 @@ class Trajectory:
         return (
             "legend: step{kindflowN}; gap{statusclassrcg/s:c}; "
             "refs use typed namespaces entity/action/codon/step plus raw content refs; "
-            "step refs = execution provenance; gap refs = gap-surfacing provenance"
+            "step refs = execution provenance; gap refs = gap-surfacing provenance; "
+            "resolved -> rogue handoff = original gap closed by explicit failure handoff"
         )
+
+    def _resolved_gap_status_label(self, gap: "Gap") -> str:
+        if gap.resolution_kind == "rogue_handoff":
+            return "resolved -> rogue handoff"
+        return "resolved"
 
     def _gap_desc_for_render(self, parent_desc: str, gap_desc: str) -> str | None:
         if not gap_desc:
@@ -880,6 +890,7 @@ class Trajectory:
                         ),
                         vocab=gap.get("runtime_vocab"),
                         resolved=gap.get("status") == "resolved",
+                        resolution_kind=gap.get("resolution_kind"),
                         dormant=gap.get("status") == "dormant",
                     )
                     focus = " [focus]" if highlight_gap and gap_obj.hash == highlight_gap else ""
@@ -896,7 +907,7 @@ class Trajectory:
                         desc_part = f" \"{gap_desc}\"" if gap_desc else ""
                         lines.append(
                             f"  {cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                            f"gap:{gap_obj.hash}{desc_part}{gref_str} (resolved){focus}"
+                            f"gap:{gap_obj.hash}{desc_part}{gref_str} ({self._resolved_gap_status_label(gap_obj)}){focus}"
                         )
                     else:
                         vocab_str = f" [{gap_obj.vocab}]" if gap_obj.vocab else ""
@@ -944,6 +955,7 @@ class Trajectory:
                     ),
                     vocab=gap.get("runtime_vocab"),
                     resolved=gap.get("status") == "resolved",
+                    resolution_kind=gap.get("resolution_kind"),
                     dormant=gap.get("status") == "dormant",
                 )
                 gref_str = self._render_refs(gap_obj.step_refs, gap_obj.content_refs, registry)
@@ -959,7 +971,7 @@ class Trajectory:
                     desc_part = f" \"{gap_desc}\"" if gap_desc else ""
                     lines.append(
                         f"{cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                        f"gap:{gap_obj.hash}{desc_part}{gref_str} (resolved)"
+                        f"gap:{gap_obj.hash}{desc_part}{gref_str} ({self._resolved_gap_status_label(gap_obj)})"
                     )
                 else:
                     vocab_str = f" [{gap_obj.vocab}]" if gap_obj.vocab else ""
@@ -1027,7 +1039,7 @@ class Trajectory:
                 elif gap.resolved:
                     lines.append(
                         f"  {cont}   {gbranch}─ {self._gap_signature(gap)} "
-                        f"gap:{gap.hash} \"{gap.desc}\" (resolved){focus}"
+                        f"gap:{gap.hash} \"{gap.desc}\" ({self._resolved_gap_status_label(gap)}){focus}"
                     )
                 else:
                     gref_str = self._render_refs(gap.step_refs, gap.content_refs, registry)
@@ -1073,7 +1085,7 @@ class Trajectory:
                 elif gap.resolved:
                     lines.append(
                         f"{cont}   {gbranch}─ {self._gap_signature(gap)} "
-                        f"gap:{gap.hash} \"{gap.desc}\" (resolved)"
+                        f"gap:{gap.hash} \"{gap.desc}\" ({self._resolved_gap_status_label(gap)})"
                     )
                 else:
                     gref_str = self._render_refs(gap.step_refs, gap.content_refs, registry)

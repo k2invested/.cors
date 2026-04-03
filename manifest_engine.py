@@ -203,6 +203,7 @@ def _semantic_gap_from_runtime_gap(gap: dict, *, fallback_desc: str = "", post_d
         "hash": gap.get("hash"),
         "desc": desc,
         "status": _runtime_gap_status(gap),
+        "resolution_kind": gap.get("resolution_kind"),
         "step_refs": list(gap.get("step_refs", []) or []),
         "content_refs": list(gap.get("content_refs", []) or []),
         "step_ref_count": len(gap.get("step_refs", []) or []),
