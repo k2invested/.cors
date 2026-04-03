@@ -28,6 +28,7 @@ import execution_engine as execution_engine_module
 import loop
 import manifest_engine as manifest_engine_module
 import action_foundations as action_foundations_module
+import step as step_module
 import vocab_registry as vocab_registry_module
 from compile import (
     ADMISSION_THRESHOLD,
@@ -406,6 +407,9 @@ P3_CASES = [
     ("mutate_message_needed", lambda: is_mutate("message_needed")),
     ("mutate_json_patch_needed", lambda: is_mutate("json_patch_needed")),
     ("mutate_git_revert_needed", lambda: is_mutate("git_revert_needed")),
+    ("step_render_classifies_stitch_as_mutate", lambda: step_module.vocab_class("stitch_needed") == "m"),
+    ("step_render_classifies_message_as_mutate", lambda: step_module.vocab_class("message_needed") == "m"),
+    ("step_render_unknown_trigger_term_is_unknown", lambda: step_module.vocab_class("research_needed") == "_"),
     ("bridge_reason_needed", lambda: is_bridge("reason_needed")),
     ("bridge_await_needed", lambda: is_bridge("await_needed")),
     ("bridge_commit_needed", lambda: is_bridge("commit_needed")),

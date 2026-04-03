@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from compile import is_bridge, is_mutate, is_observe
+from vocab_registry import is_bridge, is_mutate, is_observe
 
 
 @dataclass(frozen=True)
