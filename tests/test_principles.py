@@ -511,7 +511,7 @@ P5_CASES = [
     ("validate_st_rejects_unknown_runtime_vocab", lambda: any("invalid runtime vocab" in e for e in st_builder_module.validate_st({"name": "x", "desc": "d", "steps": [{"action": "inspect", "desc": "inspect file", "vocab": "research_needed"}]}))),
     ("slugify_trims_to_four_words", lambda: st_builder_module.slugify("Update the very important config file") == "update_the_very_important"),
     ("resolve_entity_renders_known_skill", lambda: skill("admin").hash in loop._resolve_entity([skill("admin").hash], registry(), Trajectory())),
-    ("resolve_entity_reads_action_package_when_not_entity", lambda: "action_tree:hash_edit:" in loop._resolve_entity([skill("hash_edit").hash], registry(), Trajectory())),
+    ("resolve_entity_reads_action_package_when_not_entity", lambda: "semantic_tree:skill_package:" in loop._resolve_entity([skill("hash_edit").hash], registry(), Trajectory()) and "name: hash_edit" in loop._resolve_entity([skill("hash_edit").hash], registry(), Trajectory())),
     ("render_entity_has_identity_block", lambda: "identity:" in loop._render_entity(skill("admin"))),
     ("render_entity_has_steps_summary", lambda: "steps:" in loop._render_entity(skill("admin"))),
     ("find_identity_skill_returns_admin", lambda: loop._find_identity_skill("discord:784778107013431296", registry()) == skill("admin")),
@@ -577,8 +577,8 @@ P6_CASES = [
     ("tag_ref_uses_registry_name", lambda: build_chain_context().traj._tag_ref(skill("admin").hash, "content", registry()).startswith("admin:")),
     ("render_refs_combines_layers", lambda: "step:parent" in Trajectory()._render_refs(["parent"], ["blob"], None) and "blob" in Trajectory()._render_refs(["parent"], ["blob"], None)),
     ("render_recent_names_skill_hashes", lambda: "admin:" in build_chain_context().traj.render_recent(5, registry())),
-    ("resolve_hash_renders_step_branch", lambda: (lambda ctx: "step:" in loop.resolve_hash(ctx.step1.hash, ctx.traj))(build_chain_context())),
-    ("resolve_hash_renders_gap_tree", lambda: (lambda ctx: "gap:" in loop.resolve_hash(ctx.gap.hash, ctx.traj))(build_chain_context())),
+    ("resolve_hash_renders_step_branch", lambda: (lambda ctx: "semantic_tree:step_branch:" in loop.resolve_hash(ctx.step1.hash, ctx.traj))(build_chain_context())),
+    ("resolve_hash_renders_gap_tree", lambda: (lambda ctx: "semantic_tree:gap_branch:" in loop.resolve_hash(ctx.gap.hash, ctx.traj))(build_chain_context())),
     ("resolve_hash_returns_none_for_unknown", lambda: loop.resolve_hash("not_a_real_hash", Trajectory()) is None),
     ("render_gap_tree_active_status", lambda: "status: active" in loop._render_gap_tree(make_gap("g"))),
     ("render_gap_tree_dormant_status", lambda: "status: dormant" in loop._render_gap_tree(make_gap("g", dormant=True))),
@@ -587,7 +587,7 @@ P6_CASES = [
     ("gap_hash_encodes_content_citation", lambda: make_gap("g", content_refs=["blob_a"]).hash != make_gap("g", content_refs=["blob_b"]).hash),
     ("gap_hash_encodes_step_citation", lambda: make_gap("g", step_refs=["step_a"]).hash != make_gap("g", step_refs=["step_b"]).hash),
     ("co_occurrence_counts_reference_usage", lambda: seed_trajectory("blob_a", count=2).co_occurrence("blob_a") == 2),
-    ("resolve_entity_falls_back_to_trajectory", lambda: (lambda traj, step: "step:" in loop._resolve_entity([step.hash], registry(), traj))( *(lambda t, s: (t.append(s), (t, s))[1])(Trajectory(), make_step("fallback")) )),
+    ("resolve_entity_falls_back_to_trajectory", lambda: (lambda traj, step: "semantic_tree:step_branch:" in loop._resolve_entity([step.hash], registry(), traj))( *(lambda t, s: (t.append(s), (t, s))[1])(Trajectory(), make_step("fallback")) )),
 ]
 
 P6_CASES += [
@@ -595,8 +595,8 @@ P6_CASES += [
     ("entity_source_detects_entity_tree", lambda: loop._is_entity_source("skills/entities/clinton.st")),
     ("entity_source_detects_chain_spec", lambda: loop._is_entity_source("skills/codons/commitment_chain_construction_spec.st")),
     ("entity_source_excludes_action_tree", lambda: loop._is_entity_source("skills/actions/hash_edit.st") is False),
-    ("resolve_hash_admin_renders_entity_surface", lambda: (lambda reg: (setattr(loop, "_skill_registry", reg), "## Entity: admin:" in loop.resolve_hash(skill("admin").hash, Trajectory()))[1])(registry())),
-    ("resolve_hash_action_renders_package_tree", lambda: (lambda reg: (setattr(loop, "_skill_registry", reg), "action_tree:hash_edit:" in loop.resolve_hash(skill("hash_edit").hash, Trajectory()))[1])(registry())),
+    ("resolve_hash_admin_renders_entity_surface", lambda: (lambda reg: (setattr(loop, "_skill_registry", reg), "semantic_tree:skill_package:" in loop.resolve_hash(skill("admin").hash, Trajectory()) and "package: name=admin" in loop.resolve_hash(skill("admin").hash, Trajectory()))[1])(registry())),
+    ("resolve_hash_action_renders_package_tree", lambda: (lambda reg: (setattr(loop, "_skill_registry", reg), "semantic_tree:skill_package:" in loop.resolve_hash(skill("hash_edit").hash, Trajectory()) and "package: name=hash_edit" in loop.resolve_hash(skill("hash_edit").hash, Trajectory()))[1])(registry())),
     ("resolve_hash_chain_spec_renders_entity_surface", lambda: (lambda reg: (setattr(loop, "_skill_registry", reg), "commitment_chain_construction_spec" in loop.resolve_hash(skill("commitment_chain_construction_spec").hash, Trajectory()))[1])(registry())),
     ("resolve_entity_top_rate_injects_business_context", lambda: "Top Rate Estates LTD" in loop._resolve_entity([skill("Top Rate Estates LTD").hash], registry(), Trajectory())),
     ("resolve_entity_clinton_injects_identity", lambda: "Cyber security developer" in loop._resolve_entity([skill("clinton").hash], registry(), Trajectory())),
@@ -2328,12 +2328,13 @@ def test_p12_render_skill_package_surfaces_action_tree_details():
     assert debug_skill is not None
     rendered = loop._render_skill_package(debug_skill)
 
-    assert rendered.startswith(f"action_tree:debug:{debug_skill.hash}")
+    assert rendered.startswith(f"semantic_tree:skill_package:{debug_skill.hash}")
+    assert "name: debug" in rendered
     assert "trigger: command:debug" in rendered
-    assert "phases" in rendered
+    assert "nodes" in rendered
     assert "manifestation: kernel_class=observe" in rendered
     assert "generation: spawn_mode=none" in rendered
-    assert "allowed_vocab: hash_resolve_needed" in rendered
+    assert "allowed_vocab=hash_resolve_needed" in rendered
 
 
 def test_p12_build_semantic_tree_from_action_skill_exposes_gap_configuration():
@@ -2407,9 +2408,10 @@ def test_p12_resolve_hash_renders_action_packages_as_semantic_tree(monkeypatch):
     rendered = loop.resolve_hash(architect_skill.hash, Trajectory())
 
     assert rendered is not None
-    assert rendered.startswith(f"action_tree:architect:{architect_skill.hash}")
+    assert rendered.startswith(f"semantic_tree:skill_package:{architect_skill.hash}")
+    assert "name: architect" in rendered
     assert "action:resolve_source_and_docs" in rendered
-    assert "transitions: on_done->" in rendered
+    assert "transitions: on_close->" in rendered
 
 
 def test_p12_existing_action_update_does_not_require_reason():
@@ -2475,7 +2477,8 @@ def test_p12_resolve_hash_supports_skill_source_path(monkeypatch):
     monkeypatch.setattr(loop, "_skill_registry", registry())
     rendered = loop.resolve_hash("skills/admin.st", Trajectory())
     assert rendered is not None
-    assert "## Entity: admin:" in rendered
+    assert rendered.startswith("semantic_tree:skill_package:")
+    assert "name: admin" in rendered
 
 
 def test_p12_pattern_tool_params_include_path_when_pattern_is_quoted():

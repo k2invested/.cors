@@ -587,24 +587,24 @@ def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
     if _skill_registry:
         skill = _skill_registry.resolve(ref)
         if skill:
-            return _render_entity(skill) if _is_entity_source(skill.source) else _render_skill_package(skill)
+            return _render_skill_package(skill)
         for candidate in _skill_registry.all_skills():
             try:
                 rel_source = str(Path(candidate.source).resolve().relative_to(CORS_ROOT))
             except ValueError:
                 rel_source = str(Path(candidate.source))
             if ref == rel_source or ref == Path(rel_source).name:
-                return _render_entity(candidate) if _is_entity_source(candidate.source) else _render_skill_package(candidate)
+                return _render_skill_package(candidate)
 
     # Try trajectory step — render as semantic tree branch
     step = trajectory.resolve(ref)
     if step:
-        return _render_step_tree(step, trajectory, depth=0, max_depth=5)
+        return _render_step_semantic_tree(step, trajectory)
 
     # Try trajectory gap
     gap = trajectory.resolve_gap(ref)
     if gap:
-        return _render_gap_tree(gap, trajectory)
+        return _render_gap_semantic_tree(gap)
 
     package = me.load_chain_package(CHAINS_DIR, ref, trajectory)
     if package:
@@ -614,13 +614,111 @@ def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
     if ("/" in ref or ref.endswith(".st")) and repo_path.exists() and repo_path.is_file():
         content = git_show(f"HEAD:{ref}")
         if not content.startswith("(unresolvable"):
-            return content
+            rendered = _render_structured_content(content, source_ref=ref)
+            return rendered or content
 
     # Try git object
     content = git_show(ref)
     if not content.startswith("(unresolvable"):
-        return content
+        rendered = _render_structured_content(content, source_ref=ref)
+        return rendered or content
 
+    return None
+
+
+def _collect_step_branch(step: Step, trajectory: Trajectory, *, max_depth: int = 5) -> list[dict]:
+    ordered: list[dict] = []
+    seen: set[str] = set()
+
+    def visit(current: Step, depth: int):
+        if current.hash in seen or depth > max_depth:
+            return
+        for parent_hash in current.step_refs:
+            parent = trajectory.resolve(parent_hash)
+            if parent:
+                visit(parent, depth + 1)
+        seen.add(current.hash)
+        ordered.append(current.to_dict())
+
+    visit(step, 0)
+    return ordered
+
+
+def _render_step_semantic_tree(step: Step, trajectory: Trajectory) -> str:
+    tree = me.build_runtime_semantic_tree(
+        _collect_step_branch(step, trajectory, max_depth=5),
+        source_type="step_branch",
+        source_ref=step.hash,
+        summary_desc=step.desc,
+    )
+    return me.render_semantic_tree(tree)
+
+
+def _render_gap_semantic_tree(gap: Gap) -> str:
+    tree = {
+        "version": "semantic_tree.v1",
+        "source_type": "gap_branch",
+        "source_ref": gap.hash,
+        "root_id": gap.hash,
+        "nodes": [
+            {
+                "id": gap.hash,
+                "parent_id": None,
+                "depth": 0,
+                "signature": "{g}",
+                "kind": "gap",
+                "action": gap.desc,
+                "goal": gap.desc,
+                "gap": {
+                    "hash": gap.hash,
+                    "desc": gap.desc,
+                    "status": "dormant" if gap.dormant else "resolved" if gap.resolved else "active",
+                    "step_refs": list(gap.step_refs),
+                    "content_refs": list(gap.content_refs),
+                    "step_ref_count": len(gap.step_refs),
+                    "content_ref_count": len(gap.content_refs),
+                    "runtime_vocab": gap.vocab,
+                    "allowed_vocab": [gap.vocab] if gap.vocab else [],
+                    "post_diff": False,
+                    "relevance": gap.scores.relevance,
+                    "confidence": gap.scores.confidence,
+                    "grounded": gap.scores.grounded,
+                },
+                "manifestation": {"execution_mode": "runtime_vocab" if gap.vocab else "inline"},
+                "generation": {},
+                "transitions": {},
+            }
+        ],
+        "summary": {
+            "node_count": 1,
+            "post_diff_nodes": 0,
+            "runtime_vocab_nodes": 1 if gap.vocab else 0,
+            "bridge_nodes": 0,
+            "mutation_nodes": 0,
+            "max_depth": 0,
+        },
+    }
+    return me.render_semantic_tree(tree)
+
+
+def _render_structured_content(content: str, *, source_ref: str) -> str | None:
+    try:
+        doc = json.loads(content)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(doc, dict):
+        return None
+    if doc.get("version") == "semantic_tree.v1":
+        return me.render_semantic_tree(doc)
+    if doc.get("version") == "trace_tree.v1":
+        return me.render_trace_tree(doc)
+    if doc.get("version") == "stepchain.v1":
+        return me.render_semantic_tree(me.build_semantic_tree(doc, source_type="stepchain", source_ref=source_ref))
+    if doc.get("origin_gap") is not None and isinstance(doc.get("steps"), list):
+        return me.render_semantic_tree(me.build_semantic_tree(doc, source_type="realized_chain", source_ref=source_ref))
+    if any(key in doc for key in ("root", "phases", "steps", "artifact", "identity", "preferences")):
+        return me.render_semantic_tree(me.build_semantic_tree(doc, source_type="resolved_package", source_ref=source_ref))
     return None
 
 

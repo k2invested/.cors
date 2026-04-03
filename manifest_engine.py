@@ -54,6 +54,11 @@ EXECUTION_MODE_CODES = {
     "inline": "i",
 }
 
+ENTITY_SEMANTIC_FIELDS = (
+    "identity", "preferences", "constraints", "sources", "scope", "schema",
+    "access_rules", "principles", "boundaries", "domain_knowledge", "init", "reasoning",
+)
+
 
 def stable_doc_hash(doc: dict) -> str:
     raw = json.dumps(doc, sort_keys=True, separators=(",", ":"))
@@ -142,6 +147,27 @@ def _skill_package_tree_doc(skill: Skill) -> dict:
 
 def _render_ref_list(refs: list[str]) -> str:
     return ", ".join(refs) if refs else "(none)"
+
+
+def _semantic_fields(doc: dict) -> dict:
+    return {field: doc.get(field) for field in ENTITY_SEMANTIC_FIELDS if field in doc}
+
+
+def _format_semantic_value(value, *, max_inline: int = 3) -> str:
+    if isinstance(value, dict):
+        keys = list(value.keys())
+        if not keys:
+            return "{}"
+        preview = ", ".join(keys[:max_inline])
+        suffix = " ..." if len(keys) > max_inline else ""
+        return "{" + preview + suffix + "}"
+    if isinstance(value, list):
+        if not value:
+            return "[]"
+        preview = ", ".join(str(item) for item in value[:max_inline])
+        suffix = " ..." if len(value) > max_inline else ""
+        return "[" + preview + suffix + "]"
+    return str(value)
 
 
 def _semantic_gap_from_phase(phase: dict) -> dict:
@@ -418,6 +444,7 @@ def build_semantic_tree(doc: dict, *, source_type: str, source_ref: str | None =
             "artifact": dict(normalized.get("artifact", {}) or {}),
             "refs": dict(normalized.get("refs", {}) or {}),
             "closure": dict(normalized.get("closure", {}) or {}),
+            "semantics": _semantic_fields(doc),
         },
     }
 
@@ -447,67 +474,110 @@ def build_semantic_tree_from_trajectory(traj: Trajectory, *, chain_id: str | Non
     )
 
 
-def render_skill_package(skill: Skill) -> str:
-    package = _skill_package_tree_doc(skill)
-    tree = build_semantic_tree(package, source_type="skill_package", source_ref=skill.hash)
-    artifact = dict((tree.get("package", {}) or {}).get("artifact", {}) or {})
-    lines = [f"action_tree:{skill.display_name}:{skill.hash}"]
-    lines.append(f"  name: {(tree.get('package', {}) or {}).get('name', skill.name)}")
-    lines.append(f"  trigger: {(tree.get('package', {}) or {}).get('trigger', skill.trigger)}")
-    lines.append(
-        "  artifact: "
-        f"kind={artifact.get('kind', skill.artifact_kind)} "
-        f"protected_kind={artifact.get('protected_kind', 'action')} "
-        f"lineage={artifact.get('lineage', (tree.get('package', {}) or {}).get('name', skill.name))}"
-    )
+def render_semantic_tree(tree: dict) -> str:
+    source_type = tree.get("source_type", "unknown")
+    source_ref = tree.get("source_ref", tree.get("root_id", ""))
+    lines = [f"semantic_tree:{source_type}:{source_ref}"]
+    if tree.get("desc"):
+        lines.append(f"  desc: {tree.get('desc')}")
     if tree.get("root_id"):
         lines.append(f"  root: {tree.get('root_id')}")
-    if (tree.get("package", {}) or {}).get("desc"):
-        lines.append(f"  desc: {(tree.get('package', {}) or {}).get('desc')}")
-    refs = (tree.get("package", {}) or {}).get("refs", {}) or {}
-    lines.append(f"  refs: {', '.join(sorted(refs.keys())) if refs else '(none)'}")
+    if tree.get("origin_gap"):
+        lines.append(f"  origin_gap: {tree.get('origin_gap')}")
+    if tree.get("resolved") is not None:
+        lines.append(f"  resolved: {tree.get('resolved')}")
 
-    closure = dict((tree.get("package", {}) or {}).get("closure", {}) or {})
-    if closure:
-        success = dict(closure.get("success", {}) or {})
-        failure = dict(closure.get("failure", {}) or {})
-        limits = dict(closure.get("limits", {}) or {})
+    summary = dict(tree.get("summary", {}) or {})
+    if summary:
         lines.append(
-            "  closure: "
-            f"success_terminal={success.get('requires_terminal', '(none)')} "
-            f"no_active_gaps={success.get('requires_no_active_gaps', False)} "
-            f"allow_clarify_terminal={failure.get('allow_clarify_terminal', False)} "
-            f"max_chain_depth={limits.get('max_chain_depth', '(none)')}"
+            "  summary: "
+            f"nodes={summary.get('node_count', 0)} "
+            f"post_diff_nodes={summary.get('post_diff_nodes', 0)} "
+            f"runtime_vocab_nodes={summary.get('runtime_vocab_nodes', 0)} "
+            f"bridge_nodes={summary.get('bridge_nodes', 0)} "
+            f"mutation_nodes={summary.get('mutation_nodes', 0)} "
+            f"max_depth={summary.get('max_depth', 0)}"
         )
 
-    nodes = tree.get("nodes", []) or []
+    package = dict(tree.get("package", {}) or {})
+    if package:
+        lines.append(f"  name: {package.get('name', '(none)')}")
+        lines.append(f"  trigger: {package.get('trigger', '(none)')}")
+        if package.get("desc"):
+            lines.append(f"  package_desc: {package.get('desc')}")
+        lines.append(
+            "  package: "
+            f"name={package.get('name', '(none)')} "
+            f"trigger={package.get('trigger', '(none)')}"
+        )
+        artifact = dict(package.get("artifact", {}) or {})
+        if artifact:
+            lines.append(
+                "  artifact: "
+                f"kind={artifact.get('kind', '(none)')} "
+                f"protected_kind={artifact.get('protected_kind', '(none)')} "
+                f"lineage={artifact.get('lineage', '(none)')}"
+            )
+        refs = dict(package.get("refs", {}) or {})
+        lines.append(f"  refs: {', '.join(sorted(refs.keys())) if refs else '(none)'}")
+        closure = dict(package.get("closure", {}) or {})
+        if closure:
+            success = dict(closure.get("success", {}) or {})
+            failure = dict(closure.get("failure", {}) or {})
+            limits = dict(closure.get("limits", {}) or {})
+            lines.append(
+                "  closure: "
+                f"success_terminal={success.get('requires_terminal', '(none)')} "
+                f"no_active_gaps={success.get('requires_no_active_gaps', False)} "
+                f"allow_clarify_terminal={failure.get('allow_clarify_terminal', False)} "
+                f"max_chain_depth={limits.get('max_chain_depth', '(none)')}"
+            )
+        semantics = dict(package.get("semantics", {}) or {})
+        if semantics:
+            lines.append("  semantics")
+            for key in sorted(semantics):
+                lines.append(f"    {key}: {_format_semantic_value(semantics[key])}")
+
+    nodes = list(tree.get("nodes", []) or [])
     if not nodes:
-        lines.append("  phases: (none)")
+        lines.append("  nodes: (none)")
         return "\n".join(lines)
 
-    lines.append("  phases")
+    lines.append("  nodes")
     for index, node in enumerate(nodes):
         branch = "└" if index == len(nodes) - 1 else "├"
         cont = " " if index == len(nodes) - 1 else "│"
         manifestation = dict(node.get("manifestation", {}) or {})
         generation = dict(node.get("generation", {}) or {})
-        gap_template = dict(node.get("gap", {}) or {})
+        gap = dict(node.get("gap", {}) or {})
+        refs = dict(node.get("refs", {}) or {})
         transitions = dict(node.get("transitions", {}) or {})
+        meta = dict(node.get("meta", {}) or {})
         lines.append(
-            f"  {branch}─ {node.get('signature')} {node.get('id')} "
+            f"  {branch}─ {node.get('signature', '(sig)')} {node.get('id')} "
             f"[{node.get('kind', 'unknown')}] action:{node.get('action', '?')}"
         )
         lines.append(f"  {cont}  goal: {node.get('goal', '(none)')}")
-        lines.append(f"  {cont}  gap.desc: {gap_template.get('desc', node.get('goal', '(none)'))}")
+        lines.append(f"  {cont}  gap.desc: {gap.get('desc', node.get('goal', '(none)'))}")
         lines.append(
-            f"  {cont}  gap.refs: step_refs={_render_ref_list(gap_template.get('step_refs', []) or [])} "
-            f"| content_refs={_render_ref_list(gap_template.get('content_refs', []) or [])}"
+            f"  {cont}  gap.state: status={gap.get('status', '(n/a)')} "
+            f"runtime_vocab={gap.get('runtime_vocab', '(none)')} "
+            f"allowed_vocab={', '.join(gap.get('allowed_vocab', []) or []) or '(none)'}"
+        )
+        lines.append(
+            f"  {cont}  gap.refs: step_refs={_render_ref_list(gap.get('step_refs', []) or [])} "
+            f"| content_refs={_render_ref_list(gap.get('content_refs', []) or [])}"
+        )
+        lines.append(
+            f"  {cont}  gap.scores: rel={gap.get('relevance', '(none)')} "
+            f"conf={gap.get('confidence', '(none)')} "
+            f"gr={gap.get('grounded', '(none)')} "
+            f"post_diff={gap.get('post_diff', False)}"
         )
         lines.append(
             f"  {cont}  manifestation: kernel_class={manifestation.get('kernel_class', '(none)')} "
             f"dispersal={manifestation.get('dispersal', '(none)')} "
-            f"execution_mode={manifestation.get('execution_mode', '(none)')} "
-            f"runtime_vocab={gap_template.get('runtime_vocab') or manifestation.get('runtime_vocab', '(none)')}"
+            f"execution_mode={manifestation.get('execution_mode', '(none)')}"
         )
         lines.append(
             f"  {cont}  generation: spawn_mode={generation.get('spawn_mode', '(none)')} "
@@ -515,50 +585,101 @@ def render_skill_package(skill: Skill) -> str:
             f"branch_policy={generation.get('branch_policy', '(none)')} "
             f"return_policy={generation.get('return_policy', '(none)')}"
         )
-        lines.append(
-            f"  {cont}  allowed_vocab: "
-            f"{', '.join(gap_template.get('allowed_vocab', []) or []) or '(none)'}"
-        )
-        lines.append(f"  {cont}  post_diff: {gap_template.get('post_diff', False)}")
-        lines.append(
-            f"  {cont}  transitions: "
-            f"{', '.join(f'{k}->{v}' for k, v in transitions.items()) or '(none)'}"
-        )
+        if refs:
+            lines.append(
+                f"  {cont}  refs: step_refs={_render_ref_list(refs.get('step_refs', []) or [])} "
+                f"| content_refs={_render_ref_list(refs.get('content_refs', []) or [])}"
+            )
+        if transitions:
+            lines.append(
+                f"  {cont}  transitions: "
+                f"{', '.join(f'{k}->{v}' for k, v in transitions.items()) or '(none)'}"
+            )
+        if meta:
+            lines.append(
+                f"  {cont}  meta: timestamp={meta.get('timestamp', '(none)')} "
+                f"commit={meta.get('commit', '(none)')} "
+                f"rogue={meta.get('rogue', False)}"
+            )
+            for assessment_line in meta.get("assessment", []) or []:
+                lines.append(f"  {cont}  assessment: {assessment_line}")
+        all_gaps = list(node.get("gaps", []) or [])
+        if all_gaps:
+            lines.append(f"  {cont}  gaps")
+            for gap_index, item in enumerate(all_gaps):
+                gbranch = "└" if gap_index == len(all_gaps) - 1 else "├"
+                lines.append(
+                    f"  {cont}  {gbranch}─ gap:{item.get('hash', '(none)')} "
+                    f"status={item.get('status', '(n/a)')} "
+                    f"vocab={item.get('runtime_vocab', '(none)')} "
+                    f"desc:{item.get('desc', '(none)')}"
+                )
     return "\n".join(lines)
+
+
+def render_skill_package(skill: Skill) -> str:
+    package = _skill_package_tree_doc(skill)
+    tree = build_semantic_tree(package, source_type="skill_package", source_ref=skill.hash)
+    return render_semantic_tree(tree)
 
 
 def render_chain_package(package: dict, ref: str) -> str:
     if package.get("version") == "stepchain.v1":
-        lines = [f"stepchain:{ref} \"{package.get('name', '')}\""]
-        lines.append(f"  root: {package.get('root')}")
-        lines.append(f"  trigger: {package.get('trigger')}")
-        phase_order = package.get("phase_order", [])
-        if phase_order:
-            lines.append(f"  phases: {' -> '.join(phase_order)}")
-        nodes = package.get("nodes", [])
-        for node in nodes:
-            if node.get("terminal"):
-                continue
-            activation = node.get("activation_key") or node.get("manifestation", {}).get("execution_mode")
-            next_targets = list((node.get("transitions") or {}).values())
-            next_str = f" -> {next_targets[0]}" if next_targets else ""
-            lines.append(
-                f"  - {_node_signature(node)} {node['id']} [{node.get('kind')}] "
-                f"activate:{activation}{next_str}"
-            )
-        return "\n".join(lines)
+        return render_semantic_tree(build_semantic_tree(package, source_type="stepchain", source_ref=ref))
 
     if "origin_gap" in package and "steps" in package:
-        lines = [f"chain:{ref} \"{package.get('desc', '')}\""]
-        lines.append(f"  origin_gap: {package.get('origin_gap')}")
-        lines.append(f"  resolved: {package.get('resolved', False)}")
-        for step in package.get("steps", [])[:6]:
-            lines.append(f"  - step:{step.get('hash', '?')} \"{step.get('desc', '')}\"")
-        if len(package.get("steps", [])) > 6:
-            lines.append("  - ...")
-        return "\n".join(lines)
+        return render_semantic_tree(build_semantic_tree(package, source_type="realized_chain", source_ref=ref))
 
     return f"(unrenderable chain package: {ref})"
+
+
+def render_trace_tree(trace_tree: dict) -> str:
+    lines = [f"semantic_tree:trace_tree:{trace_tree.get('source_ref', trace_tree.get('root_trace', ''))}"]
+    lines.append(f"  root: {trace_tree.get('root_trace', '(none)')}")
+    summary = dict(trace_tree.get("summary", {}) or {})
+    if summary:
+        lines.append(
+            "  summary: "
+            f"max_depth={summary.get('max_depth', 0)} "
+            f"generation_count={summary.get('generation_count', 0)} "
+            f"bridge_nodes={summary.get('bridge_nodes', 0)} "
+            f"mutation_nodes={summary.get('mutation_nodes', 0)} "
+            f"reentry_points={summary.get('reentry_points', 0)}"
+        )
+    traces = list(trace_tree.get("traces", []) or [])
+    lines.append("  nodes")
+    for index, trace in enumerate(traces):
+        branch = "└" if index == len(traces) - 1 else "├"
+        cont = " " if index == len(traces) - 1 else "│"
+        gap = dict(trace.get("gap", {}) or {})
+        manifestation = dict(trace.get("manifestation", {}) or {})
+        topology = dict(trace.get("topology", {}) or {})
+        outcome = dict(trace.get("outcome", {}) or {})
+        source = trace.get("source_phase") or trace.get("source_step") or "(none)"
+        lines.append(f"  {branch}─ {gap.get('signature', '(sig)')} {trace.get('id')} source:{source}")
+        lines.append(f"  {cont}  gap.desc: {gap.get('desc', '(none)')}")
+        lines.append(
+            f"  {cont}  gap.state: status={gap.get('status', '(n/a)')} "
+            f"vocab={gap.get('vocab', '(none)')} "
+            f"step_refs={gap.get('step_ref_count', 0)} "
+            f"content_refs={gap.get('content_ref_count', 0)}"
+        )
+        lines.append(
+            f"  {cont}  manifestation: kind={manifestation.get('kind', '(none)')} "
+            f"spawn_mode={manifestation.get('spawn_mode', '(none)')} "
+            f"activation_mode={manifestation.get('activation_mode', '(none)')} "
+            f"return_policy={manifestation.get('return_policy', '(none)')}"
+        )
+        lines.append(
+            f"  {cont}  topology: depth={topology.get('depth', 0)} "
+            f"generation={topology.get('generation', 0)} "
+            f"children={', '.join(topology.get('child_ids', []) or []) or '(none)'}"
+        )
+        lines.append(
+            f"  {cont}  outcome: terminal_state={outcome.get('terminal_state', '(none)')} "
+            f"closure_reason={outcome.get('closure_reason', '(none)')}"
+        )
+    return "\n".join(lines)
 
 
 def available_chain_refs(chains_dir: Path, registry: SkillRegistry, is_entity_skill) -> str:

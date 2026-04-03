@@ -42,10 +42,11 @@ def test_resolve_hash_injects_entity_but_reads_action_package():
     admin_rendered = loop.resolve_hash(admin.hash, traj)
     action_rendered = loop.resolve_hash(hash_edit.hash, traj)
 
-    assert admin_rendered is not None and admin_rendered.startswith("## Entity:")
-    assert action_rendered is not None and action_rendered.startswith("action_tree:hash_edit:")
+    assert admin_rendered is not None and admin_rendered.startswith("semantic_tree:skill_package:")
+    assert "package: name=admin" in admin_rendered
+    assert action_rendered is not None and action_rendered.startswith("semantic_tree:skill_package:")
     assert "trigger: on_vocab:hash_edit_needed" in action_rendered
-    assert not action_rendered.startswith("## Entity:")
+    assert "package: name=hash_edit" in action_rendered
 
 
 def test_render_entity_tree_shows_entity_space():
@@ -171,7 +172,7 @@ def test_chain_package_persist_load_and_render(tmp_path, monkeypatch):
 
     assert loaded["version"] == "stepchain.v1"
     assert package_hash == me.stable_doc_hash(package)
-    assert rendered.startswith(f"stepchain:{package_hash}")
+    assert rendered.startswith(f"semantic_tree:stepchain:{package_hash}")
     assert "phase_reason" in rendered
     assert "{bx+h/0:1}" in rendered
     assert "{vx+v/1:1}" in rendered
@@ -197,7 +198,7 @@ def test_resolve_hash_renders_persisted_stepchain_package(tmp_path, monkeypatch)
     package_hash = me.persist_chain_package(tmp_path, example_stepchain())
     rendered = loop.resolve_hash(package_hash, traj)
     assert rendered is not None
-    assert rendered.startswith(f"stepchain:{package_hash}")
+    assert rendered.startswith(f"semantic_tree:stepchain:{package_hash}")
 
 
 def test_background_trigger_refs_round_trip():
