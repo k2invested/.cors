@@ -2212,9 +2212,22 @@ def test_p12_turn_outcome_facts_forbid_future_write_promises_without_success():
         "commits": [],
         "successful_mutations": [],
         "attempted_mutations": [],
+        "rogue_failures": [],
     })
 
     assert "Do not say 'I'll update', 'I will proceed'" in rendered
+
+
+def test_p12_turn_outcome_facts_forbid_ready_claims_after_failed_authoring():
+    rendered = loop._render_turn_outcome_facts({
+        "commits": [],
+        "successful_mutations": [],
+        "attempted_mutations": ["reason_needed: create skills/actions/research.st"],
+        "rogue_failures": ["reason actualization failed: create skills/actions/research.st | source=st_builder | kind=validation_error"],
+    })
+
+    assert "attempted but not validated or persisted" in rendered
+    assert "ready, live, built, or complete" in rendered
 
 
 def test_p12_hash_resolve_is_not_observation_only_auto_close():
@@ -2596,6 +2609,102 @@ def test_p12_st_builder_normalizes_phases_missing_generation():
     assert existing_ref is None
     assert lowered["phases"][0]["generation"]["branch_policy"] == "depth_first_to_parent"
     assert lowered["steps"][0]["vocab"] == "clarify_needed"
+
+
+def test_p12_validate_st_rejects_action_closure_nonterminal_target():
+    st = {
+        "name": "research",
+        "desc": "workflow",
+        "trigger": "on_vocab:research_needed",
+        "refs": {},
+        "artifact": {"kind": "action", "protected_kind": "action"},
+        "root": "phase_root",
+        "phases": [
+            {
+                "id": "phase_root",
+                "kind": "observe",
+                "goal": "root",
+                "action": "root",
+                "gap_template": {"desc": "root", "content_refs": [], "step_refs": []},
+                "manifestation": {"kernel_class": "observe", "dispersal": "context", "execution_mode": "runtime_vocab", "runtime_vocab": "hash_resolve_needed"},
+                "generation": {"spawn_mode": "none", "spawn_trigger": "none", "branch_policy": "depth_first_to_parent", "sibling_policy": "after_descendants", "return_policy": "resume_transition"},
+                "allowed_vocab": ["hash_resolve_needed"],
+                "post_diff": False,
+                "transitions": {"on_close": "phase_done"},
+            },
+            {"id": "phase_done", "kind": "terminal", "goal": "done", "action": "close_loop", "terminal": True},
+        ],
+        "steps": [{"action": "root", "desc": "root", "vocab": "hash_resolve_needed", "post_diff": False}],
+        "closure": {"success": {"requires_terminal": "phase_root", "requires_no_active_gaps": True}},
+    }
+
+    errors = st_builder_module.validate_st(st, artifact_kind="action")
+    assert any("requires_terminal must reference a real terminal phase" in e for e in errors)
+
+
+def test_p12_validate_st_rejects_nested_phase_steps_for_authored_action():
+    st = {
+        "name": "research",
+        "desc": "workflow",
+        "trigger": "on_vocab:research_needed",
+        "refs": {},
+        "artifact": {"kind": "action", "protected_kind": "action"},
+        "root": "phase_root",
+        "phases": [
+            {
+                "id": "phase_root",
+                "kind": "higher_order",
+                "goal": "root",
+                "action": "root",
+                "gap_template": {"desc": "root", "content_refs": [], "step_refs": []},
+                "manifestation": {"kernel_class": "bridge", "dispersal": "mixed", "execution_mode": "inline"},
+                "generation": {"spawn_mode": "none", "spawn_trigger": "none", "branch_policy": "depth_first_to_parent", "sibling_policy": "after_descendants", "return_policy": "resume_transition"},
+                "allowed_vocab": ["reason_needed"],
+                "post_diff": False,
+                "transitions": {"on_close": "phase_done"},
+                "steps": [{"kind": "mutate", "gap": {"vocab": "command_needed"}}],
+            },
+            {"id": "phase_done", "kind": "terminal", "goal": "done", "action": "close_loop", "terminal": True},
+        ],
+        "steps": [{"action": "root", "desc": "root", "post_diff": False}],
+        "closure": {"success": {"requires_terminal": "phase_done", "requires_no_active_gaps": True}},
+    }
+
+    errors = st_builder_module.validate_st(st, artifact_kind="action")
+    assert any("nested steps" in e for e in errors)
+
+
+def test_p12_validate_st_rejects_descriptive_enrichment_without_runtime_linkage():
+    st = {
+        "name": "research",
+        "desc": "workflow",
+        "trigger": "on_vocab:research_needed",
+        "refs": {"research_web": "tools/research_web.py"},
+        "artifact": {"kind": "action", "protected_kind": "action"},
+        "input_schema": {"queries": {"type": "array"}},
+        "root": "phase_root",
+        "phases": [
+            {
+                "id": "phase_root",
+                "kind": "higher_order",
+                "goal": "root",
+                "action": "root",
+                "gap_template": {"desc": "root", "content_refs": [], "step_refs": []},
+                "manifestation": {"kernel_class": "bridge", "dispersal": "mixed", "execution_mode": "inline"},
+                "generation": {"spawn_mode": "none", "spawn_trigger": "none", "branch_policy": "depth_first_to_parent", "sibling_policy": "after_descendants", "return_policy": "resume_transition"},
+                "allowed_vocab": ["reason_needed"],
+                "post_diff": False,
+                "transitions": {"on_close": "phase_done"},
+            },
+            {"id": "phase_done", "kind": "terminal", "goal": "done", "action": "close_loop", "terminal": True},
+        ],
+        "steps": [{"action": "root", "desc": "root", "post_diff": False}],
+        "closure": {"success": {"requires_terminal": "phase_done", "requires_no_active_gaps": True}},
+    }
+
+    errors = st_builder_module.validate_st(st, artifact_kind="action")
+    assert any("runtime-effective non-bridge phase" in e for e in errors)
+    assert any("declared tool refs are not linked" in e for e in errors)
 
 
 def test_p12_render_skill_package_surfaces_action_tree_details():

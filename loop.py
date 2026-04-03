@@ -1519,6 +1519,7 @@ def run_turn(
         "commits": [],
         "successful_mutations": [],
         "attempted_mutations": [],
+        "rogue_failures": [],
     }
     clarify_frontier_step: Step | None = None
     if pre_bootstrap_step and pre_bootstrap_step.commit:
@@ -1617,12 +1618,30 @@ def run_turn(
         if outcome.step_result and outcome.step_result.commit and outcome.step_result.commit not in turn_facts["commits"]:
             turn_facts["commits"].append(outcome.step_result.commit)
 
+        if outcome.step_result and outcome.step_result.rogue:
+            failure_bits = [outcome.step_result.desc]
+            if outcome.step_result.failure_source:
+                failure_bits.append(f"source={outcome.step_result.failure_source}")
+            if outcome.step_result.rogue_kind:
+                failure_bits.append(f"kind={outcome.step_result.rogue_kind}")
+            turn_facts["rogue_failures"].append(" | ".join(failure_bits))
+
         if discord_contact:
             pruned_runtime = _prune_discord_ledger(compiler)
             if pruned_runtime:
                 print(f"  → pruned {pruned_runtime} non-observation runtime gap(s) for discord contact")
 
-        if gap.vocab == "reprogramme_needed" or (gap.vocab and is_mutate(gap.vocab)):
+        mutation_attempt = (
+            gap.vocab == "reprogramme_needed"
+            or (gap.vocab and is_mutate(gap.vocab))
+            or (
+                gap.vocab == "reason_needed"
+                and outcome.step_result is not None
+                and outcome.step_result.rogue
+                and outcome.step_result.failure_source == "st_builder"
+            )
+        )
+        if mutation_attempt:
             descriptor = f"{gap.vocab}: {gap.desc}"
             if outcome.step_result and outcome.step_result.commit:
                 turn_facts["commits"].append(outcome.step_result.commit)
@@ -2459,6 +2478,7 @@ def _render_turn_outcome_facts(turn_facts: dict[str, list[str]]) -> str:
     commits = turn_facts.get("commits", [])
     successful = turn_facts.get("successful_mutations", [])
     attempted = turn_facts.get("attempted_mutations", [])
+    rogue_failures = turn_facts.get("rogue_failures", [])
 
     lines = ["## Turn Outcome Facts"]
     lines.append("Successful commits:")
@@ -2467,6 +2487,8 @@ def _render_turn_outcome_facts(turn_facts: dict[str, list[str]]) -> str:
     lines.extend(f"- {item}" for item in successful) if successful else lines.append("- none")
     lines.append("Attempted but unconfirmed mutations:")
     lines.extend(f"- {item}" for item in attempted) if attempted else lines.append("- none")
+    lines.append("Observed failures:")
+    lines.extend(f"- {item}" for item in rogue_failures) if rogue_failures else lines.append("- none")
     lines.append(
         "Rule: only say something was changed, removed, updated, saved, or persisted if Successful commits or Successful mutations above prove it."
     )
@@ -2476,6 +2498,13 @@ def _render_turn_outcome_facts(turn_facts: dict[str, list[str]]) -> str:
         )
         lines.append(
             "Do not say 'I'll update', 'I will proceed', or any equivalent future-write promise when no mutation succeeded this turn."
+        )
+    if attempted or rogue_failures:
+        lines.append(
+            "If authoring or actualization was attempted but failed validation, manifestation, or persistence, say it was attempted but not validated or persisted."
+        )
+        lines.append(
+            "Do not describe a workflow, file, or structure as ready, live, built, or complete unless a successful commit above proves it."
         )
     return "\n".join(lines)
 

@@ -60,13 +60,20 @@
     ],
     "warning": "Nested freeform descriptive structures can be useful documentation, but runtime behavior is governed primarily by the fields above."
   },
+  "authoring_levels": {
+    "level_0_executable_spine": "Start with the smallest valid action flow: name, trigger, artifact.kind, root, one actionable phase, one terminal phase, and closure aligned to that terminal. No nested phases[*].steps. No decorative schema.",
+    "level_1_control_semantics": "Add runtime-effective phase configuration only after L0 is coherent: manifestation, generation, allowed_vocab, and transitions. Control flow must be true in transitions, not only in prose.",
+    "level_2_capability_expansion": "Add extra phases, clarify branches, verification, or deeper branching only after L1 is valid and runtime-effective.",
+    "level_3_descriptive_enrichment": "Only after L0/L1/L2 are coherent should you add input_schema, output_schema, extra tool declarations, or richer descriptive metadata. Enrichment without runtime linkage is validator-worthy drift."
+  },
   "common_failure_modes": [
     "Schema-valid but runtime-inert package: prose claims behavior that manifestation/allowed_vocab/transitions do not encode.",
     "root points to a non-existent phase id.",
     "closure.success.requires_terminal points to a non-terminal or to a different phase than the real terminal.",
     "Linear transitions described as branching workflow.",
     "Action/workflow repair incorrectly surfaced as reprogramme_needed instead of staying under reason_needed.",
-    "Nested phase steps mention tools or branching, but the runtime-effective fields do not actually represent that behavior."
+    "Nested phase steps mention tools or branching, but the runtime-effective fields do not actually represent that behavior.",
+    "Level-skipping: input_schema/output_schema or tool refs are added before the executable spine and control semantics are coherent."
   ],
   "examples": {
     "hash_edit.st": {

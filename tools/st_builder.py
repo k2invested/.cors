@@ -130,6 +130,108 @@ VALID_TRIGGERS = {"manual", "every_turn", "on_mention"}
 VALID_TRIGGER_PREFIXES = {"on_contact:", "on_vocab:", "scheduled:", "command:"}
 
 REQUIRED_STEP_FIELDS = {"action", "desc"}
+BRIDGE_RUNTIME_VOCAB = {"reason_needed", "await_needed", "commit_needed", "reprogramme_needed"}
+ACTION_ENRICHMENT_FIELDS = {"input_schema", "output_schema"}
+
+
+def _is_terminal_phase(phase: dict) -> bool:
+    return phase.get("kind") == "terminal" or phase.get("terminal") is True
+
+
+def _resolve_phase_ref(ref: str, refs: dict[str, str]) -> str | None:
+    if not isinstance(ref, str):
+        return None
+    if ref.startswith("@"):
+        return refs.get(ref[1:])
+    return ref
+
+
+def _phase_has_runtime_effective_surface(phase: dict) -> bool:
+    if _is_terminal_phase(phase):
+        return False
+    manifestation = dict(phase.get("manifestation", {}) or {})
+    mode = manifestation.get("execution_mode")
+    runtime_vocab = manifestation.get("runtime_vocab")
+    if mode == "runtime_vocab" and isinstance(runtime_vocab, str) and runtime_vocab and runtime_vocab not in BRIDGE_RUNTIME_VOCAB:
+        return True
+    if mode == "curated_step_hash" and manifestation.get("activation_ref"):
+        return True
+    if phase.get("kind") in {"observe", "mutate", "clarify", "verify"}:
+        return True
+    return False
+
+
+def _flow_authored_action_errors(data: dict) -> list[str]:
+    errors: list[str] = []
+    root = data.get("root")
+    phases = data.get("phases")
+    closure = data.get("closure")
+    refs = dict(data.get("refs", {}) or {})
+
+    if not isinstance(phases, list) or not phases:
+        return errors
+
+    phase_ids = [phase.get("id") for phase in phases if isinstance(phase, dict)]
+    if root not in phase_ids:
+        errors.append("L0 executable spine: root must reference an existing phase id")
+        return errors
+
+    phase_map = {phase.get("id"): phase for phase in phases if isinstance(phase, dict)}
+    root_phase = phase_map.get(root)
+    if root_phase and _is_terminal_phase(root_phase):
+        errors.append("L0 executable spine: root must not point to a terminal phase")
+
+    terminal_ids = [pid for pid, phase in phase_map.items() if _is_terminal_phase(phase)]
+    if not terminal_ids:
+        errors.append("L0 executable spine: action flow must include a terminal phase")
+
+    success_terminal = ((closure or {}).get("success", {}) or {}).get("requires_terminal")
+    if not isinstance(success_terminal, str) or success_terminal not in phase_map:
+        errors.append("L0 executable spine: closure.success.requires_terminal must reference an existing phase id")
+    elif not _is_terminal_phase(phase_map[success_terminal]):
+        errors.append("L0 executable spine: closure.success.requires_terminal must reference a real terminal phase")
+
+    for pid, phase in phase_map.items():
+        if _is_terminal_phase(phase):
+            continue
+        if phase.get("steps"):
+            errors.append(
+                f"L0/L1 action authoring: phase {pid} includes nested steps; encode behavior through gap_template, manifestation, allowed_vocab, and transitions instead."
+            )
+        for target in (phase.get("transitions", {}) or {}).values():
+            if target not in phase_map:
+                errors.append(f"L1 control semantics: phase {pid} transition points to missing target {target}")
+
+    declared_tool_refs = {
+        value for value in refs.values()
+        if isinstance(value, str) and value.startswith("tools/")
+    }
+    runtime_linked_refs: set[str] = set()
+    for phase in phase_map.values():
+        manifestation = dict(phase.get("manifestation", {}) or {})
+        activation_ref = _resolve_phase_ref(manifestation.get("activation_ref"), refs)
+        if activation_ref in declared_tool_refs:
+            runtime_linked_refs.add(activation_ref)
+        for raw_ref in list((phase.get("gap_template", {}) or {}).get("content_refs", []) or []):
+            resolved_ref = _resolve_phase_ref(raw_ref, refs)
+            if resolved_ref in declared_tool_refs:
+                runtime_linked_refs.add(resolved_ref)
+
+    has_enrichment = any(field in data for field in ACTION_ENRICHMENT_FIELDS) or bool(declared_tool_refs)
+    has_runtime_surface = any(_phase_has_runtime_effective_surface(phase) for phase in phase_map.values())
+    if has_enrichment and not has_runtime_surface:
+        errors.append(
+            "L3 descriptive enrichment: input/output schema or tool declarations require at least one runtime-effective non-bridge phase."
+        )
+
+    unlinked_tool_refs = sorted(declared_tool_refs - runtime_linked_refs)
+    if unlinked_tool_refs:
+        errors.append(
+            "L3 descriptive enrichment: declared tool refs are not linked by any runtime-effective field: "
+            + ", ".join(unlinked_tool_refs)
+        )
+
+    return errors
 
 
 def validate_st(data: dict,
@@ -174,6 +276,9 @@ def validate_st(data: dict,
 
     if artifact_kind == "entity" and has_entity_semantics(data) and not data.get("steps"):
         errors.append("entity packages with semantic content require deterministic context-injection steps")
+
+    if artifact_kind in {"action", "hybrid", "action_update", "hybrid_update"} and data.get("root") and data.get("phases") and data.get("closure"):
+        errors.extend(_flow_authored_action_errors(data))
 
     if output_dir and existing_ref and not find_existing_skill_path(existing_ref, output_dir):
         errors.append(f"existing_ref not found: {existing_ref}")
