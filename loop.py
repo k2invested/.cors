@@ -1172,6 +1172,18 @@ Just answer the user's question or confirm what was done.
 Never claim that a file, preference, or workspace state was changed, removed, updated, saved, or persisted unless the injected turn outcome facts explicitly show a successful mutation or commit."""
 
 
+def _render_clarify_synthesis_guidance(clarify_step: Step) -> str:
+    lines = [
+        "## Clarify Frontier",
+        f"Clarification is required before proceeding: {clarify_step.desc}",
+        "Ask the user only for the missing information surfaced below.",
+        "Do not continue the task, do not imply the work already started, and do not answer as if the ambiguity is already resolved.",
+    ]
+    for gap in clarify_step.gaps:
+        lines.append(f"- {gap.desc}")
+    return "\n".join(lines)
+
+
 # ── Turn loop ────────────────────────────────────────────────────────────
 
 def run_turn(
@@ -1344,6 +1356,7 @@ def run_turn(
         "successful_mutations": [],
         "attempted_mutations": [],
     }
+    clarify_frontier_step: Step | None = None
     if pre_bootstrap_step and pre_bootstrap_step.commit:
         turn_facts["commits"].append(pre_bootstrap_step.commit)
         turn_facts["successful_mutations"].append(pre_bootstrap_step.desc)
@@ -1432,6 +1445,8 @@ def run_turn(
         )
 
         if outcome.control == "break":
+            if outcome.step_result and outcome.step_result.desc.startswith("clarify frontier:"):
+                clarify_frontier_step = outcome.step_result
             forced_synth = False
             break
 
@@ -1466,6 +1481,8 @@ def run_turn(
     # ── 6. SYNTHESIS ─────────────────────────────────────────────────
 
     print("\n── SYNTHESIS ──")
+    if clarify_frontier_step is not None:
+        session.inject(_render_clarify_synthesis_guidance(clarify_frontier_step), role="system")
     response = _synthesize(session, user_message, turn_facts)
 
     # ── 7. HEARTBEAT ─────────────────────────────────────────────────

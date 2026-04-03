@@ -1510,6 +1510,61 @@ def test_p12_run_turn_no_gap_discord_turn_triggers_profile_sync(monkeypatch, tmp
     ]
 
 
+def test_p12_run_turn_injects_clarify_frontier_into_synthesis(monkeypatch, tmp_path):
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+
+        def set_system(self, content: str):
+            pass
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append((role, content))
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps({
+                "gaps": [
+                    {
+                        "desc": "Need the target profile name before proceeding.",
+                        "vocab": "clarify_needed",
+                        "relevance": 0.9,
+                        "confidence": 0.9,
+                    }
+                ]
+            })
+
+    seen = {"guidance": None}
+
+    def fake_synth(session, user_message, turn_facts=None):
+        for role, content in session.injected:
+            if role == "system" and "## Clarify Frontier" in content:
+                seen["guidance"] = content
+        return "clarify"
+
+    monkeypatch.setattr(loop, "Session", lambda model=None: FakeSession())
+    monkeypatch.setattr(loop, "load_all", lambda path: registry())
+    monkeypatch.setattr(loop, "git_head", lambda: "abc123")
+    monkeypatch.setattr(loop, "git_tree", lambda: "head tree")
+    monkeypatch.setattr(loop, "_find_dangling_gaps", lambda trajectory: [])
+    monkeypatch.setattr(loop, "_find_identity_skill", lambda contact_id, registry_obj: skill("admin"))
+    monkeypatch.setattr(loop, "_render_identity", lambda skill_obj: "## Identity")
+    monkeypatch.setattr(loop, "_save_turn", lambda trajectory, state=None: None)
+    monkeypatch.setattr(loop, "_synthesize", fake_synth)
+
+    response = loop.run_turn(
+        "Tell me about him",
+        "admin",
+        traj_file=tmp_path / "trajectory.json",
+        chains_file=tmp_path / "chains.json",
+        chains_dir=tmp_path / "chains",
+    )
+
+    assert response == "clarify"
+    assert seen["guidance"] is not None
+    assert "Need the target profile name before proceeding." in seen["guidance"]
+    assert "Do not continue the task" in seen["guidance"]
+
+
 def test_p12_inline_reprogramme_does_not_trigger_heartbeat():
     class FakeSession:
         def __init__(self):
