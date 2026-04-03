@@ -33,6 +33,15 @@ import math
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from step import Gap, Step, Chain, Epistemic, Trajectory
+from vocab_registry import (
+    BRIDGE_VOCAB,
+    MUTATE_VOCAB,
+    OBSERVE_VOCAB,
+    is_bridge,
+    is_mutate,
+    is_observe,
+    vocab_priority,
+)
 
 
 # ── Configuration ─────────────────────────────────────────────────────────
@@ -50,65 +59,7 @@ CHAIN_EXTRACT_LENGTH = 8        # chains longer than this get extracted to file
 
 # ── Vocab ─────────────────────────────────────────────────────────────────
 
-OBSERVE_VOCAB = {
-    "pattern_needed", "hash_resolve_needed",
-    "email_needed", "external_context",
-    "clarify_needed",
-}
-
-MUTATE_VOCAB = {
-    "hash_edit_needed", "stitch_needed",
-    "content_needed", "script_edit_needed", "command_needed",
-    "message_needed", "json_patch_needed", "git_revert_needed",
-}
-
-BRIDGE_VOCAB: set[str] = {"reprogramme_needed", "reason_needed", "commit_needed", "await_needed"}  # the four bridge codons
-
-# Entity resolution (internal &) has no vocab — it's just hash_resolve_needed
-# where the hash happens to be a .st file. The kernel checks the skill registry
-# during hash resolution and renders entity data if found.
-
-
-def is_observe(vocab: str) -> bool:
-    return vocab in OBSERVE_VOCAB
-
-
-def is_mutate(vocab: str) -> bool:
-    return vocab in MUTATE_VOCAB
-
-
-def is_bridge(vocab: str) -> bool:
-    return vocab in BRIDGE_VOCAB
-
-
-def vocab_priority(vocab: str | None) -> int:
-    """Priority ordering for the ledger. Lower number = pops first (top of stack).
-
-    1. External &  (observe)         — scan, read, resolve, clarify
-    2. External &mut (mutate)        — write, execute, commit
-    3. reprogramme_needed            — update knowledge last
-
-    Stack is LIFO, so higher priority = placed LATER (popped first).
-    We return sort key where lower = higher priority = placed later in sorted stack.
-
-    Entity resolution has no separate priority — it flows through
-    hash_resolve_needed (observe, priority 20) like any other hash.
-    """
-    if vocab is None:
-        return 50  # unknown, middle priority
-    if vocab == "reprogramme_needed":
-        return 99  # lowest priority — runs last, sits at bottom of stack
-    if vocab == "commit_needed":
-        return 98  # just above reprogramme — fires after all commitment gaps
-    if vocab == "await_needed":
-        return 95  # checkpoint — fires after inline work, before commit/reprogramme
-    if vocab == "reason_needed":
-        return 90  # planning/reorientation — fires after observations and mutations
-    if vocab in OBSERVE_VOCAB:
-        return 20  # external &
-    if vocab in MUTATE_VOCAB:
-        return 40  # external &mut
-    return 50  # unknown
+# Canonical vocab configuration lives in vocab_registry.py.
 
 
 # ── Chain State ───────────────────────────────────────────────────────────

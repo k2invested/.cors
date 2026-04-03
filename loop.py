@@ -47,6 +47,13 @@ from skills.loader import load_all, SkillRegistry, Skill
 import manifest_engine as me
 from execution_engine import ExecutionConfig, ExecutionHooks, execute_iteration
 from tools import st_builder as st_builder_module
+from vocab_registry import (
+    BRIDGE_VOCAB,
+    DETERMINISTIC_VOCAB,
+    OBSERVATION_ONLY_VOCAB,
+    TOOL_MAP,
+    validate_tree_policy_targets,
+)
 
 
 # ── Configuration ────────────────────────────────────────────────────────
@@ -161,6 +168,17 @@ def _load_tree_policy() -> dict:
                     merged[path] = {**merged[path], **rule}
                 else:
                     merged[path] = rule
+            invalid = set(validate_tree_policy_targets(merged))
+            if invalid:
+                for path, rule in list(merged.items()):
+                    if not isinstance(rule, dict):
+                        continue
+                    cleaned = dict(rule)
+                    for key in ("on_mutate", "on_reject"):
+                        target = cleaned.get(key)
+                        if f"{path}:{key}:{target}" in invalid:
+                            cleaned.pop(key, None)
+                    merged[path] = cleaned
             return merged
     except (FileNotFoundError, json.JSONDecodeError):
         return DEFAULT_TREE_POLICY
@@ -930,35 +948,7 @@ def _emit_reason_skill(reason_skill: Skill, gap: Gap, origin_step: Step,
 
 # ── Tool execution ───────────────────────────────────────────────────────
 
-TOOL_MAP = {
-    # Observation tools (deterministic — kernel resolves, no LLM needed)
-    # Format: {"tool": path, "post_observe": target_path_or_None}
-    "hash_resolve_needed":  {"tool": None},
-    "pattern_needed":       {"tool": "tools/file_grep.py"},
-    "email_needed":         {"tool": "tools/email_check.py"},
-    "external_context":     {"tool": None},
-
-    # Mutation tools (composed — 5.4 writes the command)
-    # post_observe: None = resolve commit tree, path = resolve specific dir/file from commit
-    "hash_edit_needed":     {"tool": "tools/hash_manifest.py"},
-    "stitch_needed":        {"tool": "tools/stitch_generate.py", "post_observe": "ui_output/"},
-    "content_needed":       {"tool": "tools/file_write.py"},
-    "script_edit_needed":   {"tool": "tools/file_edit.py"},
-    "command_needed":       {"tool": "tools/code_exec.py"},
-    "message_needed":       {"tool": "tools/email_send.py"},
-    "json_patch_needed":    {"tool": "tools/json_patch.py"},
-    "git_revert_needed":    {"tool": "tools/git_ops.py"},
-}
-
-# Deterministic vocabs — kernel resolves without LLM
-DETERMINISTIC_VOCAB = {
-    "hash_resolve_needed",
-}
-
-# Observation-only vocabs — resolve into context, no post-diff (blob step)
-OBSERVATION_ONLY_VOCAB = {
-    "hash_resolve_needed", "external_context",
-}
+# Canonical vocab config is defined in vocab_registry.py and imported above.
 
 
 def execute_tool(tool_path: str, params: dict) -> tuple[str, int]:
@@ -2384,6 +2374,9 @@ def _render_turn_outcome_facts(turn_facts: dict[str, list[str]]) -> str:
     if not commits and not successful:
         lines.append(
             "No mutation succeeded this turn. Describe observations, clarifications, or next steps instead of claiming the change already happened."
+        )
+        lines.append(
+            "Do not say 'I'll update', 'I will proceed', or any equivalent future-write promise when no mutation succeeded this turn."
         )
     return "\n".join(lines)
 

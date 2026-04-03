@@ -26,6 +26,7 @@ import compile as compile_module
 import execution_engine as execution_engine_module
 import loop
 import manifest_engine as manifest_engine_module
+import vocab_registry as vocab_registry_module
 from compile import (
     ADMISSION_THRESHOLD,
     BRIDGE_VOCAB,
@@ -409,6 +410,12 @@ P3_CASES = [
     ("bridge_reprogramme_needed", lambda: is_bridge("reprogramme_needed")),
     ("deterministic_vocab_is_hash_resolve", lambda: loop.DETERMINISTIC_VOCAB == {"hash_resolve_needed"}),
     ("observation_only_contains_external_context", lambda: "external_context" in loop.OBSERVATION_ONLY_VOCAB),
+    ("compile_observe_vocab_matches_registry", lambda: compile_module.OBSERVE_VOCAB == vocab_registry_module.OBSERVE_VOCAB),
+    ("compile_mutate_vocab_matches_registry", lambda: compile_module.MUTATE_VOCAB == vocab_registry_module.MUTATE_VOCAB),
+    ("compile_bridge_vocab_matches_registry", lambda: compile_module.BRIDGE_VOCAB == vocab_registry_module.BRIDGE_VOCAB),
+    ("loop_tool_map_matches_registry", lambda: loop.TOOL_MAP == vocab_registry_module.TOOL_MAP),
+    ("loop_observation_only_matches_registry", lambda: loop.OBSERVATION_ONLY_VOCAB == vocab_registry_module.OBSERVATION_ONLY_VOCAB),
+    ("loop_deterministic_matches_registry", lambda: loop.DETERMINISTIC_VOCAB == vocab_registry_module.DETERMINISTIC_VOCAB),
     ("tool_map_hash_edit_routes_hash_manifest", lambda: loop.TOOL_MAP["hash_edit_needed"]["tool"] == "tools/hash_manifest.py"),
     ("tool_map_stitch_has_post_observe", lambda: loop.TOOL_MAP["stitch_needed"]["post_observe"] == "ui_output/"),
     ("priority_observe_before_mutate", lambda: vocab_priority("pattern_needed") < vocab_priority("content_needed")),
@@ -424,6 +431,7 @@ P3_CASES = [
     ("tree_policy_actions_set_action_editor_mode", lambda: loop._match_policy("skills/actions/hash_edit.st", loop._load_tree_policy())["reprogramme_mode"] == "action_editor"),
     ("tree_policy_exact_match_compile_immutable", lambda: loop._match_policy("compile.py", loop._load_tree_policy())["immutable"] is True),
     ("tree_policy_longest_prefix_wins", lambda: loop._match_policy("skills/codons/reason.st", loop._load_tree_policy())["on_reject"] == "reason_needed"),
+    ("tree_policy_vocab_targets_are_valid", lambda: vocab_registry_module.validate_tree_policy_targets(loop._load_tree_policy()) == []),
 ]
 
 
@@ -1702,6 +1710,86 @@ def test_p12_inline_reprogramme_emits_postcondition_assessment_before_synth():
     assert postconditions[0].gaps[0].vocab == "hash_resolve_needed"
 
 
+def test_p12_hash_resolve_runs_in_deterministic_branch_and_can_surface_follow_on_mutation():
+    class FakeSession:
+        def __init__(self):
+            self.prompts = []
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append((role, content))
+
+        def call(self, user_content: str = None) -> str:
+            self.prompts.append(user_content or "")
+            return (
+                'Observed the current entity context.\n'
+                '{"gaps":[{"desc":"Update the user profile to note that Clinton is their brother and reference clinton.st.",'
+                '"vocab":"reprogramme_needed","relevance":0.95,"confidence":0.9}]}'
+            )
+
+    traj = Trajectory()
+    prerequisite_gap = make_gap(
+        "Need to resolve the user's current entity (.st) file in order to update their profile to note that their brother is Clinton, referencing clinton.st.",
+        content_refs=[skill("admin").hash, skill("clinton").hash],
+        vocab="hash_resolve_needed",
+        relevance=0.95,
+        confidence=0.9,
+    )
+    origin_step = make_step("origin", gaps=[prerequisite_gap])
+    traj.append(origin_step)
+
+    compiler = Compiler(traj)
+    compiler.emit_origin_gaps(origin_step)
+    entry, signal = compiler.next()
+
+    assert entry is not None
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "## Existing entity data",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: None,
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: None,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=signal,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert any("surface the actual next gap now" in prompt for prompt in session.prompts)
+    assert compiler.ledger.stack[-1].gap.vocab == "reprogramme_needed"
+    assert "clinton" in compiler.ledger.stack[-1].gap.desc.lower()
+
+
 def test_p12_resolve_current_gap_marks_trajectory_gap_resolved_for_cross_turn_resume():
     traj = Trajectory()
     gap = make_gap("persist alias", vocab="reprogramme_needed", relevance=0.9, confidence=0.9)
@@ -1965,6 +2053,20 @@ def test_p12_reason_needed_runs_inline_and_emits_child_gaps():
     assert compiler.needs_heartbeat() is False
     assert any("Delegation Preferences" in content for content in session.injected)
     assert compiler.ledger.stack[-1].gap.vocab == "content_needed"
+
+
+def test_p12_turn_outcome_facts_forbid_future_write_promises_without_success():
+    rendered = loop._render_turn_outcome_facts({
+        "commits": [],
+        "successful_mutations": [],
+        "attempted_mutations": [],
+    })
+
+    assert "Do not say 'I'll update', 'I will proceed'" in rendered
+
+
+def test_p12_hash_resolve_is_not_observation_only_auto_close():
+    assert "hash_resolve_needed" not in loop.OBSERVATION_ONLY_VOCAB
 
 
 def test_p12_reason_needed_can_actualize_new_action_skeleton():

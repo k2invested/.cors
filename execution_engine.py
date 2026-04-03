@@ -183,7 +183,6 @@ def _policy_drift_assessment(source: str, detail: str | None = None) -> list[str
         lines.append(f"policy.detail: {detail}")
     return lines
 
-
 def _pattern_tool_params(gap: Gap) -> dict[str, str] | None:
     """Infer file_grep params when pattern_needed provides a concrete search term."""
     pattern = None
@@ -530,8 +529,19 @@ def execute_iteration(
         elif resolved_data:
             session.inject(f"## Resolved data\n{resolved_data}")
 
+        follow_on_guidance = ""
+        if vocab == "hash_resolve_needed":
+            follow_on_guidance = (
+                "\nIf this observation resolves a prerequisite for an explicit requested change, "
+                "surface the actual next gap now rather than stopping at observation.\n"
+                "For .st files, identities, profiles, preferences, and long-horizon semantic state, "
+                "use reprogramme_needed as the mutate gap.\n"
+                "For ordinary workspace file edits, use the relevant mutate vocab instead.\n"
+                "Do not answer with a future-action promise unless the next gap is actually surfaced."
+            )
+
         raw = session.call(
-            f"You resolved gap:{gap.hash} \"{gap.desc}\". What do you observe? Articulate any new gaps."
+            f"You resolved gap:{gap.hash} \"{gap.desc}\". What do you observe? Articulate any new gaps.{follow_on_guidance}"
         )
         print(f"  LLM: {raw[:150]}...")
         step_result, child_gaps = hooks.parse_step_output(
