@@ -1498,8 +1498,12 @@ def run_turn(
 
     traj_tree = trajectory.render_recent(TRAJECTORY_WINDOW, registry=registry)
 
+    session_context = _render_session_context(trajectory, registry, user_message)
+
     first_input = f"""## Tree Language
 {TREE_LANGUAGE_KEY}
+
+{session_context}
 
 ## Trajectory
 {traj_tree}
@@ -1640,7 +1644,7 @@ def run_turn(
             registry=registry,
             current_turn=current_turn,
             hooks=_execution_hooks(state.chains_dir),
-            config=_execution_config(state.chains_dir),
+            config=_execution_config(state.chains_dir, user_message),
         )
 
         if outcome.control == "break":
@@ -1916,6 +1920,60 @@ def _render_step_network(registry: SkillRegistry, chains_dir: Path | None = None
     return me.render_step_network(chains_dir or CHAINS_DIR, registry, _is_entity_skill, _skill_payload)
 
 
+def _recent_structural_attempts(trajectory: Trajectory, limit: int = 5) -> list[Step]:
+    keywords = (
+        "reason actualized workflow:",
+        "reason actualization failed:",
+        "failed attempt:",
+        "next layer frontier:",
+        "reprogrammed discord profile:",
+    )
+    selected: list[Step] = []
+    seen: set[str] = set()
+    for step in reversed(trajectory.recent(25)):
+        if step.hash in seen:
+            continue
+        if step.rogue or any(step.desc.startswith(prefix) for prefix in keywords):
+            selected.append(step)
+            seen.add(step.hash)
+        if len(selected) >= limit:
+            break
+    return list(reversed(selected))
+
+
+def _render_session_context(
+    trajectory: Trajectory,
+    registry: SkillRegistry,
+    user_message: str,
+    active_chain_id: str | None = None,
+    active_gap: str | None = None,
+) -> str:
+    lines = ["## Session Context"]
+    if user_message:
+        lines.append("### Current Message")
+        lines.append(f"\"{user_message}\"")
+
+    if active_chain_id:
+        lines.append("### Active Chain")
+        lines.append(trajectory.render_chain(active_chain_id, registry=registry, highlight_gap=active_gap, mode="collapsed"))
+    else:
+        lines.append("### Recent Session Tree")
+        lines.append(trajectory.render_recent(TRAJECTORY_WINDOW, registry=registry, mode="collapsed"))
+
+    attempts = _recent_structural_attempts(trajectory)
+    if attempts:
+        lines.append("### Recent Structural Attempts")
+        for step in attempts:
+            commit = f" commit:{step.commit}" if step.commit else ""
+            rogue = ""
+            if step.rogue:
+                extras = [part for part in [step.rogue_kind, step.failure_source] if part]
+                rogue = f" [rogue:{', '.join(extras)}]" if extras else " [rogue]"
+            lines.append(f"- step:{step.hash} \"{step.desc}\"{commit}{rogue}")
+
+    return "\n".join(lines)
+
+
 def _execution_hooks(chains_dir: Path | None = None) -> ExecutionHooks:
     active_chains_dir = chains_dir or CHAINS_DIR
     return ExecutionHooks(
@@ -1931,6 +1989,13 @@ def _execution_hooks(chains_dir: Path | None = None) -> ExecutionHooks:
         match_policy=_match_policy,
         resolve_entity=_resolve_entity,
         render_step_network=lambda registry: _render_step_network(registry, active_chains_dir),
+        render_session_context=lambda trajectory, registry, user_message, active_chain_id=None, active_gap=None: _render_session_context(
+            trajectory,
+            registry,
+            user_message,
+            active_chain_id=active_chain_id,
+            active_gap=active_gap,
+        ),
         emit_reason_skill=_emit_reason_skill,
         git=git,
         commit_assessment=_commit_assessment_for_commit,
@@ -1938,13 +2003,14 @@ def _execution_hooks(chains_dir: Path | None = None) -> ExecutionHooks:
     )
 
 
-def _execution_config(chains_dir: Path | None = None) -> ExecutionConfig:
+def _execution_config(chains_dir: Path | None = None, session_message: str = "") -> ExecutionConfig:
     return ExecutionConfig(
         cors_root=CORS_ROOT,
         chains_dir=chains_dir or CHAINS_DIR,
         tool_map=TOOL_MAP,
         deterministic_vocab=DETERMINISTIC_VOCAB,
         observation_only_vocab=OBSERVATION_ONLY_VOCAB,
+        session_message=session_message,
     )
 
 

@@ -625,6 +625,7 @@ P6_CASES += [
     ("render_chain_spec_mentions_action_tree_ownership", lambda: "skills/actions/*.st belongs to reason_needed" in loop._render_identity(skill("commitment_chain_construction_spec"))),
     ("render_chain_spec_mentions_tool_foundations", lambda: "Foundational Python tools under tools/*.py" in loop._render_identity(skill("commitment_chain_construction_spec"))),
     ("render_chain_spec_mentions_public_trigger_rule", lambda: "public trigger is a deterministic activation field attached to the highest-order completed workflow" in loop._render_identity(skill("commitment_chain_construction_spec")).lower()),
+    ("render_session_context_includes_header", lambda: "## Session Context" in loop._render_session_context(Trajectory(), registry(), "hello")),
     ("pre_diff_prompt_says_tools_are_real_lower_order_blocks", lambda: "foundational python tools under tools/*.py are real lower-order action blocks" in loop.PRE_DIFF_SYSTEM.lower()),
     ("pre_diff_prompt_says_action_environment_is_hash_native", lambda: "treat action/codon packages and tools as one hash-native action environment" in loop.PRE_DIFF_SYSTEM.lower()),
     ("pre_diff_prompt_says_public_trigger_belongs_to_highest_order_workflow", lambda: "final public on_vocab trigger belongs to the highest-order completed workflow" in loop.PRE_DIFF_SYSTEM.lower()),
@@ -1881,6 +1882,7 @@ def test_p12_hash_resolve_runs_in_deterministic_branch_and_can_surface_follow_on
         git=lambda cmd, cwd=None: "",
         commit_assessment=lambda commit_sha: [],
         step_assessment=lambda before, after, path=None: [],
+        render_session_context=lambda trajectory, registry_obj, user_message, active_chain_id=None, active_gap=None: "## Session Context\nactive session",
     )
     config = execution_engine_module.ExecutionConfig(
         cors_root=ROOT,
@@ -2055,6 +2057,7 @@ def test_p12_clarify_iteration_emits_single_merged_step():
         git=lambda cmd, cwd=None: "",
         commit_assessment=lambda commit_sha: [],
         step_assessment=lambda before, after, path=None: [],
+        render_session_context=lambda trajectory, registry_obj, user_message, active_chain_id=None, active_gap=None: "## Session Context\nactive session",
     )
     config = execution_engine_module.ExecutionConfig(
         cors_root=ROOT,
@@ -2144,6 +2147,7 @@ def test_p12_reason_needed_runs_inline_and_emits_child_gaps():
         git=lambda cmd, cwd=None: "",
         commit_assessment=lambda commit_sha: [],
         step_assessment=lambda before, after, path=None: [],
+        render_session_context=lambda trajectory, registry_obj, user_message, active_chain_id=None, active_gap=None: "## Session Context\nactive session",
     )
     config = execution_engine_module.ExecutionConfig(
         cors_root=ROOT,
@@ -2170,6 +2174,7 @@ def test_p12_reason_needed_runs_inline_and_emits_child_gaps():
     assert outcome.step_result.desc.startswith("Inline reasoning complete.")
     assert session.calls == 1
     assert compiler.needs_heartbeat() is False
+    assert any("## Session Context" in content for content in session.injected)
     assert any("Delegation Preferences" in content for content in session.injected)
     assert compiler.ledger.stack[-1].gap.vocab == "content_needed"
 

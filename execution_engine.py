@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -49,6 +49,9 @@ class ExecutionHooks:
     git: Callable[[list[str], str | None], str]
     commit_assessment: Callable[[str], list[str]]
     step_assessment: Callable[[dict | None, dict | None, str | None], list[str]]
+    render_session_context: Callable[[Any, Any, str, str | None, str | None], str] = field(
+        default=lambda trajectory, registry, user_message, active_chain_id=None, active_gap=None: ""
+    )
 
 
 @dataclass
@@ -58,6 +61,7 @@ class ExecutionConfig:
     tool_map: dict[str, dict]
     deterministic_vocab: set[str]
     observation_only_vocab: set[str]
+    session_message: str = ""
 
 
 @dataclass
@@ -664,6 +668,15 @@ def execute_iteration(
     resolved_data = hooks.resolve_all_refs(gap.step_refs, gap.content_refs, trajectory)
     vocab = gap.vocab
     step_result: Step | None = None
+    session_context_block = hooks.render_session_context(
+        trajectory,
+        registry,
+        config.session_message,
+        entry.chain_id if getattr(entry, "chain_id", None) else None,
+        gap.hash if gap else None,
+    )
+    if session_context_block:
+        session.inject(session_context_block)
 
     if vocab in config.observation_only_vocab:
         print(f"  → observation-only ({vocab})")
