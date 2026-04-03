@@ -14,6 +14,7 @@ from pathlib import Path
 
 from step import Step, Gap, Epistemic, Trajectory
 from skills.loader import Skill, SkillRegistry
+from tools import st_builder as st_builder_module
 
 
 NODE_DEFAULT_RELEVANCE = {
@@ -130,6 +131,97 @@ def _node_signature(node: dict) -> str:
         f"{{{_node_kind_code(node)}{_spawn_code(node)}{flow}{_execution_mode_code(node)}/"
         f"{len(gap_template.get('step_refs', []))}:{len(gap_template.get('content_refs', []))}}}"
     )
+
+
+def _skill_package_tree_doc(skill: Skill) -> dict:
+    payload = dict(skill.payload or skill.to_dict() or {})
+    if payload.get("root") and isinstance(payload.get("phases"), list) and isinstance(payload.get("closure"), dict):
+        return payload
+    return st_builder_module.semantic_skeleton_from_st(payload)
+
+
+def _render_ref_list(refs: list[str]) -> str:
+    return ", ".join(refs) if refs else "(none)"
+
+
+def render_skill_package(skill: Skill) -> str:
+    package = _skill_package_tree_doc(skill)
+    artifact = dict(package.get("artifact", {}) or {})
+    lines = [f"action_tree:{skill.display_name}:{skill.hash}"]
+    lines.append(f"  name: {package.get('name', skill.name)}")
+    lines.append(f"  trigger: {package.get('trigger', skill.trigger)}")
+    lines.append(
+        "  artifact: "
+        f"kind={artifact.get('kind', skill.artifact_kind)} "
+        f"protected_kind={artifact.get('protected_kind', 'action')} "
+        f"lineage={artifact.get('lineage', package.get('name', skill.name))}"
+    )
+    if package.get("root"):
+        lines.append(f"  root: {package.get('root')}")
+    if package.get("desc"):
+        lines.append(f"  desc: {package.get('desc')}")
+    refs = package.get("refs", {}) or {}
+    lines.append(f"  refs: {', '.join(sorted(refs.keys())) if refs else '(none)'}")
+
+    closure = dict(package.get("closure", {}) or {})
+    if closure:
+        success = dict(closure.get("success", {}) or {})
+        failure = dict(closure.get("failure", {}) or {})
+        limits = dict(closure.get("limits", {}) or {})
+        lines.append(
+            "  closure: "
+            f"success_terminal={success.get('requires_terminal', '(none)')} "
+            f"no_active_gaps={success.get('requires_no_active_gaps', False)} "
+            f"allow_clarify_terminal={failure.get('allow_clarify_terminal', False)} "
+            f"max_chain_depth={limits.get('max_chain_depth', '(none)')}"
+        )
+
+    phases = package.get("phases", []) or []
+    if not phases:
+        lines.append("  phases: (none)")
+        return "\n".join(lines)
+
+    lines.append("  phases")
+    visible_phases = [phase for phase in phases if not phase.get("terminal")]
+    for index, phase in enumerate(visible_phases):
+        branch = "└" if index == len(visible_phases) - 1 else "├"
+        cont = " " if index == len(visible_phases) - 1 else "│"
+        manifestation = dict(phase.get("manifestation", {}) or {})
+        generation = dict(phase.get("generation", {}) or {})
+        gap_template = dict(phase.get("gap_template", {}) or {})
+        transitions = dict(phase.get("transitions", {}) or {})
+        lines.append(
+            f"  {branch}─ {_node_signature(phase)} {phase.get('id')} "
+            f"[{phase.get('kind', 'unknown')}] action:{phase.get('action', '?')}"
+        )
+        lines.append(f"  {cont}  goal: {phase.get('goal', phase.get('desc', '(none)'))}")
+        lines.append(f"  {cont}  gap.desc: {gap_template.get('desc', phase.get('goal', '(none)'))}")
+        lines.append(
+            f"  {cont}  gap.refs: step_refs={_render_ref_list(gap_template.get('step_refs', []) or [])} "
+            f"| content_refs={_render_ref_list(gap_template.get('content_refs', []) or [])}"
+        )
+        lines.append(
+            f"  {cont}  manifestation: kernel_class={manifestation.get('kernel_class', '(none)')} "
+            f"dispersal={manifestation.get('dispersal', '(none)')} "
+            f"execution_mode={manifestation.get('execution_mode', '(none)')} "
+            f"runtime_vocab={manifestation.get('runtime_vocab', '(none)')}"
+        )
+        lines.append(
+            f"  {cont}  generation: spawn_mode={generation.get('spawn_mode', '(none)')} "
+            f"spawn_trigger={generation.get('spawn_trigger', '(none)')} "
+            f"branch_policy={generation.get('branch_policy', '(none)')} "
+            f"return_policy={generation.get('return_policy', '(none)')}"
+        )
+        lines.append(
+            f"  {cont}  allowed_vocab: "
+            f"{', '.join(phase.get('allowed_vocab', []) or []) or '(none)'}"
+        )
+        lines.append(f"  {cont}  post_diff: {phase.get('post_diff', False)}")
+        lines.append(
+            f"  {cont}  transitions: "
+            f"{', '.join(f'{k}->{v}' for k, v in transitions.items()) or '(none)'}"
+        )
+    return "\n".join(lines)
 
 
 def render_chain_package(package: dict, ref: str) -> str:

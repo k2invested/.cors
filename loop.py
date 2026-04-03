@@ -569,7 +569,7 @@ def _render_skill_package(skill: Skill) -> str:
     data = skill.payload
     if not data:
         return f"## Package: {skill.display_name}:{skill.hash}\n(unreadable)"
-    return json.dumps(data, indent=2)
+    return me.render_skill_package(skill)
 
 def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
     """Resolve any hash to its content as a semantic tree.
