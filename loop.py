@@ -1123,6 +1123,12 @@ For explicit edit/update requests, do not stop at "need to inspect". Emit the ac
 
 For .st files, identity profiles, preferences, or long-horizon semantic state updates, use reprogramme_needed as the actual update gap. Use hash_edit_needed or script_edit_needed for ordinary workspace file edits.
 
+Action/workflow ownership:
+  - Anything involving skills/actions/*.st is reason_needed's domain.
+  - New action/workflow creation, repair, restructuring, or schema alignment stays under reason_needed.
+  - Do not surface reprogramme_needed for skills/actions/*.st work.
+  - reprogramme_needed is for semantic persistence in admin/entity trees and other entity-like state, not action-package authoring.
+
 When a user refers to a person's "profile", default to the semantic entity record in their .st file: identity, preferences, stable context, and other persisted person-model fields. Do not treat "profile" as meaning CV, professional bio, or social profile unless the user explicitly indicates that deliverable.
 
 If the user states a stable first-person preference, communication norm, workflow preference, or correction to your model of them, and it may need persistence but the request is not explicit, use reason_needed first to judge whether it should become semantic state. If the judgment is yes, surface reprogramme_needed as the actual persistence gap.

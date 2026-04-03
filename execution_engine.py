@@ -456,6 +456,26 @@ def _determine_reprogramme_mode(gap: Gap, target_entity: Any | None, policy: dic
     return "entity_editor"
 
 
+def _sanitize_reason_child_gaps(child_gaps: list[Gap], *, registry: Any, policy: dict) -> int:
+    """Keep reason-owned action/workflow authoring out of reprogramme.
+
+    reason_needed may surface reprogramme_needed only for entity-tree persistence.
+    If reason tries to hand action/workflow origination or repair to reprogramme,
+    rewrite it back to reason_needed so authoring stays under reason ownership.
+    """
+    rewrites = 0
+    for gap in child_gaps:
+        if gap.vocab != "reprogramme_needed":
+            continue
+        target_entity = _entity_target_for_reprogramme(gap, registry)
+        route_mode = _determine_reprogramme_mode(gap, target_entity, policy)
+        if route_mode != "entity_editor":
+            gap.vocab = "reason_needed"
+            gap.route_mode = None
+            rewrites += 1
+    return rewrites
+
+
 def _coerce_semantic_frame_for_mode(frame: dict | None, route_mode: str) -> dict | None:
     if not isinstance(frame, dict):
         return frame
@@ -943,6 +963,9 @@ def execute_iteration(
             f"Reason inline about: gap:{gap.hash} \"{gap.desc}\".\n"
             "Choose the next lawful move in the current turn.\n"
             "- If judgment is enough, emit the next clarified gap(s) or no gaps.\n"
+            "- Anything involving skills/actions/*.st is your domain under reason_needed.\n"
+            "- Do not hand action/workflow creation, repair, schema alignment, or restructuring to reprogramme_needed.\n"
+            "- reprogramme_needed may only be surfaced from reason_needed for entity-tree persistence.\n"
             f"- {'If this is new skills/actions/*.st origination, you own workflow authoring. Return a concrete semantic_skeleton.v1 action package and actualize it now; do not emit another generic create/write file gap.' if author_actions else 'If new reusable workflow structure is needed, author the concrete creation/update gap(s) needed to actualize it.'}\n"
             "- If an existing workflow should be triggered, emit the activation gap(s) for that path.\n"
             f"{'- For new action/workflow packages, return only semantic_skeleton.v1 JSON with artifact.kind=action or hybrid. Do not restate the request as content_needed, hash_edit_needed, or reprogramme_needed.\n' if author_actions else ''}"
@@ -1043,6 +1066,13 @@ def execute_iteration(
                 content_refs=gap.content_refs,
                 chain_id=entry.chain_id,
             )
+            rewrites = _sanitize_reason_child_gaps(
+                child_gaps,
+                registry=registry,
+                policy=hooks.load_tree_policy(),
+            )
+            if rewrites:
+                print(f"  → rewrote {rewrites} reason-emitted reprogramme gap(s) to reason_needed")
             if child_gaps:
                 compiler.emit(step_result)
             else:

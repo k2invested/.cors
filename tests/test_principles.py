@@ -423,6 +423,7 @@ P3_CASES = [
     ("priority_reason_before_await", lambda: vocab_priority("reason_needed") < vocab_priority("await_needed")),
     ("priority_await_before_commit", lambda: vocab_priority("await_needed") < vocab_priority("commit_needed")),
     ("priority_commit_before_reprogramme", lambda: vocab_priority("commit_needed") < vocab_priority("reprogramme_needed")),
+    ("pre_diff_prompt_says_actions_are_reason_domain", lambda: "Anything involving skills/actions/*.st is reason_needed's domain." in loop.PRE_DIFF_SYSTEM),
     ("tree_policy_skills_reroutes_reprogramme", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
     ("tree_policy_admin_sets_entity_editor_mode", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["reprogramme_mode"] == "entity_editor"),
     ("tree_policy_entities_reroutes_reprogramme", lambda: loop._match_policy("skills/entities/clinton.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
@@ -2109,6 +2110,77 @@ def test_p12_reason_needed_runs_inline_and_emits_child_gaps():
     assert compiler.needs_heartbeat() is False
     assert any("Delegation Preferences" in content for content in session.injected)
     assert compiler.ledger.stack[-1].gap.vocab == "content_needed"
+
+
+def test_p12_reason_needed_cannot_surface_reprogramme_for_action_tree():
+    class FakeSession:
+        def __init__(self):
+            self.calls = 0
+            self.injected = []
+            self.prompts = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            self.calls += 1
+            self.prompts.append(user_content or "")
+            return (
+                "Inline reasoning complete.\n"
+                '{"gaps":[{"desc":"Author a corrected semantic_skeleton.v1 action package for skills/actions/research.st.",'
+                '"vocab":"reprogramme_needed","relevance":0.9,"confidence":0.9}]}'
+            )
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("repair research workflow", vocab="reason_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: None,
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: None,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=loop._load_tree_policy,
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert compiler.ledger.stack[-1].gap.vocab == "reason_needed"
+    assert "skills/actions/research.st" in compiler.ledger.stack[-1].gap.desc
+    assert any("Anything involving skills/actions/*.st is your domain under reason_needed." in content for content in session.prompts)
 
 
 def test_p12_turn_outcome_facts_forbid_future_write_promises_without_success():
