@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from compile import GovernorSignal, is_mutate, is_observe
+import action_foundations as foundations
 from skills.loader import compute_skill_hash
 from step import Epistemic, Gap, Step
 import manifest_engine as me
@@ -99,6 +100,16 @@ def _reason_next_layer_gap(intent: dict | None, *, step_hash: str, authored_refs
     gap.vocab = "reason_needed"
     gap.turn_id = current_turn
     return gap
+
+
+def _normalize_reason_action_trigger(intent: dict | None) -> None:
+    if not isinstance(intent, dict):
+        return
+    trigger = intent.get("trigger")
+    next_layer_desc = intent.get("next_layer_desc")
+    if isinstance(next_layer_desc, str) and next_layer_desc.strip():
+        if isinstance(trigger, str) and trigger.startswith("on_vocab:"):
+            intent["trigger"] = "manual"
 
 
 def _make_rogue_step(
@@ -995,6 +1006,16 @@ def execute_iteration(
         if resolved_data:
             session.inject(f"## Context\n{resolved_data}")
         if author_actions:
+            session.inject(f"## Step Network\n{hooks.render_step_network(registry)}")
+            session.inject(
+                foundations.render_action_foundations(
+                    registry=registry,
+                    chains_dir=config.chains_dir,
+                    cors_root=config.cors_root,
+                    tool_map=config.tool_map,
+                    git=hooks.git,
+                )
+            )
             inferred_name = _inferred_action_name_from_gap(gap)
             inferred_trigger = "manual"
             trigger_match = re.search(r"\b([a-z_]+_needed)\b", gap.desc.lower())
@@ -1008,8 +1029,14 @@ def execute_iteration(
             )
             session.inject(
                 "## Editable Action Skeleton\n"
-                "Return JSON only. Author exactly one workflow layer through this semantic_skeleton.v1 frame.\n"
+                "If you are authoring the current .st layer, return JSON only through this semantic_skeleton.v1 frame.\n"
                 "Build inside out / back to front: foundational lower-order layers must already exist before a higher-order layer embeds them.\n"
+                "Foundational Python tools under tools/*.py are lawful lower-order layers. If one is missing, emit the concrete tool-authoring gap(s) first instead of forcing a premature skeleton.\n"
+                "Treat action packages/codons and tool scripts as one hash-native action environment.\n"
+                "In the Action Foundations inventory, surface=semantic_tree means an embeddable compositional unit; surface=described_blob means a foundational executable/data block.\n"
+                "When activated by name/vocab, a block uses its canonical default gap contract. When embedded by hash, you may specialize manifestation only through an explicit embedding.gap_override.\n"
+                "Tool foundations do not need kernel vocab entries. They may be referenced later by committed blob hash.\n"
+                "If a higher-order layer is still needed after this layer, do not claim the final public on_vocab trigger yet. Lower-order layers should usually stay manual/internal; the highest-order completed workflow owns the public trigger.\n"
                 "If this layer is complete but a higher-order layer is still needed, include next_layer_desc so the next reason_needed iteration can build on the committed layer hash.\n"
                 f"{json.dumps(frame, indent=2)}"
             )
@@ -1022,11 +1049,12 @@ def execute_iteration(
             "- reprogramme_needed may only be surfaced from reason_needed for entity-tree persistence.\n"
             f"- {'If this is new skills/actions/*.st origination, you own workflow authoring. Return one concrete semantic_skeleton.v1 action layer and actualize it now; do not emit another generic create/write file gap.' if author_actions else 'If new reusable workflow structure is needed, author the concrete creation/update gap(s) needed to actualize it.'}\n"
             "- If an existing workflow should be triggered, emit the activation gap(s) for that path.\n"
-            f"{'- For new action/workflow packages, return only semantic_skeleton.v1 JSON with artifact.kind=action or hybrid. Do not restate the request as content_needed, hash_edit_needed, or reprogramme_needed.\n- Author one layer per iteration. Do not try to manifest the full multi-layer workflow in one pass.\n- Embedded workflows, action packages, or tool-mapped foundations must already exist before you embed them.\n- If a higher-order layer is still needed after this layer commits, include next_layer_desc and optionally next_layer_content_refs using only existing committed hashes or existing tool paths.\n' if author_actions else ''}"
+            f"{'- For new action/workflow packages, return semantic_skeleton.v1 JSON only when the current .st layer is actually ready to be authored.\n- If a foundational tool is missing, emit the concrete tool-authoring gap(s) first: content_needed for a new tools/*.py file, script_edit_needed or hash_edit_needed for an existing tool.\n- Treat action packages/codons, extracted chains, and tool scripts as one hash-native action environment.\n- surface=semantic_tree means an embeddable compositional unit. surface=described_blob means a foundational executable/data block.\n- Name/vocab activation uses the canonical default gap contract. Hash embedding may specialize manifestation only through an explicit embedding.gap_override.\n- Reference action/codon packages by committed skill hash, extracted chains by chain hash, and tool foundations by committed blob hash.\n- Tools with no classifier vocab are still lawful foundations; do not try to invent kernel vocab entries for them.\n- Author one layer per iteration. Do not try to manifest the full multi-layer workflow in one pass.\n- Embedded workflows, action packages, extracted chains, or tool foundations must already exist before you embed them.\n- If a higher-order layer is still needed after this layer commits, include next_layer_desc and optionally next_layer_content_refs using only existing committed hashes.\n- If a higher-order layer is still needed, keep trigger=manual on the current layer; the final public on_vocab trigger belongs on the highest-order completed workflow.\n' if author_actions else ''}"
             "Keep reasoning stateful and current-turn; do not defer by scheduling background work unless a later gap explicitly does so."
         )
         intent = hooks.extract_json(raw)
         if author_actions and isinstance(intent, dict):
+            _normalize_reason_action_trigger(intent)
             artifact = intent.get("artifact", {}) or {}
             intent.pop("existing_ref", None)
             intent.pop("existing_action_ref", None)

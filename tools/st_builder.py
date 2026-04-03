@@ -16,6 +16,7 @@ configuration. It does not infer workflow vocab from natural language.
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -46,6 +47,7 @@ SEMANTIC_FIELDS = {
     "init",
 }
 HEX_REF_RE = re.compile(r"^[0-9a-f]{12}$")
+OBJECT_REF_RE = re.compile(r"^[0-9a-f]{7,64}$")
 PRESERVED_MERGE_FIELDS = {
     *SEMANTIC_FIELDS,
     "reasoning",
@@ -132,6 +134,59 @@ VALID_TRIGGER_PREFIXES = {"on_contact:", "on_vocab:", "scheduled:", "command:"}
 REQUIRED_STEP_FIELDS = {"action", "desc"}
 BRIDGE_RUNTIME_VOCAB = {"reason_needed", "await_needed", "commit_needed", "reprogramme_needed"}
 ACTION_ENRICHMENT_FIELDS = {"input_schema", "output_schema"}
+EMBEDDING_ACTIVATION_MODES = {"named_default", "hash_embedded"}
+EMBEDDING_OVERRIDE_FIELDS = {
+    "desc",
+    "step_refs",
+    "content_refs",
+    "allowed_vocab",
+    "post_diff",
+    "generation",
+    "transitions",
+    "manifestation",
+}
+
+
+def effective_phase_contract(phase: dict) -> dict:
+    """Return the runtime-effective phase after explicit embedding overrides."""
+    effective = dict(phase or {})
+    effective["gap_template"] = dict(effective.get("gap_template", {}) or {})
+    effective["manifestation"] = dict(effective.get("manifestation", {}) or {})
+    effective["generation"] = dict(effective.get("generation", {}) or {})
+    effective["transitions"] = dict(effective.get("transitions", {}) or {})
+    effective["allowed_vocab"] = list(effective.get("allowed_vocab", []) or [])
+
+    embedding = dict(effective.get("embedding", {}) or {})
+    if embedding.get("activation_mode") != "hash_embedded":
+        return effective
+
+    gap_override = embedding.get("gap_override")
+    if not isinstance(gap_override, dict):
+        return effective
+
+    if "desc" in gap_override:
+        effective["gap_template"]["desc"] = gap_override["desc"]
+    if "step_refs" in gap_override:
+        effective["gap_template"]["step_refs"] = list(gap_override.get("step_refs", []) or [])
+    if "content_refs" in gap_override:
+        effective["gap_template"]["content_refs"] = list(gap_override.get("content_refs", []) or [])
+    if "allowed_vocab" in gap_override:
+        effective["allowed_vocab"] = list(gap_override.get("allowed_vocab", []) or [])
+    if "post_diff" in gap_override:
+        effective["post_diff"] = bool(gap_override.get("post_diff"))
+    if isinstance(gap_override.get("manifestation"), dict):
+        merged_manifestation = dict(effective["manifestation"])
+        merged_manifestation.update(gap_override["manifestation"])
+        effective["manifestation"] = merged_manifestation
+    if isinstance(gap_override.get("generation"), dict):
+        merged_generation = dict(effective["generation"])
+        merged_generation.update(gap_override["generation"])
+        effective["generation"] = merged_generation
+    if isinstance(gap_override.get("transitions"), dict):
+        merged_transitions = dict(effective["transitions"])
+        merged_transitions.update(gap_override["transitions"])
+        effective["transitions"] = merged_transitions
+    return effective
 
 
 def _is_terminal_phase(phase: dict) -> bool:
@@ -146,6 +201,18 @@ def _resolve_phase_ref(ref: str, refs: dict[str, str]) -> str | None:
     return ref
 
 
+def _git_object_exists(ref: str) -> bool:
+    if not isinstance(ref, str) or not OBJECT_REF_RE.fullmatch(ref):
+        return False
+    result = subprocess.run(
+        ["git", "cat-file", "-e", f"{ref}^{{object}}"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
 def _embedded_ref_exists(ref: str, output_dir: str | None) -> bool:
     if not isinstance(ref, str) or not ref:
         return False
@@ -153,8 +220,10 @@ def _embedded_ref_exists(ref: str, output_dir: str | None) -> bool:
         return (ROOT / ref).exists()
     if ref.startswith("skills/"):
         return (ROOT / ref).exists()
-    if HEX_REF_RE.fullmatch(ref):
-        return bool(output_dir and find_existing_skill_path(ref, output_dir))
+    if OBJECT_REF_RE.fullmatch(ref):
+        if output_dir and find_existing_skill_path(ref, output_dir):
+            return True
+        return _git_object_exists(ref)
     return True
 
 
@@ -217,8 +286,35 @@ def _flow_authored_action_errors(data: dict, *, output_dir: str | None = None) -
         activation_ref = _resolve_phase_ref(manifestation.get("activation_ref"), refs)
         if activation_ref and not _embedded_ref_exists(activation_ref, output_dir):
             errors.append(
-                f"L1/L2 embedding: phase {pid} activation_ref must reference an existing committed skill or existing tool path: {activation_ref}"
+                f"L1/L2 embedding: phase {pid} activation_ref must reference an existing committed foundation: {activation_ref}"
             )
+        embedding = dict(phase.get("embedding", {}) or {})
+        if embedding:
+            block_ref = _resolve_phase_ref(str(embedding.get("block_ref", "") or ""), refs)
+            if not block_ref:
+                errors.append(f"L1/L2 embedding: phase {pid} embedding.block_ref must be present")
+            elif not _embedded_ref_exists(block_ref, output_dir):
+                errors.append(
+                    f"L1/L2 embedding: phase {pid} embedding.block_ref must reference an existing committed foundation: {block_ref}"
+                )
+            activation_mode = embedding.get("activation_mode", "hash_embedded")
+            if activation_mode not in EMBEDDING_ACTIVATION_MODES:
+                errors.append(
+                    f"L1/L2 embedding: phase {pid} embedding.activation_mode must be one of {sorted(EMBEDDING_ACTIVATION_MODES)}"
+                )
+            gap_override = embedding.get("gap_override")
+            if activation_mode == "named_default" and gap_override:
+                errors.append(
+                    f"L1/L2 embedding: phase {pid} named_default embedding may not override the default gap contract; use hash_embedded for contextual specialization."
+                )
+            if gap_override is not None and not isinstance(gap_override, dict):
+                errors.append(f"L1/L2 embedding: phase {pid} embedding.gap_override must be an object when present")
+            elif isinstance(gap_override, dict):
+                extra_keys = sorted(set(gap_override) - EMBEDDING_OVERRIDE_FIELDS)
+                if extra_keys:
+                    errors.append(
+                        f"L1/L2 embedding: phase {pid} embedding.gap_override contains unsupported keys: {', '.join(extra_keys)}"
+                    )
         for raw_ref in list((phase.get("gap_template", {}) or {}).get("content_refs", []) or []):
             resolved_ref = _resolve_phase_ref(raw_ref, refs)
             if resolved_ref and not _embedded_ref_exists(resolved_ref, output_dir):
@@ -230,37 +326,41 @@ def _flow_authored_action_errors(data: dict, *, output_dir: str | None = None) -
         value for value in refs.values()
         if isinstance(value, str) and value.startswith("tools/")
     }
-    declared_skill_refs = {
+    declared_hash_refs = {
         value for value in refs.values()
-        if isinstance(value, str) and HEX_REF_RE.fullmatch(value)
+        if isinstance(value, str) and OBJECT_REF_RE.fullmatch(value)
     }
-    for ref in sorted(declared_tool_refs | declared_skill_refs):
+    for ref in sorted(declared_tool_refs | declared_hash_refs):
         if not _embedded_ref_exists(ref, output_dir):
             errors.append(
-                f"L0/L2 embedding: declared ref must point to an existing tool path or committed skill hash before use: {ref}"
+                f"L0/L2 embedding: declared ref must point to an existing tool path, committed skill hash, or committed blob hash before use: {ref}"
             )
     runtime_linked_refs: set[str] = set()
     for phase in phase_map.values():
         manifestation = dict(phase.get("manifestation", {}) or {})
         activation_ref = _resolve_phase_ref(manifestation.get("activation_ref"), refs)
-        if activation_ref in declared_tool_refs:
+        if activation_ref in declared_tool_refs or activation_ref in declared_hash_refs:
             runtime_linked_refs.add(activation_ref)
+        embedding = dict(phase.get("embedding", {}) or {})
+        block_ref = _resolve_phase_ref(str(embedding.get("block_ref", "") or ""), refs)
+        if block_ref in declared_tool_refs or block_ref in declared_hash_refs:
+            runtime_linked_refs.add(block_ref)
         for raw_ref in list((phase.get("gap_template", {}) or {}).get("content_refs", []) or []):
             resolved_ref = _resolve_phase_ref(raw_ref, refs)
-            if resolved_ref in declared_tool_refs:
+            if resolved_ref in declared_tool_refs or resolved_ref in declared_hash_refs:
                 runtime_linked_refs.add(resolved_ref)
 
-    has_enrichment = any(field in data for field in ACTION_ENRICHMENT_FIELDS) or bool(declared_tool_refs)
+    has_enrichment = any(field in data for field in ACTION_ENRICHMENT_FIELDS) or bool(declared_tool_refs) or bool(declared_hash_refs)
     has_runtime_surface = any(_phase_has_runtime_effective_surface(phase) for phase in phase_map.values())
     if has_enrichment and not has_runtime_surface:
         errors.append(
-            "L3 descriptive enrichment: input/output schema or tool declarations require at least one runtime-effective non-bridge phase."
+            "L3 descriptive enrichment: input/output schema or tool/blob declarations require at least one runtime-effective non-bridge phase."
         )
 
-    unlinked_tool_refs = sorted(declared_tool_refs - runtime_linked_refs)
+    unlinked_tool_refs = sorted((declared_tool_refs | declared_hash_refs) - runtime_linked_refs)
     if unlinked_tool_refs:
         errors.append(
-            "L3 descriptive enrichment: declared tool refs are not linked by any runtime-effective field: "
+            "L3 descriptive enrichment: declared tool or blob refs are not linked by any runtime-effective field: "
             + ", ".join(unlinked_tool_refs)
         )
 
@@ -616,27 +716,28 @@ def _resolve_symbolic_ref(ref: str, refs: dict[str, str]) -> str | None:
 
 
 def _phase_to_step(phase: dict, refs: dict[str, str]) -> dict | None:
-    if phase.get("kind") == "terminal":
+    effective = effective_phase_contract(phase)
+    if effective.get("kind") == "terminal":
         return None
     step = {
-        "action": phase.get("action") or slugify(phase.get("goal", "")),
-        "desc": phase.get("gap_template", {}).get("desc") or phase.get("goal", ""),
+        "action": effective.get("action") or slugify(effective.get("goal", "")),
+        "desc": effective.get("gap_template", {}).get("desc") or effective.get("goal", ""),
     }
-    manifestation = phase.get("manifestation", {}) or {}
+    manifestation = effective.get("manifestation", {}) or {}
     if manifestation.get("execution_mode") == "runtime_vocab" and manifestation.get("runtime_vocab"):
         step["vocab"] = manifestation["runtime_vocab"]
-    if "post_diff" in phase:
-        step["post_diff"] = phase["post_diff"]
+    if "post_diff" in effective:
+        step["post_diff"] = effective["post_diff"]
     refs_list = [
         resolved
-        for ref in phase.get("gap_template", {}).get("content_refs", []) or []
+        for ref in effective.get("gap_template", {}).get("content_refs", []) or []
         for resolved in [_resolve_symbolic_ref(ref, refs)]
         if resolved
     ]
     if refs_list:
         step["resolve"] = refs_list
-    if "inject" in phase:
-        step["inject"] = phase["inject"]
+    if "inject" in effective:
+        step["inject"] = effective["inject"]
     return step
 
 
@@ -776,6 +877,25 @@ def lower_semantic_skeleton(intent: dict) -> tuple[dict, str, str | None]:
         st["steps"] = default_entity_steps(st)
 
     return st, lowered_kind, existing_ref
+
+
+def validate_semantic_skeleton_intent(intent: dict) -> list[str]:
+    errors: list[str] = []
+    trigger = intent.get("trigger")
+    next_layer_desc = intent.get("next_layer_desc")
+    artifact = dict(intent.get("artifact", {}) or {})
+    artifact_kind = artifact.get("kind")
+    if (
+        artifact_kind in {"action", "hybrid"}
+        and isinstance(trigger, str)
+        and trigger.startswith("on_vocab:")
+        and isinstance(next_layer_desc, str)
+        and next_layer_desc.strip()
+    ):
+        errors.append(
+            "Higher-order layering: a lower-order action layer with next_layer_desc may not claim the final public on_vocab trigger; keep trigger=manual until the highest-order workflow is complete."
+        )
+    return errors
 
 
 def find_existing_skill_path(existing_ref: str, output_dir: str) -> str | None:
@@ -956,6 +1076,11 @@ def main():
         return
 
     if looks_like_semantic_skeleton(intent):
+        intent_errors = validate_semantic_skeleton_intent(intent)
+        if intent_errors:
+            print(f"Validation errors:\n" + "\n".join(f"  - {e}" for e in intent_errors))
+            print(f"\nGenerated (invalid):\n{json.dumps(intent, indent=2)}")
+            raise SystemExit(1)
         st, artifact_kind, existing_ref = lower_semantic_skeleton(intent)
     else:
         if looks_like_skeleton(intent):

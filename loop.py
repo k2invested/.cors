@@ -45,6 +45,7 @@ from compile import (
 )
 from skills.loader import load_all, SkillRegistry, Skill
 import manifest_engine as me
+import action_foundations as action_foundations_module
 from execution_engine import ExecutionConfig, ExecutionHooks, execute_iteration
 from tools import st_builder as st_builder_module
 from vocab_registry import (
@@ -1130,6 +1131,13 @@ Action/workflow ownership:
   - New action/workflow creation, repair, restructuring, or schema alignment stays under reason_needed.
   - Do not surface reprogramme_needed for skills/actions/*.st work.
   - reprogramme_needed is for semantic persistence in admin/entity trees and other entity-like state, not action-package authoring.
+  - Foundational Python tools under tools/*.py are real lower-order action blocks. reason_needed may surface content_needed for a new tool or script_edit_needed/hash_edit_needed for an existing tool before authoring the higher-order .st layer.
+  - Treat action/codon packages and tools as one hash-native action environment: .st packages by committed skill hash, tools by committed blob hash.
+  - In that action environment, semantic-tree hashes are embeddable compositional units; described-blob hashes are foundational executable/data blocks.
+  - Tool foundations do not need kernel vocab entries. They can be embedded and identified by committed blob hash.
+  - If a higher-order layer is still needed, lower-order layers should usually remain manual/internal. The final public on_vocab trigger belongs to the highest-order completed workflow.
+  - Name/vocab activation uses the canonical default gap contract for that block.
+  - Hash-based composition under reason_needed may specialize manifestation only through explicit embedding configuration, not by prose alone.
 
 When a user refers to a person's "profile", default to the semantic entity record in their .st file: identity, preferences, stable context, and other persisted person-model fields. Do not treat "profile" as meaning CV, professional bio, or social profile unless the user explicitly indicates that deliverable.
 
@@ -1391,6 +1399,18 @@ def run_turn(
         f"    {term} -> {', '.join(f'{skill.name}:{skill.hash}' for skill in skills)}"
         for term, skills in registry.vocab_triggers().items()
     ) or "    (none)"
+    trigger_owner_lines = "\n".join(
+        f"    {term} -> {owner.kind}:{owner.ref} surface={owner.surface} default_gap={owner.default_gap}"
+        for term in sorted(registry.vocab_triggers())
+        if (owner := action_foundations_module.resolve_trigger_owner(
+            term,
+            registry=registry,
+            chains_dir=CORS_ROOT / "chains",
+            cors_root=CORS_ROOT,
+            tool_map=TOOL_MAP,
+            git=git_show,
+        )) is not None
+    ) or "    (none)"
     dynamic_bridge = (
         "BRIDGE (four codons):\n"
         "  These are primitives, not optional helper tools. Use them whenever the turn crosses a structural boundary.\n\n"
@@ -1431,6 +1451,8 @@ def run_turn(
         "  If a new skills/actions/*.st package uses trigger on_vocab:<term>, that trigger becomes discoverable from the loaded package itself.\n\n"
         "  Known trigger vocab (derived from loaded skills):\n"
         f"{trigger_vocab_lines}\n\n"
+        "  Canonical trigger owners (deterministic bridge from public vocab to owning hash block):\n"
+        f"{trigger_owner_lines}\n\n"
         "  Known entities (reference by hash in content_refs):\n"
         f"{entity_list_lines}"
     )

@@ -10,7 +10,7 @@ import loop
 import manifest_engine as me
 from compile import Compiler
 from step import Gap, Step, Trajectory
-from skills.loader import load_all, load_skill
+from skills.loader import Skill, SkillStep, load_all, load_skill
 
 
 def registry():
@@ -192,6 +192,127 @@ def test_activate_stepchain_package_creates_runtime_gaps():
     assert step.gaps[1].vocab == "hash_resolve_needed"
 
 
+def test_activate_stepchain_package_named_default_embedding_uses_foundation_default_gap():
+    reg = registry()
+    package = {
+        "version": "stepchain.v1",
+        "name": "embedded_hash_edit",
+        "desc": "embed hash edit",
+        "trigger": "manual",
+        "refs": {"hash_edit_block": reg.resolve_by_name("hash_edit").hash},
+        "root": "phase_embed",
+        "phase_order": ["phase_embed", "phase_done"],
+        "nodes": [
+            {
+                "id": "phase_embed",
+                "kind": "higher_order",
+                "goal": "embed hash edit",
+                "action": "embed_hash_edit",
+                "manifestation": {
+                    "kernel_class": "bridge",
+                    "dispersal": "mixed",
+                    "execution_mode": "inline",
+                },
+                "generation": {
+                    "spawn_mode": "none",
+                    "spawn_trigger": "none",
+                    "branch_policy": "depth_first_to_parent",
+                    "sibling_policy": "after_descendants",
+                    "return_policy": "resume_transition",
+                },
+                "allowed_vocab": [],
+                "post_diff": False,
+                "gap_template": {
+                    "desc": "embed hash edit foundation",
+                    "content_refs": [],
+                    "step_refs": [],
+                },
+                "embedding": {
+                    "block_ref": "@hash_edit_block",
+                    "activation_mode": "named_default",
+                },
+                "transitions": {"on_close": "phase_done"},
+            },
+            {
+                "id": "phase_done",
+                "kind": "terminal",
+                "goal": "done",
+                "action": "close_loop",
+                "terminal": True,
+            },
+        ],
+        "closure": {
+            "success": {"requires_terminal": "phase_done", "requires_no_active_gaps": True}
+        },
+    }
+    origin_step = Step.create(desc="origin")
+    gap = Gap.create(desc="activate embedded flow", content_refs=["blob:seed"])
+
+    step = me.activate_stepchain_package(
+        package,
+        "pkg123",
+        gap,
+        origin_step,
+        "chain123",
+        1,
+        registry=reg,
+    )
+
+    assert len(step.gaps) == 1
+    assert step.gaps[0].vocab == "hash_edit_needed"
+    assert reg.resolve_by_name("hash_edit").hash in step.gaps[0].content_refs
+
+
+def test_activate_skill_package_single_step_can_inherit_foundation_default_gap():
+    reg = registry()
+    synthetic = Skill(
+        hash="abc123skill0",
+        name="synthetic_review",
+        desc="one-step synthetic review action",
+        steps=[SkillStep(action="activate", desc="activate review block", vocab=None, post_diff=False)],
+        source=str(ROOT / "skills" / "actions" / "synthetic_review.st"),
+        trigger="on_vocab:hash_edit_needed",
+        artifact_kind="action",
+    )
+    reg.register(synthetic)
+
+    origin_step = Step.create(desc="origin")
+    gap = Gap.create(desc="activate synthetic", content_refs=[synthetic.hash])
+    step = me.activate_skill_package(
+        synthetic,
+        synthetic.hash,
+        gap,
+        origin_step,
+        "chain123",
+        1,
+        registry=reg,
+    )
+
+    assert len(step.gaps) == 1
+    assert step.gaps[0].vocab == "hash_edit_needed"
+    assert synthetic.hash in step.gaps[0].content_refs
+
+
+def test_activate_skill_package_preserves_explicit_step_vocab_over_foundation_default():
+    reg = registry()
+    hash_edit = reg.resolve_by_name("hash_edit")
+    assert hash_edit is not None
+
+    origin_step = Step.create(desc="origin")
+    gap = Gap.create(desc="activate hash edit", content_refs=[hash_edit.hash])
+    step = me.activate_skill_package(
+        hash_edit,
+        hash_edit.hash,
+        gap,
+        origin_step,
+        "chain123",
+        1,
+        registry=reg,
+    )
+
+    assert [g.vocab for g in step.gaps] == ["hash_resolve_needed", None, "hash_edit_needed"]
+
+
 def test_resolve_hash_renders_persisted_stepchain_package(tmp_path, monkeypatch):
     monkeypatch.setattr(loop, "CHAINS_DIR", tmp_path)
     traj = Trajectory()
@@ -355,6 +476,35 @@ def test_render_chain_keeps_refs_on_resolved_gap_lines():
     assert "blob:abc123" in rendered
 
 
+def test_render_chain_shows_compact_effective_contract_tags_for_foundation_backed_gap():
+    reg = registry()
+    hash_edit = reg.resolve_by_name("hash_edit")
+    assert hash_edit is not None
+
+    traj = Trajectory()
+    origin_gap = Gap.create(desc="review target", content_refs=[hash_edit.hash])
+    origin_gap.vocab = "reason_needed"
+    origin_step = Step.create(desc="origin", gaps=[origin_gap])
+    traj.append(origin_step)
+
+    from step import Chain
+    chain = Chain.create(origin_gap=origin_gap.hash, first_step=origin_step.hash)
+    traj.add_chain(chain)
+
+    work_gap = Gap.create(desc="activate hash edit", content_refs=[hash_edit.hash])
+    work_gap.vocab = "hash_edit_needed"
+    work_step = Step.create(desc="activate foundation", step_refs=[origin_step.hash], gaps=[work_gap])
+    traj.append(work_step)
+    old_hash = chain.hash
+    chain.add_step(work_step.hash)
+    del traj.chains[old_hash]
+    traj.chains[chain.hash] = chain
+
+    rendered = traj.render_chain(chain.hash, registry=reg)
+    assert "gap=hash_edit_needed" in rendered
+    assert "embed=named_default" in rendered
+
+
 def test_render_gap_tree_includes_signature_and_ref_counts():
     traj = Trajectory()
     gap = Gap.create(desc="inspect config", content_refs=["blob:abc123"], step_refs=["prev123"])
@@ -367,3 +517,28 @@ def test_render_gap_tree_includes_signature_and_ref_counts():
     assert "{?o754/1:1}" in rendered
     assert "content_refs[1]" in rendered
     assert "step_refs[1]" in rendered
+
+
+def test_build_runtime_semantic_tree_attaches_effective_contract_for_foundation_gap():
+    reg = registry()
+    hash_edit = reg.resolve_by_name("hash_edit")
+    assert hash_edit is not None
+
+    step = Step.create(
+        desc="activate foundation",
+        content_refs=[hash_edit.hash],
+        gaps=[Gap.create(desc="activate hash edit", content_refs=[hash_edit.hash])],
+    )
+    step.gaps[0].vocab = "hash_edit_needed"
+
+    tree = me.build_runtime_semantic_tree(
+        [step.to_dict()],
+        source_type="trajectory_recent",
+        source_ref="recent",
+        registry=reg,
+    )
+
+    node = tree["nodes"][0]
+    assert node["effective_contract"]["ref"] == hash_edit.hash
+    assert node["effective_contract"]["default_gap"] == "hash_edit_needed"
+    assert node["effective_contract"]["effective_gap"] == "hash_edit_needed"

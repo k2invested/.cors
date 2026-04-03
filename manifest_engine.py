@@ -10,11 +10,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
+from typing import Any
 
+import action_foundations as foundations
 from step import Step, Gap, Epistemic, Trajectory, vocab_class
 from skills.loader import Skill, SkillRegistry
 from tools import st_builder as st_builder_module
+
+ROOT = Path(__file__).resolve().parent
+CHAINS_DIR = ROOT / "chains"
 
 
 NODE_DEFAULT_RELEVANCE = {
@@ -171,9 +177,10 @@ def _format_semantic_value(value, *, max_inline: int = 3) -> str:
 
 
 def _semantic_gap_from_phase(phase: dict) -> dict:
-    manifestation = dict(phase.get("manifestation", {}) or {})
-    gap_template = dict(phase.get("gap_template", {}) or {})
-    allowed_vocab = list(phase.get("allowed_vocab", []) or [])
+    effective = st_builder_module.effective_phase_contract(phase)
+    manifestation = dict(effective.get("manifestation", {}) or {})
+    gap_template = dict(effective.get("gap_template", {}) or {})
+    allowed_vocab = list(effective.get("allowed_vocab", []) or [])
     return {
         "desc": gap_template.get("desc", phase.get("goal", "")),
         "step_refs": list(gap_template.get("step_refs", []) or []),
@@ -185,6 +192,23 @@ def _semantic_gap_from_phase(phase: dict) -> dict:
         "post_diff": bool(phase.get("post_diff", False)),
         "relevance": phase.get("relevance"),
     }
+
+
+def _node_contract_from_phase(phase: dict, refs: dict[str, str] | None = None) -> dict | None:
+    embedding = dict(phase.get("embedding", {}) or {})
+    if not embedding:
+        return None
+    block_ref = embedding.get("block_ref")
+    if isinstance(block_ref, str) and block_ref.startswith("@") and isinstance(refs, dict):
+        block_ref = refs.get(block_ref[1:], block_ref)
+    contract = {
+        "block_ref": block_ref,
+        "activation_mode": embedding.get("activation_mode", "hash_embedded"),
+    }
+    gap_override = embedding.get("gap_override")
+    if isinstance(gap_override, dict) and gap_override:
+        contract["gap_override"] = gap_override
+    return contract
 
 
 def _runtime_gap_status(gap: dict) -> str:
@@ -279,7 +303,13 @@ def _semantic_summary(nodes: list[dict], root_id: str | None) -> dict:
 
 def build_runtime_semantic_tree(steps: list[dict], *, source_type: str, source_ref: str | None = None,
                                 root_id: str | None = None, summary_desc: str | None = None,
-                                origin_gap: str | None = None, resolved: bool | None = None) -> dict:
+                                origin_gap: str | None = None, resolved: bool | None = None,
+                                registry: SkillRegistry | None = None,
+                                chains_dir: Path = CHAINS_DIR,
+                                cors_root: Path = ROOT,
+                                tool_map: dict[str, dict] | None = None,
+                                git: Any = None) -> dict:
+    git = git or _git_text
     nodes = []
     previous_id = None
     for depth, step in enumerate(steps):
@@ -308,6 +338,15 @@ def build_runtime_semantic_tree(steps: list[dict], *, source_type: str, source_r
                 "confidence": None,
                 "grounded": None,
             }
+        effective_contract = _runtime_effective_contract(
+            step,
+            primary_gap,
+            registry=registry,
+            chains_dir=chains_dir,
+            cors_root=cors_root,
+            tool_map=tool_map,
+            git=git,
+        )
         nodes.append(
             {
                 "id": step_id,
@@ -325,6 +364,7 @@ def build_runtime_semantic_tree(steps: list[dict], *, source_type: str, source_r
                 },
                 "generation": {"return_policy": "resume_parent"},
                 "transitions": {},
+                "effective_contract": effective_contract,
                 "refs": {
                     "step_refs": list(step.get("step_refs", []) or []),
                     "content_refs": list(step.get("content_refs", []) or []),
@@ -413,7 +453,9 @@ def build_semantic_tree(doc: dict, *, source_type: str, source_ref: str | None =
     root_id = normalized.get("root")
     parents = _semantic_parent_map(phases)
     nodes = []
+    package_refs = dict(normalized.get("refs", {}) or {})
     for phase in phases:
+        effective_phase = st_builder_module.effective_phase_contract(phase)
         node_id = phase.get("id")
         parent_id = parents.get(node_id)
         nodes.append(
@@ -426,9 +468,10 @@ def build_semantic_tree(doc: dict, *, source_type: str, source_ref: str | None =
                 "action": phase.get("action"),
                 "goal": phase.get("goal"),
                 "gap": _semantic_gap_from_phase(phase),
-                "manifestation": dict(phase.get("manifestation", {}) or {}),
-                "generation": dict(phase.get("generation", {}) or {}),
-                "transitions": dict(phase.get("transitions", {}) or {}),
+                "manifestation": dict(effective_phase.get("manifestation", {}) or {}),
+                "generation": dict(effective_phase.get("generation", {}) or {}),
+                "transitions": dict(effective_phase.get("transitions", {}) or {}),
+                "contract": _node_contract_from_phase(phase, refs=package_refs),
             }
         )
     return {
@@ -451,7 +494,11 @@ def build_semantic_tree(doc: dict, *, source_type: str, source_ref: str | None =
 
 
 def build_semantic_tree_from_trajectory(traj: Trajectory, *, chain_id: str | None = None,
-                                        recent_n: int = 5) -> dict:
+                                        recent_n: int = 5, registry: SkillRegistry | None = None,
+                                        chains_dir: Path = CHAINS_DIR, cors_root: Path = ROOT,
+                                        tool_map: dict[str, dict] | None = None,
+                                        git: Any = None) -> dict:
+    git = git or _git_text
     if chain_id:
         chain = traj.chains.get(chain_id)
         if chain is None:
@@ -465,6 +512,11 @@ def build_semantic_tree_from_trajectory(traj: Trajectory, *, chain_id: str | Non
                 summary_desc=chain.desc,
                 origin_gap=chain.origin_gap,
                 resolved=chain.resolved,
+                registry=registry,
+                chains_dir=chains_dir,
+                cors_root=cors_root,
+                tool_map=tool_map,
+                git=git,
             )
     steps = [step.to_dict() for step in traj.recent(recent_n)]
     return build_runtime_semantic_tree(
@@ -472,6 +524,11 @@ def build_semantic_tree_from_trajectory(traj: Trajectory, *, chain_id: str | Non
         source_type="trajectory_recent",
         source_ref="recent",
         summary_desc="recent trajectory",
+        registry=registry,
+        chains_dir=chains_dir,
+        cors_root=cors_root,
+        tool_map=tool_map,
+        git=git,
     )
 
 
@@ -501,6 +558,7 @@ def render_semantic_tree(tree: dict) -> str:
         )
 
     package = dict(tree.get("package", {}) or {})
+    foundation = dict(tree.get("foundation", {}) or {})
     if package:
         lines.append(f"  name: {package.get('name', '(none)')}")
         lines.append(f"  trigger: {package.get('trigger', '(none)')}")
@@ -538,6 +596,16 @@ def render_semantic_tree(tree: dict) -> str:
             lines.append("  semantics")
             for key in sorted(semantics):
                 lines.append(f"    {key}: {_format_semantic_value(semantics[key])}")
+    if foundation:
+        lines.append(
+            "  foundation: "
+            f"ref={foundation.get('ref', '(none)')} "
+            f"kind={foundation.get('kind', '(none)')} "
+            f"surface={foundation.get('surface', '(none)')} "
+            f"activation={foundation.get('activation', '(none)')} "
+            f"default_gap={foundation.get('default_gap', '(none)')} "
+            f"omo={foundation.get('omo_role', '(none)')}"
+        )
 
     nodes = list(tree.get("nodes", []) or [])
     if not nodes:
@@ -554,6 +622,8 @@ def render_semantic_tree(tree: dict) -> str:
         refs = dict(node.get("refs", {}) or {})
         transitions = dict(node.get("transitions", {}) or {})
         meta = dict(node.get("meta", {}) or {})
+        contract = dict(node.get("contract", {}) or {})
+        effective_contract = dict(node.get("effective_contract", {}) or {})
         lines.append(
             f"  {branch}─ {node.get('signature', '(sig)')} {node.get('id')} "
             f"[{node.get('kind', 'unknown')}] action:{node.get('action', '?')}"
@@ -596,6 +666,22 @@ def render_semantic_tree(tree: dict) -> str:
                 f"  {cont}  transitions: "
                 f"{', '.join(f'{k}->{v}' for k, v in transitions.items()) or '(none)'}"
             )
+        if contract:
+            lines.append(
+                f"  {cont}  contract: block_ref={contract.get('block_ref', '(none)')} "
+                f"activation_mode={contract.get('activation_mode', '(none)')}"
+            )
+            if contract.get("gap_override"):
+                lines.append(f"  {cont}  contract.gap_override: {json.dumps(contract.get('gap_override'), sort_keys=True)}")
+        if effective_contract:
+            lines.append(
+                f"  {cont}  effective_contract: ref={effective_contract.get('ref', '(none)')} "
+                f"surface={effective_contract.get('surface', '(none)')} "
+                f"default_gap={effective_contract.get('default_gap', '(none)')} "
+                f"effective_gap={effective_contract.get('effective_gap', '(none)')} "
+                f"activation_mode={effective_contract.get('activation_mode', '(none)')} "
+                f"omo={effective_contract.get('omo_role', '(none)')}"
+            )
         if meta:
             lines.append(
                 f"  {cont}  meta: timestamp={meta.get('timestamp', '(none)')} "
@@ -621,15 +707,20 @@ def render_semantic_tree(tree: dict) -> str:
 def render_skill_package(skill: Skill) -> str:
     package = _skill_package_tree_doc(skill)
     tree = build_semantic_tree(package, source_type="skill_package", source_ref=skill.hash)
+    tree["foundation"] = foundations.foundation_from_skill(skill, cors_root=ROOT).__dict__
     return render_semantic_tree(tree)
 
 
 def render_chain_package(package: dict, ref: str) -> str:
     if package.get("version") == "stepchain.v1":
-        return render_semantic_tree(build_semantic_tree(package, source_type="stepchain", source_ref=ref))
+        tree = build_semantic_tree(package, source_type="stepchain", source_ref=ref)
+        tree["foundation"] = foundations.foundation_from_chain_doc(package, ref=ref, chains_dir=CHAINS_DIR).__dict__
+        return render_semantic_tree(tree)
 
     if "origin_gap" in package and "steps" in package:
-        return render_semantic_tree(build_semantic_tree(package, source_type="realized_chain", source_ref=ref))
+        tree = build_semantic_tree(package, source_type="realized_chain", source_ref=ref)
+        tree["foundation"] = foundations.foundation_from_chain_doc(package, ref=ref, chains_dir=CHAINS_DIR).__dict__
+        return render_semantic_tree(tree)
 
     return f"(unrenderable chain package: {ref})"
 
@@ -803,6 +894,16 @@ def _runtime_ref_list(refs: list[str]) -> list[str]:
     return [ref for ref in refs if isinstance(ref, str) and not ref.startswith("$")]
 
 
+def _git_text(cmd: list[str], cwd: str | None = None) -> str:
+    result = subprocess.run(
+        ["git", *cmd],
+        cwd=cwd or str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout
+
+
 def _node_runtime_vocab(node: dict) -> str | None:
     manifestation = node.get("manifestation", {})
     runtime_vocab = manifestation.get("runtime_vocab")
@@ -823,15 +924,111 @@ def _node_runtime_vocab(node: dict) -> str | None:
     return allowed_vocab[0] if allowed_vocab else None
 
 
+def _resolved_embedding_ref(node: dict, refs: dict[str, str]) -> str | None:
+    embedding = dict(node.get("embedding", {}) or {})
+    block_ref = embedding.get("block_ref")
+    if not isinstance(block_ref, str):
+        return None
+    if block_ref.startswith("@"):
+        return refs.get(block_ref[1:])
+    return block_ref
+
+
+def _runtime_effective_contract(step: dict, primary_gap: dict, *, registry: SkillRegistry | None,
+                                chains_dir: Path, cors_root: Path, tool_map: dict[str, dict] | None,
+                                git: Any) -> dict | None:
+    refs: list[str] = []
+    for ref in list(step.get("content_refs", []) or []) + list(primary_gap.get("content_refs", []) or []):
+        if isinstance(ref, str) and ref not in refs:
+            refs.append(ref)
+
+    foundation = None
+    for ref in refs:
+        foundation = foundations.resolve_default_contract(
+            ref,
+            registry=registry,
+            chains_dir=chains_dir,
+            cors_root=cors_root,
+            tool_map=tool_map or {},
+            git=git,
+        )
+        if foundation:
+            break
+
+    runtime_vocab = primary_gap.get("runtime_vocab")
+    if foundation is None and not runtime_vocab:
+        return None
+
+    default_gap = foundation.get("default_gap") if foundation else None
+    effective_gap = runtime_vocab or default_gap
+    activation_mode = None
+    if foundation:
+        if runtime_vocab and default_gap and runtime_vocab != default_gap:
+            activation_mode = "hash_embedded"
+        elif default_gap:
+            activation_mode = "named_default"
+
+    contract = {
+        "effective_gap": effective_gap,
+        "activation_mode": activation_mode,
+    }
+    if foundation:
+        contract.update(foundation)
+    return contract
+
+
+def _apply_foundation_default_contract(node: dict, *, refs: dict[str, str], registry: SkillRegistry | None,
+                                       chains_dir: Path, cors_root: Path, tool_map: dict[str, dict] | None,
+                                       git: Any) -> tuple[dict, dict | None]:
+    effective = st_builder_module.effective_phase_contract(node)
+    block_ref = _resolved_embedding_ref(node, refs)
+    if not block_ref:
+        return effective, None
+    contract = foundations.resolve_default_contract(
+        block_ref,
+        registry=registry,
+        chains_dir=chains_dir,
+        cors_root=cors_root,
+        tool_map=tool_map or {},
+        git=git,
+    )
+    if not contract:
+        return effective, None
+    embedding = dict(node.get("embedding", {}) or {})
+    if embedding.get("activation_mode", "hash_embedded") == "named_default":
+        manifestation = dict(effective.get("manifestation", {}) or {})
+        if not manifestation.get("runtime_vocab") and contract.get("default_gap") not in {None, "", "internal_only"}:
+            manifestation["runtime_vocab"] = contract["default_gap"]
+            manifestation.setdefault("execution_mode", "runtime_vocab")
+            effective["manifestation"] = manifestation
+        if not effective.get("allowed_vocab") and contract.get("default_gap") not in {None, "", "internal_only"}:
+            effective["allowed_vocab"] = [contract["default_gap"]]
+    return effective, contract
+
+
 def _node_relevance(node: dict, index: int) -> float:
     base = NODE_DEFAULT_RELEVANCE.get(node.get("kind"), 0.7)
     return max(0.3, base - (0.03 * index))
 
 
+def _effective_skill_step_vocab(skill: Skill, st_step: Any, foundation_contract: dict | None) -> str | None:
+    if getattr(st_step, "vocab", None):
+        return st_step.vocab
+    default_gap = (foundation_contract or {}).get("default_gap")
+    if len(getattr(skill, "steps", []) or []) == 1 and default_gap not in {None, "", "internal_only"}:
+        return default_gap
+    return None
+
+
 def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
                            origin_step: Step, entry_chain_id: str,
                            turn_counter: int, task_prompt: str | None = None,
-                           embedded: bool = False) -> Step:
+                           embedded: bool = False,
+                           registry: SkillRegistry | None = None,
+                           chains_dir: Path = CHAINS_DIR,
+                           cors_root: Path = ROOT,
+                           tool_map: dict[str, dict] | None = None,
+                           git: Any = _git_text) -> Step:
     activation_desc = (
         f"embedded workflow:{package_ref} for {gap.desc}"
         if embedded else
@@ -845,9 +1042,20 @@ def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
         content_refs=[package_ref] + gap.content_refs,
         chain_id=entry_chain_id,
     )
+    foundation_contract = foundations.resolve_default_contract(
+        package_ref,
+        registry=registry,
+        chains_dir=chains_dir,
+        cors_root=cors_root,
+        tool_map=tool_map or {},
+        git=git,
+    )
     for st_step in skill.steps:
         child_refs = [package_ref] + gap.content_refs + list(st_step.resolve) + list(st_step.content_refs)
         child_desc = st_step.desc if not task_prompt else f"{st_step.desc}\n\nActivation task: {task_prompt}"
+        effective_vocab = _effective_skill_step_vocab(skill, st_step, foundation_contract)
+        if not child_desc and foundation_contract and foundation_contract.get("default_gap") not in {None, "", "internal_only"}:
+            child_desc = f"activate foundation {foundation_contract['ref']} via {foundation_contract['default_gap']}"
         child_gap = Gap.create(
             desc=child_desc,
             content_refs=child_refs,
@@ -858,7 +1066,7 @@ def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
             confidence=0.8,
             grounded=0.0,
         )
-        child_gap.vocab = st_step.vocab
+        child_gap.vocab = effective_vocab
         child_gap.turn_id = turn_counter
         step.gaps.append(child_gap)
     return step
@@ -867,7 +1075,12 @@ def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
 def activate_stepchain_package(package: dict, package_ref: str, gap: Gap,
                                origin_step: Step, entry_chain_id: str,
                                turn_counter: int, task_prompt: str | None = None,
-                               embedded: bool = False) -> Step:
+                               embedded: bool = False,
+                               registry: SkillRegistry | None = None,
+                               chains_dir: Path = CHAINS_DIR,
+                               cors_root: Path = ROOT,
+                               tool_map: dict[str, dict] | None = None,
+                               git: Any = _git_text) -> Step:
     activation_desc = (
         f"embedded json chain:{package_ref} for {gap.desc}"
         if embedded else
@@ -882,17 +1095,32 @@ def activate_stepchain_package(package: dict, package_ref: str, gap: Gap,
         chain_id=entry_chain_id,
     )
     nodes_by_id = {node["id"]: node for node in package.get("nodes", [])}
+    refs = dict(package.get("refs", {}) or {})
     phase_order = package.get("phase_order", [])
     for index, node_id in enumerate(phase_order):
         node = nodes_by_id.get(node_id)
         if not node or node.get("terminal"):
             continue
-        gap_template = node.get("gap_template", {})
+        effective_node, foundation_contract = _apply_foundation_default_contract(
+            node,
+            refs=refs,
+            registry=registry,
+            chains_dir=chains_dir,
+            cors_root=cors_root,
+            tool_map=tool_map,
+            git=git,
+        )
+        gap_template = dict(effective_node.get("gap_template", {}) or {})
         child_refs = [package_ref] + gap.content_refs + _runtime_ref_list(gap_template.get("content_refs", []))
-        activation_ref = node.get("manifestation", {}).get("activation_ref")
+        activation_ref = effective_node.get("manifestation", {}).get("activation_ref")
         if activation_ref:
             child_refs.append(activation_ref)
-        child_desc = gap_template.get("desc", node.get("goal", ""))
+        block_ref = _resolved_embedding_ref(node, refs)
+        if block_ref:
+            child_refs.append(block_ref)
+        child_desc = gap_template.get("desc", effective_node.get("goal", node.get("goal", "")))
+        if not child_desc and foundation_contract and foundation_contract.get("default_gap") not in {None, "", "internal_only"}:
+            child_desc = f"activate foundation {foundation_contract['ref']} via {foundation_contract['default_gap']}"
         if task_prompt:
             child_desc = f"{child_desc}\n\nActivation task: {task_prompt}"
         child_gap = Gap.create(
@@ -901,11 +1129,11 @@ def activate_stepchain_package(package: dict, package_ref: str, gap: Gap,
             step_refs=_runtime_ref_list(gap_template.get("step_refs", [])),
         )
         child_gap.scores = Epistemic(
-            relevance=_node_relevance(node, index),
+            relevance=_node_relevance(effective_node, index),
             confidence=0.8,
             grounded=0.0,
         )
-        child_gap.vocab = _node_runtime_vocab(node)
+        child_gap.vocab = _node_runtime_vocab(effective_node)
         child_gap.turn_id = turn_counter
         step.gaps.append(child_gap)
     return step
@@ -915,7 +1143,8 @@ def activate_chain_reference(chains_dir: Path, chain_ref: str, activation: str, 
                              origin_step: Step, entry_chain_id: str,
                              registry: SkillRegistry, compiler, trajectory: Trajectory,
                              turn_counter: int, task_prompt: str | None = None,
-                             embedded: bool = False) -> Step | None:
+                             embedded: bool = False,
+                             tool_map: dict[str, dict] | None = None) -> Step | None:
     if activation == "background":
         compiler.record_background_trigger(entry_chain_id, refs=[chain_ref])
         return Step.create(
@@ -930,6 +1159,7 @@ def activate_chain_reference(chains_dir: Path, chain_ref: str, activation: str, 
         return activate_skill_package(
             skill, chain_ref, gap, origin_step, entry_chain_id, turn_counter,
             task_prompt=task_prompt, embedded=embedded,
+            registry=registry, chains_dir=chains_dir, cors_root=ROOT, tool_map=tool_map or {}, git=_git_text,
         )
 
     package = load_chain_package(chains_dir, chain_ref, trajectory)
@@ -937,6 +1167,7 @@ def activate_chain_reference(chains_dir: Path, chain_ref: str, activation: str, 
         return activate_stepchain_package(
             package, chain_ref, gap, origin_step, entry_chain_id, turn_counter,
             task_prompt=task_prompt, embedded=embedded,
+            registry=registry, chains_dir=chains_dir, cors_root=ROOT, tool_map=tool_map or {}, git=_git_text,
         )
 
     return None

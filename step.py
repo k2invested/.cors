@@ -31,6 +31,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 
@@ -41,6 +42,8 @@ TREE_LANGUAGE_KEY = (
     "rcg are rel/conf/gr bands 0-9; s:c are step_refs:content_refs counts. "
     "step refs are execution provenance; gap refs are gap-surfacing provenance."
 )
+
+ROOT = Path(__file__).resolve().parent
 
 OBSERVE_VOCABS = {
     "hash_resolve_needed", "external_context", "pattern_needed",
@@ -708,6 +711,26 @@ class Trajectory:
             "resolved -> rogue handoff = original gap closed by explicit failure handoff"
         )
 
+    def _compact_contract_suffix(self, node: dict) -> str:
+        effective = dict(node.get("effective_contract", {}) or {})
+        if not effective:
+            return ""
+        parts = []
+        default_gap = effective.get("default_gap")
+        effective_gap = effective.get("effective_gap")
+        if effective_gap not in {None, ""}:
+            if default_gap not in {None, "", "internal_only"} and default_gap == effective_gap:
+                parts.append(f"gap={effective_gap}")
+            else:
+                if default_gap not in {None, "", "internal_only"}:
+                    parts.append(f"default={default_gap}")
+                parts.append(f"effective={effective_gap}")
+        if effective.get("activation_mode"):
+            parts.append(f"embed={effective['activation_mode']}")
+        if effective.get("omo_role"):
+            parts.append(f"omo={effective['omo_role']}")
+        return f" ({', '.join(parts)})" if parts else ""
+
     def _resolved_gap_status_label(self, gap: "Gap") -> str:
         if gap.resolution_kind == "rogue_handoff":
             return "resolved -> rogue handoff"
@@ -788,6 +811,8 @@ class Trajectory:
                 source_type="trajectory_recent",
                 source_ref="recent",
                 summary_desc="recent trajectory",
+                registry=registry,
+                cors_root=ROOT,
             )
             rendered = "\n".join(self._render_semantic_tree_lines(tree, registry=registry, mode=mode))
             rogue_lines = self._render_rogue_lines(registry=registry)
@@ -797,7 +822,7 @@ class Trajectory:
 
         lines = []
         for chain in chains:
-            tree = manifest_engine_module.build_semantic_tree_from_trajectory(self, chain_id=chain.hash)
+            tree = manifest_engine_module.build_semantic_tree_from_trajectory(self, chain_id=chain.hash, registry=registry, cors_root=ROOT)
             lines.extend(self._render_semantic_tree_lines(tree, registry=registry, mode=mode))
 
         rogue_lines = self._render_rogue_lines(registry=registry)
@@ -818,7 +843,7 @@ class Trajectory:
         if not chain:
             return f"(missing chain: {chain_id})"
         import manifest_engine as manifest_engine_module
-        tree = manifest_engine_module.build_semantic_tree_from_trajectory(self, chain_id=chain_id)
+        tree = manifest_engine_module.build_semantic_tree_from_trajectory(self, chain_id=chain_id, registry=registry, cors_root=ROOT)
         return "\n".join(self._render_semantic_tree_lines(tree, registry=registry, highlight_gap=highlight_gap, mode=mode))
 
     def _render_semantic_tree_lines(self, tree: dict, registry=None,
@@ -866,7 +891,7 @@ class Trajectory:
                     rogue_tag = f" (rogue:{', '.join(extras)})" if extras else " (rogue)"
                 lines.append(
                     f"  {branch}─ {node.get('signature')} step:{node.get('id')} "
-                    f"\"{node.get('goal', '')}\"{ref_str}{commit_str}{time_tag}{rogue_tag}"
+                    f"\"{node.get('goal', '')}\"{ref_str}{commit_str}{time_tag}{rogue_tag}{self._compact_contract_suffix(node)}"
                 )
                 for assessment_line in meta.get("assessment", []) or []:
                     lines.append(f"  {cont}   assessment: {assessment_line}")
@@ -934,7 +959,7 @@ class Trajectory:
                 rogue_tag = f" (rogue:{', '.join(extras)})" if extras else " (rogue)"
             lines.append(
                 f"{branch}─ {node.get('signature')} step:{node.get('id')} "
-                f"\"{node.get('goal', '')}\"{ref_str}{commit_str}{time_tag}{rogue_tag}"
+                f"\"{node.get('goal', '')}\"{ref_str}{commit_str}{time_tag}{rogue_tag}{self._compact_contract_suffix(node)}"
             )
             for assessment_line in meta.get("assessment", []) or []:
                 lines.append(f"{cont}   assessment: {assessment_line}")
