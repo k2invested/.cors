@@ -496,7 +496,10 @@ P5_CASES = [
     ("admin_display_name_is_canonical_admin", lambda: skill("admin").display_name == "admin"),
     ("resolve_by_hash_returns_skill", lambda: registry().resolve(skill("admin").hash) == skill("admin")),
     ("hash_edit_skill_exists", lambda: skill("hash_edit").name == "hash_edit"),
+    ("workflow_trigger_terms_not_in_kernel_vocab_registry", lambda: "research_needed" not in vocab_registry_module.VOCABS),
     ("render_for_prompt_has_header", lambda: registry().render_for_prompt().startswith("## Available Skills")),
+    ("render_for_prompt_has_trigger_vocab_section", lambda: "## Available Trigger Vocab" in registry().render_for_prompt()),
+    ("resolve_vocab_trigger_finds_reason", lambda: any(s.name == "reason" for s in registry().resolve_vocab_trigger("reason_needed"))),
     ("build_st_forwards_identity", lambda: "identity" in st_builder_module.build_st({"name": "person", "desc": "d", "identity": {"name": "Ada"}})),
     ("build_st_allows_empty_actions", lambda: st_builder_module.build_st({"name": "entity", "desc": "d", "actions": []})["steps"] == []),
     ("build_st_entity_adds_context_injection_steps", lambda: st_builder_module.build_st({

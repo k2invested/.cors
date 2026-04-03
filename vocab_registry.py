@@ -27,16 +27,6 @@ VOCABS: dict[str, VocabSpec] = {
         tool=None,
         desc="Resolve hashes and observe the resulting context.",
     ),
-    "research_needed": VocabSpec(
-        name="research_needed",
-        category="bridge",
-        priority=85,
-        deterministic=False,
-        observation_only=False,
-        allows_post_gap_emission=True,
-        tool=None,
-        desc="Trigger the research workflow to gather, synthesize, and report on a specified topic or question.",
-    ),
     "pattern_needed": VocabSpec(
         name="pattern_needed",
         category="observe",

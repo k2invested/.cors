@@ -235,6 +235,24 @@ class SkillRegistry:
     def all_commands(self) -> list[Skill]:
         return list(self.commands.values())
 
+    def vocab_triggers(self) -> dict[str, list[Skill]]:
+        triggers: dict[str, list[Skill]] = {}
+        for skill in self.by_hash.values():
+            trigger = getattr(skill, "trigger", "") or ""
+            if not isinstance(trigger, str) or not trigger.startswith("on_vocab:"):
+                continue
+            term = trigger.split(":", 1)[1]
+            if not term:
+                continue
+            triggers.setdefault(term, []).append(skill)
+        return {
+            term: sorted(skills, key=lambda s: s.name)
+            for term, skills in sorted(triggers.items())
+        }
+
+    def resolve_vocab_trigger(self, term: str) -> list[Skill]:
+        return list(self.vocab_triggers().get(term, []))
+
     def render_for_prompt(self) -> str:
         """Render all skills as context for LLM prompt injection."""
         if not self.by_hash:
@@ -249,6 +267,12 @@ class SkillRegistry:
                 mode = "flexible"
             lines.append(f"[{skill.hash}] {skill.name}: {skill.desc}")
             lines.append(f"  steps: {steps_desc} ({mode})")
+        trigger_vocab = self.vocab_triggers()
+        if trigger_vocab:
+            lines.append("## Available Trigger Vocab")
+            for term, skills in trigger_vocab.items():
+                labels = ", ".join(f"{skill.name}:{skill.hash}" for skill in skills)
+                lines.append(f"{term} -> {labels}")
         return "\n".join(lines)
 
 

@@ -1387,6 +1387,10 @@ def run_turn(
         f"    {s.display_name}:{s.hash} ({Path(s.source).name}) — {s.desc[:60]}"
         for s in registry.all_skills()
     )
+    trigger_vocab_lines = "\n".join(
+        f"    {term} -> {', '.join(f'{skill.name}:{skill.hash}' for skill in skills)}"
+        for term, skills in registry.vocab_triggers().items()
+    ) or "    (none)"
     dynamic_bridge = (
         "BRIDGE (four codons):\n"
         "  These are primitives, not optional helper tools. Use them whenever the turn crosses a structural boundary.\n\n"
@@ -1421,6 +1425,12 @@ def run_turn(
         "  When you reference a .st hash in content_refs, the kernel resolves the step package.\n"
         "  Entity-like packages usually manifest as semantic/context injection.\n"
         "  Action-like packages may be activated structurally through curated workflows.\n\n"
+        "  Trigger vocab for action/codon activation is derived automatically from loaded skills with trigger=on_vocab:<term>.\n"
+        "  Do not edit vocab_registry.py just to introduce or wire a workflow trigger term.\n"
+        "  vocab_registry.py is for kernel/runtime vocab semantics, not for every action trigger.\n"
+        "  If a new skills/actions/*.st package uses trigger on_vocab:<term>, that trigger becomes discoverable from the loaded package itself.\n\n"
+        "  Known trigger vocab (derived from loaded skills):\n"
+        f"{trigger_vocab_lines}\n\n"
         "  Known entities (reference by hash in content_refs):\n"
         f"{entity_list_lines}"
     )
