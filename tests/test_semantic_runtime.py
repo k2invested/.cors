@@ -309,6 +309,35 @@ def test_render_active_chain_includes_compact_tree_signatures():
     assert "{?b872/0:1}" in rendered
 
 
+def test_render_chain_collapsed_mode_summarizes_history():
+    traj = Trajectory()
+    origin_gap = Gap.create(desc="review target", content_refs=["blob:abc123"])
+    origin_gap.vocab = "reason_needed"
+    origin_step = Step.create(desc="origin", gaps=[origin_gap])
+    traj.append(origin_step)
+    from step import Chain
+    chain = Chain.create(origin_gap=origin_gap.hash, first_step=origin_step.hash)
+    traj.add_chain(chain)
+
+    prev = origin_step
+    old_hash = chain.hash
+    for idx in range(1, 7):
+        gap = Gap.create(desc=f"close branch {idx}: inspect shard {idx}", content_refs=[f"blob:{idx}"], step_refs=[prev.hash])
+        gap.vocab = "hash_resolve_needed"
+        if idx < 6:
+            gap.resolved = True
+        step = Step.create(desc=f"inspect shard {idx}", step_refs=[prev.hash], gaps=[gap])
+        traj.append(step)
+        chain.add_step(step.hash)
+        prev = step
+    del traj.chains[old_hash]
+    traj.chains[chain.hash] = chain
+
+    rendered = traj.render_chain(chain.hash, mode="collapsed")
+    assert "history:" in rendered
+    assert "earlier resolved step(s) collapsed" in rendered
+
+
 def test_render_gap_tree_includes_signature_and_ref_counts():
     traj = Trajectory()
     gap = Gap.create(desc="inspect config", content_refs=["blob:abc123"], step_refs=["prev123"])

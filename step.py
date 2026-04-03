@@ -28,6 +28,7 @@ Only hash references and semantic descriptions.
 
 import hashlib
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -620,26 +621,31 @@ class Trajectory:
 
     # ── Render ──
 
+    def _skill_ref_namespace(self, skill) -> str:
+        source = str(getattr(skill, "source", ""))
+        if "codons" in source:
+            return "codon"
+        if "actions" in source:
+            return "action"
+        return "entity"
+
     def _tag_ref(self, ref: str, layer: str, registry=None) -> str:
         """Tag a hash reference with its type prefix.
 
-        Resolves named entities from the skill registry:
-          72b1d5ffc964 → admin:72b1d5ffc964
-          a72c3c4dec0c → debug:a72c3c4dec0c
+        Resolves known skill hashes into canonical typed namespaces:
+          72b1d5ffc964 → entity:72b1d5ffc964
+          a72c3c4dec0c → action:a72c3c4dec0c
 
         Falls back to layer prefix:
           step refs  → step:<hash>
           content refs → <hash> (bare — could be blob, tree, or commit)
         """
-        # Check skill registry first — named hashes take priority
         if registry is not None:
-            name = registry.resolve_name(ref)
-            if name:
-                return f"{name}:{ref}"
-        # Check if it's a known step on the trajectory
+            skill = registry.resolve(ref)
+            if skill is not None:
+                return f"{self._skill_ref_namespace(skill)}:{ref}"
         if layer == "step":
             return f"step:{ref}"
-        # Bare content hash (blob/tree/commit — resolved on demand)
         return ref
 
     def _render_refs(self, step_refs: list[str], content_refs: list[str], registry=None) -> str:
@@ -689,7 +695,52 @@ class Trajectory:
         gr = score_band(gap.scores.grounded)
         return f"{{{status}{klass}{rel}{conf}{gr}/{len(gap.step_refs)}:{len(gap.content_refs)}}}"
 
-    def render_recent(self, n: int = 5, registry=None) -> str:
+    def _runtime_tree_legend(self) -> str:
+        return (
+            "legend: step{kindflowN}; gap{statusclassrcg/s:c}; "
+            "refs use typed namespaces entity/action/codon/step plus raw content refs"
+        )
+
+    def _gap_desc_for_render(self, parent_desc: str, gap_desc: str) -> str | None:
+        if not gap_desc:
+            return None
+        normalized_gap = gap_desc.strip()
+        normalized_parent = (parent_desc or "").strip()
+        if normalized_gap == normalized_parent:
+            return None
+        collapsed = re.sub(r"^close branch \d+:\s*", "", normalized_gap, flags=re.IGNORECASE)
+        if collapsed == normalized_parent:
+            return None
+        return normalized_gap
+
+    def _collapsed_chain_summary(self, nodes: list[dict]) -> str:
+        observe = 0
+        mutate = 0
+        bridge = 0
+        clarify = 0
+        resolved = 0
+        active = 0
+        for node in nodes:
+            kind = node.get("kind")
+            if kind == "mutate":
+                mutate += 1
+            elif kind in {"reason", "higher_order", "await"}:
+                bridge += 1
+            elif kind == "clarify":
+                clarify += 1
+            else:
+                observe += 1
+            gaps = list(node.get("gaps", []) or ([] if not node.get("gap") else [node.get("gap")]))
+            if any(gap.get("status") == "active" for gap in gaps):
+                active += 1
+            else:
+                resolved += 1
+        return (
+            f"history: {resolved} resolved steps, {active} active steps, "
+            f"observe={observe}, bridge={bridge}, mutate={mutate}, clarify={clarify}"
+        )
+
+    def render_recent(self, n: int = 5, registry=None, mode: str = "full") -> str:
         """Render trajectory as a traversable hash tree.
 
         The LLM sees the same shape everywhere — git trees, trajectory,
@@ -726,7 +777,7 @@ class Trajectory:
                 source_ref="recent",
                 summary_desc="recent trajectory",
             )
-            rendered = "\n".join(self._render_semantic_tree_lines(tree, registry=registry))
+            rendered = "\n".join(self._render_semantic_tree_lines(tree, registry=registry, mode=mode))
             rogue_lines = self._render_rogue_lines(registry=registry)
             if rogue_lines:
                 return f"{rendered}\n\n" + "\n".join(rogue_lines)
@@ -735,7 +786,7 @@ class Trajectory:
         lines = []
         for chain in chains:
             tree = manifest_engine_module.build_semantic_tree_from_trajectory(self, chain_id=chain.hash)
-            lines.extend(self._render_semantic_tree_lines(tree, registry=registry))
+            lines.extend(self._render_semantic_tree_lines(tree, registry=registry, mode=mode))
 
         rogue_lines = self._render_rogue_lines(registry=registry)
         if rogue_lines:
@@ -744,7 +795,8 @@ class Trajectory:
 
         return "\n".join(lines)
 
-    def render_chain(self, chain_id: str, registry=None, highlight_gap: str | None = None) -> str:
+    def render_chain(self, chain_id: str, registry=None, highlight_gap: str | None = None,
+                     mode: str = "full") -> str:
         """Render one chain as a semantic tree.
 
         Used for active-chain injection during iteration. Optionally marks
@@ -755,10 +807,11 @@ class Trajectory:
             return f"(missing chain: {chain_id})"
         import manifest_engine as manifest_engine_module
         tree = manifest_engine_module.build_semantic_tree_from_trajectory(self, chain_id=chain_id)
-        return "\n".join(self._render_semantic_tree_lines(tree, registry=registry, highlight_gap=highlight_gap))
+        return "\n".join(self._render_semantic_tree_lines(tree, registry=registry, highlight_gap=highlight_gap, mode=mode))
 
     def _render_semantic_tree_lines(self, tree: dict, registry=None,
-                                    highlight_gap: str | None = None) -> list[str]:
+                                    highlight_gap: str | None = None,
+                                    mode: str = "full") -> list[str]:
         nodes = list(tree.get("nodes", []) or [])
         if tree.get("source_type") == "realized_chain":
             desc = tree.get("desc") or "in progress"
@@ -771,6 +824,21 @@ class Trajectory:
             lines = [f"chain:{tree.get('source_ref')}  \"{desc}\" ({status}){time_str}"]
             origin_marker = " [focus]" if highlight_gap and tree.get("origin_gap") == highlight_gap else ""
             lines.append(f"  origin: {tree.get('origin_gap')}{origin_marker}")
+            lines.append(f"  {self._runtime_tree_legend()}")
+            if mode == "collapsed" and nodes:
+                lines.append(f"  {self._collapsed_chain_summary(nodes)}")
+                active_nodes = [node for node in nodes if any(g.get("status") == "active" for g in (node.get("gaps", []) or []))]
+                tail_nodes = nodes[-4:]
+                selected = []
+                seen_ids = set()
+                for node in [*tail_nodes, *active_nodes]:
+                    if node.get("id") not in seen_ids:
+                        seen_ids.add(node.get("id"))
+                        selected.append(node)
+                omitted = max(0, len(nodes) - len(selected))
+                if omitted:
+                    lines.append(f"  … {omitted} earlier resolved step(s) collapsed")
+                nodes = selected
             for index, node in enumerate(nodes):
                 is_last_step = index == len(nodes) - 1
                 branch = "└" if is_last_step else "├"
@@ -813,23 +881,27 @@ class Trajectory:
                         dormant=gap.get("status") == "dormant",
                     )
                     focus = " [focus]" if highlight_gap and gap_obj.hash == highlight_gap else ""
+                    gap_desc = self._gap_desc_for_render(node.get("goal", ""), gap_obj.desc)
                     if gap_obj.dormant:
+                        desc_part = f" \"{gap_desc}\"" if gap_desc else ""
                         score = gap_obj.scores.magnitude()
                         lines.append(
                             f"  {cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                            f"gap:{gap_obj.hash} \"{gap_obj.desc}\" (dormant, score:{score:.2f}){focus}"
+                            f"gap:{gap_obj.hash}{desc_part} (dormant, score:{score:.2f}){focus}"
                         )
                     elif gap_obj.resolved:
+                        desc_part = f" \"{gap_desc}\"" if gap_desc else ""
                         lines.append(
                             f"  {cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                            f"gap:{gap_obj.hash} \"{gap_obj.desc}\" (resolved){focus}"
+                            f"gap:{gap_obj.hash}{desc_part} (resolved){focus}"
                         )
                     else:
                         gref_str = self._render_refs(gap_obj.step_refs, gap_obj.content_refs, registry)
                         vocab_str = f" [{gap_obj.vocab}]" if gap_obj.vocab else ""
+                        desc_part = f" \"{gap_desc}\"" if gap_desc else ""
                         lines.append(
                             f"  {cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                            f"gap:{gap_obj.hash} \"{gap_obj.desc}\"{vocab_str}{gref_str}{focus}"
+                            f"gap:{gap_obj.hash}{desc_part}{vocab_str}{gref_str}{focus}"
                         )
             return lines
 
@@ -873,21 +945,27 @@ class Trajectory:
                     dormant=gap.get("status") == "dormant",
                 )
                 if gap_obj.dormant:
+                    gap_desc = self._gap_desc_for_render(node.get("goal", ""), gap_obj.desc)
+                    desc_part = f" \"{gap_desc}\"" if gap_desc else ""
                     lines.append(
                         f"{cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                        f"gap:{gap_obj.hash} \"{gap_obj.desc}\" (dormant)"
+                        f"gap:{gap_obj.hash}{desc_part} (dormant)"
                     )
                 elif gap_obj.resolved:
+                    gap_desc = self._gap_desc_for_render(node.get("goal", ""), gap_obj.desc)
+                    desc_part = f" \"{gap_desc}\"" if gap_desc else ""
                     lines.append(
                         f"{cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                        f"gap:{gap_obj.hash} \"{gap_obj.desc}\" (resolved)"
+                        f"gap:{gap_obj.hash}{desc_part} (resolved)"
                     )
                 else:
                     gref_str = self._render_refs(gap_obj.step_refs, gap_obj.content_refs, registry)
                     vocab_str = f" [{gap_obj.vocab}]" if gap_obj.vocab else ""
+                    gap_desc = self._gap_desc_for_render(node.get("goal", ""), gap_obj.desc)
+                    desc_part = f" \"{gap_desc}\"" if gap_desc else ""
                     lines.append(
                         f"{cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                        f"gap:{gap_obj.hash} \"{gap_obj.desc}\"{vocab_str}{gref_str}"
+                        f"gap:{gap_obj.hash}{desc_part}{vocab_str}{gref_str}"
                     )
         return lines
 
