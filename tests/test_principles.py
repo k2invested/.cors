@@ -1520,6 +1520,62 @@ def test_p12_run_turn_no_gap_discord_turn_triggers_profile_sync(monkeypatch, tmp
     ]
 
 
+def test_p12_run_turn_hydrates_identity_before_first_prediff(monkeypatch, tmp_path):
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+            self.calls = []
+            self.identity_before_first_call = False
+
+        def set_system(self, content: str):
+            pass
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append((role, content))
+
+        def call(self, user_content: str = None) -> str:
+            if not self.calls:
+                self.identity_before_first_call = any("## Identity" in content for _role, content in self.injected)
+            self.calls.append(user_content or "")
+            return "No gaps."
+
+    session_holder = {}
+
+    def fake_parse(raw, step_refs, content_refs):
+        return make_step("origin"), []
+
+    def fake_synth(session, user_message, turn_facts=None):
+        return "hello"
+
+    def make_session(model=None):
+        session = FakeSession()
+        session_holder["session"] = session
+        return session
+
+    monkeypatch.setattr(loop, "Session", make_session)
+    monkeypatch.setattr(loop, "load_all", lambda path: registry())
+    monkeypatch.setattr(loop, "git_head", lambda: "abc123")
+    monkeypatch.setattr(loop, "git_tree", lambda: "head tree")
+    monkeypatch.setattr(loop, "_find_dangling_gaps", lambda trajectory: [])
+    monkeypatch.setattr(loop, "_parse_step_output", fake_parse)
+    monkeypatch.setattr(loop, "_find_identity_skill", lambda contact_id, registry_obj: skill("admin"))
+    monkeypatch.setattr(loop, "_render_identity", lambda skill_obj: "## Identity")
+    monkeypatch.setattr(loop, "_save_turn", lambda trajectory, state=None: None)
+    monkeypatch.setattr(loop, "_synthesize", fake_synth)
+    monkeypatch.setattr(loop, "_bootstrap_contact_entity", lambda registry_obj, contact_id, user_message, contact_profile=None: None)
+
+    response = loop.run_turn(
+        "Hey",
+        "admin",
+        traj_file=tmp_path / "trajectory.json",
+        chains_file=tmp_path / "chains.json",
+        chains_dir=tmp_path / "chains",
+    )
+
+    assert response == "hello"
+    assert session_holder["session"].identity_before_first_call is True
+
+
 def test_p12_run_turn_injects_clarify_frontier_into_synthesis(monkeypatch, tmp_path):
     class FakeSession:
         def __init__(self):
@@ -2067,6 +2123,25 @@ def test_p12_turn_outcome_facts_forbid_future_write_promises_without_success():
 
 def test_p12_hash_resolve_is_not_observation_only_auto_close():
     assert "hash_resolve_needed" not in loop.OBSERVATION_ONLY_VOCAB
+
+
+def test_p12_identity_linkage_clarify_upgrades_to_identity_resolve():
+    clarify_gap = make_gap(
+        "User asked about their brother, but the identity of their brother is not specified or linked to any known entity. Clarification is needed to proceed.",
+        vocab="clarify_needed",
+        relevance=0.9,
+        confidence=0.8,
+    )
+    upgraded = loop._upgrade_identity_linkage_clarify_gaps(
+        user_message="Tell me about my brother",
+        origin_gaps=[clarify_gap],
+        identity_skill=skill("admin"),
+    )
+
+    assert len(upgraded) == 1
+    assert upgraded[0].vocab == "hash_resolve_needed"
+    assert upgraded[0].content_refs == [skill("admin").hash]
+    assert "Tell me about my brother" in upgraded[0].desc
 
 
 def test_p12_reason_needed_can_actualize_new_action_skeleton():

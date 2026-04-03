@@ -1277,6 +1277,60 @@ def _render_clarify_synthesis_guidance(clarify_step: Step) -> str:
     return "\n".join(lines)
 
 
+def _clarify_gap_wants_identity_linkage(gap: Gap) -> bool:
+    if gap.vocab != "clarify_needed":
+        return False
+    lowered = gap.desc.lower()
+    linkage_markers = (
+        "not specified",
+        "not linked",
+        "no direct reference",
+        "no reference to who",
+        "identity of",
+        "which entity",
+        "current context",
+        "known entity",
+    )
+    return any(marker in lowered for marker in linkage_markers)
+
+
+def _upgrade_identity_linkage_clarify_gaps(
+    *,
+    user_message: str,
+    origin_gaps: list[Gap],
+    identity_skill: Skill | None,
+) -> list[Gap]:
+    """Upgrade premature clarify gaps into identity resolution when possible.
+
+    First-step runs before identity injection, so it can surface clarify_needed
+    simply because it has not yet traversed the current user's identity file.
+    If the ambiguity is likely reducible by that identity context, resolve the
+    identity hash first instead of asking the user.
+    """
+    if identity_skill is None:
+        return origin_gaps
+
+    upgraded: list[Gap] = []
+    for gap in origin_gaps:
+        if _clarify_gap_wants_identity_linkage(gap):
+            resolve_gap = Gap.create(
+                desc=f"Resolve the current identity file for relationship/entity pointers relevant to: {user_message}",
+                content_refs=[identity_skill.hash],
+                step_refs=[*gap.step_refs],
+            )
+            resolve_gap.scores = Epistemic(
+                relevance=max(0.85, gap.scores.relevance),
+                confidence=max(0.7, gap.scores.confidence),
+                grounded=0.0,
+            )
+            resolve_gap.vocab = "hash_resolve_needed"
+            resolve_gap.turn_id = gap.turn_id
+            upgraded.append(resolve_gap)
+            continue
+        upgraded.append(gap)
+    return upgraded
+
+
 # ── Turn loop ────────────────────────────────────────────────────────────
 
 def run_turn(
@@ -1370,6 +1424,18 @@ def run_turn(
     print(f"HEAD: {head} | Trajectory: {len(trajectory.order)} steps")
     print(f"{'='*60}")
 
+    identity_skill = _find_identity_skill(contact_id, registry)
+    if identity_skill:
+        print(f"\n── IDENTITY HYDRATE: {identity_skill.display_name}:{identity_skill.hash} ──")
+        identity_block = _render_identity(identity_skill)
+        session.inject(identity_block)
+        identity_step = Step.create(
+            desc=f"identity hydrated: {identity_skill.display_name}",
+            content_refs=[identity_skill.hash],
+        )
+        trajectory.append(identity_step)
+        print(f"  step:{identity_step.hash} → refs:[{identity_skill.display_name}:{identity_skill.hash}]")
+
     # ── 1b. RESUME CHECK ──────────────────────────────────────────────
     #
     # Check for unresolved gaps from prior turns (clarify_needed, interrupted).
@@ -1418,25 +1484,22 @@ def run_turn(
         tag = f" [{g.vocab}]" if g.vocab else ""
         print(f"    gap:{g.hash} \"{g.desc}\"{tag}")
 
-    # ── 3. IDENTITY (.st injection) ──────────────────────────────────
+    # ── 3. IDENTITY-AWARE GAP REWRITE ────────────────────────────────
     #
-    # Fire the contact's .st file. This surfaces identity, preferences,
-    # principles into the LLM's context — positioned AFTER the first
-    # step so it doesn't get pushed out of the context window.
+    # Identity hydration happens before first pre-diff. Keep a narrow
+    # safety net here in case first-step still surfaced a clarify gap
+    # that can be reduced by traversing the hydrated identity entity.
 
-    identity_skill = _find_identity_skill(contact_id, registry)
     if identity_skill:
-        print(f"\n── IDENTITY: {identity_skill.display_name}:{identity_skill.hash} ──")
-        identity_block = _render_identity(identity_skill)
-        session.inject(identity_block)
-
-        identity_step = Step.create(
-            desc=f"identity loaded: {identity_skill.display_name}",
-            content_refs=[identity_skill.hash],
-            step_refs=[origin_step.hash],
+        upgraded_origin_gaps = _upgrade_identity_linkage_clarify_gaps(
+            user_message=user_message,
+            origin_gaps=origin_gaps,
+            identity_skill=identity_skill,
         )
-        trajectory.append(identity_step)
-        print(f"  step:{identity_step.hash} → refs:[{identity_skill.display_name}:{identity_skill.hash}]")
+        if upgraded_origin_gaps != origin_gaps:
+            origin_gaps = upgraded_origin_gaps
+            origin_step.gaps = origin_gaps
+            print("  → upgraded identity-linkage clarify gap(s) to hash_resolve_needed")
 
     # ── 4. COMPILER ──────────────────────────────────────────────────
     #
