@@ -1088,6 +1088,10 @@ When you articulate a gap, ground it in hashes:
 - step_refs: reasoning steps you followed to reach this gap (Layer 1 — the causal chain)
 - content_refs: data you need resolved — blobs, trees, commits, skill hashes (Layer 2 — the evidence)
 
+When reading semantic trees, keep the causal roles distinct:
+- step refs are execution provenance: the steps or artifacts a step produced, consumed, or directly touched while doing work
+- gap refs are gap-surfacing provenance: the steps or artifacts that motivated the gap being surfaced in the first place
+
 The kernel resolves content_refs for you. If you reference a hash, the kernel will inject its content into your context. If you don't reference hashes, you are reasoning from assumption — which means grounded = 0.
 
 ## Vocab mapping
@@ -1162,6 +1166,7 @@ The trajectory is rendered as a tree you can explore — the same shape as a git
 It also carries a compact tree language so structural dimensions stay visible without blowing up the render:
 - step{kindflowN}: kind=o observe, m mutate; flow=+ open, ~ dormant-only, = closed; N is active child-gap count when present
 - gap{statusclassrcg/s:c}: status=? active, = resolved, ~ dormant; class=o observe, m mutate, b bridge, c clarify, _ unknown; rcg are relevance/confidence/grounded bands (0-9); s:c are step_refs:content_refs counts
+- step refs are execution provenance; gap refs are gap-surfacing provenance
 
 ```
 chain:0d71abb30b86  "resolved missing config" (active, 3 steps)

@@ -38,7 +38,8 @@ TREE_LANGUAGE_KEY = (
     "tree_sig: step{kindflowN}=kind:o observe,m mutate,r rogue; flow:+ open,~ dormant,= closed. "
     "gap{statusclassrcg/s:c}=status:? active,= resolved,~ dormant; "
     "class:o observe,m mutate,b bridge,c clarify,_ unknown; "
-    "rcg are rel/conf/gr bands 0-9; s:c are step_refs:content_refs counts."
+    "rcg are rel/conf/gr bands 0-9; s:c are step_refs:content_refs counts. "
+    "step refs are execution provenance; gap refs are gap-surfacing provenance."
 )
 
 OBSERVE_VOCABS = {
@@ -698,7 +699,8 @@ class Trajectory:
     def _runtime_tree_legend(self) -> str:
         return (
             "legend: step{kindflowN}; gap{statusclassrcg/s:c}; "
-            "refs use typed namespaces entity/action/codon/step plus raw content refs"
+            "refs use typed namespaces entity/action/codon/step plus raw content refs; "
+            "step refs = execution provenance; gap refs = gap-surfacing provenance"
         )
 
     def _gap_desc_for_render(self, parent_desc: str, gap_desc: str) -> str | None:
@@ -882,21 +884,21 @@ class Trajectory:
                     )
                     focus = " [focus]" if highlight_gap and gap_obj.hash == highlight_gap else ""
                     gap_desc = self._gap_desc_for_render(node.get("goal", ""), gap_obj.desc)
+                    gref_str = self._render_refs(gap_obj.step_refs, gap_obj.content_refs, registry)
                     if gap_obj.dormant:
                         desc_part = f" \"{gap_desc}\"" if gap_desc else ""
                         score = gap_obj.scores.magnitude()
                         lines.append(
                             f"  {cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                            f"gap:{gap_obj.hash}{desc_part} (dormant, score:{score:.2f}){focus}"
+                            f"gap:{gap_obj.hash}{desc_part}{gref_str} (dormant, score:{score:.2f}){focus}"
                         )
                     elif gap_obj.resolved:
                         desc_part = f" \"{gap_desc}\"" if gap_desc else ""
                         lines.append(
                             f"  {cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                            f"gap:{gap_obj.hash}{desc_part} (resolved){focus}"
+                            f"gap:{gap_obj.hash}{desc_part}{gref_str} (resolved){focus}"
                         )
                     else:
-                        gref_str = self._render_refs(gap_obj.step_refs, gap_obj.content_refs, registry)
                         vocab_str = f" [{gap_obj.vocab}]" if gap_obj.vocab else ""
                         desc_part = f" \"{gap_desc}\"" if gap_desc else ""
                         lines.append(
@@ -944,22 +946,22 @@ class Trajectory:
                     resolved=gap.get("status") == "resolved",
                     dormant=gap.get("status") == "dormant",
                 )
+                gref_str = self._render_refs(gap_obj.step_refs, gap_obj.content_refs, registry)
                 if gap_obj.dormant:
                     gap_desc = self._gap_desc_for_render(node.get("goal", ""), gap_obj.desc)
                     desc_part = f" \"{gap_desc}\"" if gap_desc else ""
                     lines.append(
                         f"{cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                        f"gap:{gap_obj.hash}{desc_part} (dormant)"
+                        f"gap:{gap_obj.hash}{desc_part}{gref_str} (dormant)"
                     )
                 elif gap_obj.resolved:
                     gap_desc = self._gap_desc_for_render(node.get("goal", ""), gap_obj.desc)
                     desc_part = f" \"{gap_desc}\"" if gap_desc else ""
                     lines.append(
                         f"{cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                        f"gap:{gap_obj.hash}{desc_part} (resolved)"
+                        f"gap:{gap_obj.hash}{desc_part}{gref_str} (resolved)"
                     )
                 else:
-                    gref_str = self._render_refs(gap_obj.step_refs, gap_obj.content_refs, registry)
                     vocab_str = f" [{gap_obj.vocab}]" if gap_obj.vocab else ""
                     gap_desc = self._gap_desc_for_render(node.get("goal", ""), gap_obj.desc)
                     desc_part = f" \"{gap_desc}\"" if gap_desc else ""

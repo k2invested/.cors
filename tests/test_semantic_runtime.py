@@ -338,6 +338,23 @@ def test_render_chain_collapsed_mode_summarizes_history():
     assert "earlier resolved step(s) collapsed" in rendered
 
 
+def test_render_chain_keeps_refs_on_resolved_gap_lines():
+    traj = Trajectory()
+    origin_gap = Gap.create(desc="review target", content_refs=["blob:abc123"], step_refs=["seed123"])
+    origin_gap.vocab = "reason_needed"
+    origin_gap.resolved = True
+    origin_step = Step.create(desc="review target", gaps=[origin_gap])
+    traj.append(origin_step)
+    from step import Chain
+    chain = Chain.create(origin_gap=origin_gap.hash, first_step=origin_step.hash)
+    traj.add_chain(chain)
+
+    rendered = traj.render_chain(chain.hash)
+    assert f"gap:{origin_gap.hash}" in rendered
+    assert "step:seed123" in rendered
+    assert "blob:abc123" in rendered
+
+
 def test_render_gap_tree_includes_signature_and_ref_counts():
     traj = Trajectory()
     gap = Gap.create(desc="inspect config", content_refs=["blob:abc123"], step_refs=["prev123"])
