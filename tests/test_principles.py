@@ -2300,6 +2300,34 @@ def test_p12_reprogramme_trigger_assignment_reroutes_to_reason_needed():
     assert compiler.ledger.stack[-1].gap.route_mode == "action_editor"
 
 
+def test_p12_st_builder_cli_reports_malformed_skeleton_as_validation_error():
+    payload = {
+        "version": "semantic_skeleton.v1",
+        "artifact": {"kind": "action", "protected_kind": "action"},
+        "name": "research",
+        "desc": "Malformed research workflow",
+        "trigger": "manual",
+        "refs": {},
+        "root": "phase_root",
+        "phases": ["phase_root"],
+        "closure": {"success": {}},
+    }
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "st_builder.py")],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        cwd=ROOT,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 1
+    assert "Validation errors:" in output
+    assert "phase 0 must be an object" in output
+    assert "Traceback" not in output
+
+
 def test_p12_hash_edit_tool_write_reroutes_to_reason_needed():
     traj = Trajectory()
     compiler = Compiler(traj)

@@ -68,6 +68,10 @@ ENTITY_STEP_FIELDS = [
 ]
 
 
+def _object_or_empty(value: object) -> dict:
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def slugify(text: str) -> str:
     """Turn a description into an action name."""
     words = re.sub(r'[^a-z0-9\s]', '', text.lower()).split()
@@ -149,14 +153,14 @@ EMBEDDING_OVERRIDE_FIELDS = {
 
 def effective_phase_contract(phase: dict) -> dict:
     """Return the runtime-effective phase after explicit embedding overrides."""
-    effective = dict(phase or {})
-    effective["gap_template"] = dict(effective.get("gap_template", {}) or {})
-    effective["manifestation"] = dict(effective.get("manifestation", {}) or {})
-    effective["generation"] = dict(effective.get("generation", {}) or {})
-    effective["transitions"] = dict(effective.get("transitions", {}) or {})
+    effective = _object_or_empty(phase)
+    effective["gap_template"] = _object_or_empty(effective.get("gap_template", {}) or {})
+    effective["manifestation"] = _object_or_empty(effective.get("manifestation", {}) or {})
+    effective["generation"] = _object_or_empty(effective.get("generation", {}) or {})
+    effective["transitions"] = _object_or_empty(effective.get("transitions", {}) or {})
     effective["allowed_vocab"] = list(effective.get("allowed_vocab", []) or [])
 
-    embedding = dict(effective.get("embedding", {}) or {})
+    embedding = _object_or_empty(effective.get("embedding", {}) or {})
     if embedding.get("activation_mode") != "hash_embedded":
         return effective
 
@@ -230,7 +234,7 @@ def _embedded_ref_exists(ref: str, output_dir: str | None) -> bool:
 def _phase_has_runtime_effective_surface(phase: dict) -> bool:
     if _is_terminal_phase(phase):
         return False
-    manifestation = dict(phase.get("manifestation", {}) or {})
+    manifestation = _object_or_empty(phase.get("manifestation", {}) or {})
     mode = manifestation.get("execution_mode")
     runtime_vocab = manifestation.get("runtime_vocab")
     if mode == "runtime_vocab" and isinstance(runtime_vocab, str) and runtime_vocab and runtime_vocab not in BRIDGE_RUNTIME_VOCAB:
@@ -247,7 +251,7 @@ def _flow_authored_action_errors(data: dict, *, output_dir: str | None = None) -
     root = data.get("root")
     phases = data.get("phases")
     closure = data.get("closure")
-    refs = dict(data.get("refs", {}) or {})
+    refs = _object_or_empty(data.get("refs", {}) or {})
 
     if not isinstance(phases, list) or not phases:
         return errors
@@ -282,13 +286,13 @@ def _flow_authored_action_errors(data: dict, *, output_dir: str | None = None) -
         for target in (phase.get("transitions", {}) or {}).values():
             if target not in phase_map:
                 errors.append(f"L1 control semantics: phase {pid} transition points to missing target {target}")
-        manifestation = dict(phase.get("manifestation", {}) or {})
+        manifestation = _object_or_empty(phase.get("manifestation", {}) or {})
         activation_ref = _resolve_phase_ref(manifestation.get("activation_ref"), refs)
         if activation_ref and not _embedded_ref_exists(activation_ref, output_dir):
             errors.append(
                 f"L1/L2 embedding: phase {pid} activation_ref must reference an existing committed foundation: {activation_ref}"
             )
-        embedding = dict(phase.get("embedding", {}) or {})
+        embedding = _object_or_empty(phase.get("embedding", {}) or {})
         if embedding:
             block_ref = _resolve_phase_ref(str(embedding.get("block_ref", "") or ""), refs)
             if not block_ref:
@@ -337,11 +341,11 @@ def _flow_authored_action_errors(data: dict, *, output_dir: str | None = None) -
             )
     runtime_linked_refs: set[str] = set()
     for phase in phase_map.values():
-        manifestation = dict(phase.get("manifestation", {}) or {})
+        manifestation = _object_or_empty(phase.get("manifestation", {}) or {})
         activation_ref = _resolve_phase_ref(manifestation.get("activation_ref"), refs)
         if activation_ref in declared_tool_refs or activation_ref in declared_hash_refs:
             runtime_linked_refs.add(activation_ref)
-        embedding = dict(phase.get("embedding", {}) or {})
+        embedding = _object_or_empty(phase.get("embedding", {}) or {})
         block_ref = _resolve_phase_ref(str(embedding.get("block_ref", "") or ""), refs)
         if block_ref in declared_tool_refs or block_ref in declared_hash_refs:
             runtime_linked_refs.add(block_ref)
@@ -645,16 +649,19 @@ def _normalize_semantic_flow(root: str | None, phases: list[dict] | None, closur
         return root, [], closure
 
     normalized: list[dict] = []
-    actionable: list[dict] = []
     for idx, raw_phase in enumerate(phases):
-        phase = dict(raw_phase or {})
+        phase = _object_or_empty(raw_phase)
+        if not phase:
+            normalized.append({})
+            continue
         if phase.get("kind") == "terminal":
             normalized.append(phase)
             continue
         action = phase.get("action") or slugify(phase.get("goal", "") or f"step {idx + 1}")
-        goal = phase.get("goal") or phase.get("gap_template", {}).get("desc") or action
+        gap_template = _object_or_empty(phase.get("gap_template", {}) or {})
+        goal = phase.get("goal") or gap_template.get("desc") or action
         post_diff = bool(phase.get("post_diff", False))
-        manifestation = dict(phase.get("manifestation", {}) or {})
+        manifestation = _object_or_empty(phase.get("manifestation", {}) or {})
         runtime_vocab = manifestation.get("runtime_vocab")
         step_like = {
             "action": action,
@@ -663,11 +670,11 @@ def _normalize_semantic_flow(root: str | None, phases: list[dict] | None, closur
         }
         if runtime_vocab:
             step_like["vocab"] = runtime_vocab
-        gap_template = dict(phase.get("gap_template", {}) or {})
         if gap_template.get("content_refs"):
             step_like["resolve"] = list(gap_template.get("content_refs") or [])
         kind = phase.get("kind") or _phase_kind_for_step(step_like)
-        phase.setdefault("id", _flow_phase_id(action, idx))
+        if "id" not in phase:
+            phase["id"] = None
         phase["action"] = action
         phase["goal"] = goal
         phase["kind"] = kind
@@ -680,31 +687,8 @@ def _normalize_semantic_flow(root: str | None, phases: list[dict] | None, closur
         phase.setdefault("allowed_vocab", _allowed_vocab_for_phase(kind, step_like))
         phase["post_diff"] = post_diff
         normalized.append(phase)
-        actionable.append(phase)
 
-    if actionable:
-        for idx, phase in enumerate(actionable):
-            if phase.get("kind") == "clarify":
-                phase.setdefault("terminal", True)
-                continue
-            if "transitions" not in phase:
-                if idx < len(actionable) - 1:
-                    phase["transitions"] = {"on_done": actionable[idx + 1]["id"]}
-                else:
-                    phase["transitions"] = {"on_close": "phase_done"}
-        if not any(phase.get("kind") == "terminal" for phase in normalized):
-            normalized.append(
-                {
-                    "id": "phase_done",
-                    "kind": "terminal",
-                    "goal": "done",
-                    "action": "close_loop",
-                    "terminal": True,
-                }
-            )
-        root = root or actionable[0]["id"]
-
-    return root, normalized, closure or _default_closure()
+    return root, normalized, closure
 
 
 def _resolve_symbolic_ref(ref: str, refs: dict[str, str]) -> str | None:
@@ -767,7 +751,7 @@ def semantic_skeleton_from_st(
     existing_ref: str | None = None,
 ) -> dict:
     artifact_kind = _artifact_kind_from_st(data)
-    artifact = dict(data.get("artifact", {}))
+    artifact = _object_or_empty(data.get("artifact", {}))
     artifact.setdefault("kind", artifact_kind)
     artifact.setdefault("protected_kind", "entity" if artifact_kind == "entity" else "action")
     artifact.setdefault("lineage", data.get("name", "untitled"))
@@ -779,7 +763,7 @@ def semantic_skeleton_from_st(
         "name": data.get("name", "untitled"),
         "desc": data.get("desc", ""),
         "trigger": data.get("trigger", "manual"),
-        "refs": dict(data.get("refs", {})),
+        "refs": _object_or_empty(data.get("refs", {})),
     }
     if existing_ref:
         doc["existing_ref"] = existing_ref
@@ -834,7 +818,7 @@ def blank_semantic_skeleton(
 
 
 def lower_semantic_skeleton(intent: dict) -> tuple[dict, str, str | None]:
-    artifact = dict(intent.get("artifact", {}))
+    artifact = _object_or_empty(intent.get("artifact", {}))
     artifact_kind = artifact.get("kind", "entity")
     existing_ref = normalize_existing_ref(intent.get("existing_ref"))
 
@@ -849,10 +833,10 @@ def lower_semantic_skeleton(intent: dict) -> tuple[dict, str, str | None]:
         "name": intent.get("name", "untitled"),
         "desc": intent.get("desc", ""),
         "trigger": intent.get("trigger", "manual"),
-        "refs": dict(intent.get("refs", {})),
+        "refs": _object_or_empty(intent.get("refs", {})),
         "artifact": artifact,
     }
-    semantics = dict(intent.get("semantics", {}))
+    semantics = _object_or_empty(intent.get("semantics", {}))
     for field, value in semantics.items():
         st[field] = value
 
@@ -883,7 +867,28 @@ def validate_semantic_skeleton_intent(intent: dict) -> list[str]:
     errors: list[str] = []
     trigger = intent.get("trigger")
     next_layer_desc = intent.get("next_layer_desc")
-    artifact = dict(intent.get("artifact", {}) or {})
+    artifact_value = intent.get("artifact", {})
+    if artifact_value not in ({}, None) and not isinstance(artifact_value, dict):
+        errors.append("semantic_skeleton.v1: artifact must be an object")
+    refs_value = intent.get("refs", {})
+    if refs_value not in ({}, None) and not isinstance(refs_value, dict):
+        errors.append("semantic_skeleton.v1: refs must be an object")
+    semantics_value = intent.get("semantics", {})
+    if semantics_value not in ({}, None) and not isinstance(semantics_value, dict):
+        errors.append("semantic_skeleton.v1: semantics must be an object")
+    phases_value = intent.get("phases")
+    if phases_value is not None and not isinstance(phases_value, list):
+        errors.append("semantic_skeleton.v1: phases must be a list")
+    if isinstance(phases_value, list):
+        for idx, phase in enumerate(phases_value):
+            if not isinstance(phase, dict):
+                errors.append(f"semantic_skeleton.v1: phase {idx} must be an object")
+                continue
+            for field in ("gap_template", "manifestation", "generation", "transitions", "embedding"):
+                value = phase.get(field)
+                if value not in ({}, None) and not isinstance(value, dict):
+                    errors.append(f"semantic_skeleton.v1: phase {idx} field {field} must be an object")
+    artifact = _object_or_empty(artifact_value)
     artifact_kind = artifact.get("kind")
     if (
         artifact_kind in {"action", "hybrid"}
@@ -1075,33 +1080,40 @@ def main():
         print(f"Error: invalid JSON input — {e}")
         return
 
-    if looks_like_semantic_skeleton(intent):
-        intent_errors = validate_semantic_skeleton_intent(intent)
-        if intent_errors:
-            print(f"Validation errors:\n" + "\n".join(f"  - {e}" for e in intent_errors))
-            print(f"\nGenerated (invalid):\n{json.dumps(intent, indent=2)}")
-            raise SystemExit(1)
-        st, artifact_kind, existing_ref = lower_semantic_skeleton(intent)
-    else:
-        if looks_like_skeleton(intent):
-            print(
-                "Error: skeleton.v1 input should be compiled with tools/skeleton_compile.py, "
-                "not built through st_builder."
-            )
-            raise SystemExit(1)
+    try:
+        if looks_like_semantic_skeleton(intent):
+            intent_errors = validate_semantic_skeleton_intent(intent)
+            if intent_errors:
+                print(f"Validation errors:\n" + "\n".join(f"  - {e}" for e in intent_errors))
+                print(f"\nGenerated (invalid):\n{json.dumps(intent, indent=2)}")
+                raise SystemExit(1)
+            st, artifact_kind, existing_ref = lower_semantic_skeleton(intent)
+        else:
+            if looks_like_skeleton(intent):
+                print(
+                    "Error: skeleton.v1 input should be compiled with tools/skeleton_compile.py, "
+                    "not built through st_builder."
+                )
+                raise SystemExit(1)
 
-        if looks_like_new_action_request(intent):
-            print(
-                "Error: new action or hybrid workflow origination belongs to skeleton.v1 "
-                "compilation, not st_builder."
-            )
-            raise SystemExit(1)
+            if looks_like_new_action_request(intent):
+                print(
+                    "Error: new action or hybrid workflow origination belongs to skeleton.v1 "
+                    "compilation, not st_builder."
+                )
+                raise SystemExit(1)
 
-        artifact_kind = intent.get("artifact_kind", "entity")
-        existing_ref = normalize_existing_ref(intent.get("existing_ref") or intent.get("existing_action_ref"))
+            artifact_kind = intent.get("artifact_kind", "entity")
+            existing_ref = normalize_existing_ref(intent.get("existing_ref") or intent.get("existing_action_ref"))
 
-        # Build .st from intent
-        st = build_st(intent)
+            # Build .st from intent
+            st = build_st(intent)
+    except SystemExit:
+        raise
+    except Exception as e:
+        print("Validation errors:\n" + f"  - internal builder error: {type(e).__name__}: {e}")
+        print(f"\nGenerated (invalid):\n{json.dumps(intent, indent=2)}")
+        raise SystemExit(1)
 
     # Validate
     errors = validate_st(st, artifact_kind=artifact_kind, existing_ref=existing_ref, output_dir=SKILLS_DIR)
