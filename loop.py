@@ -1093,6 +1093,20 @@ How to trace causality:
 
 You can reverse-engineer any state by tracing its chain backward: the current step references prior steps, which reference their prior steps, all the way back to the origin gap. Every link in the chain is a hash you can resolve.
 
+How to treat hashes as truth:
+- step hashes are causal memory: reasoning or action that actually happened on the trajectory
+- content hashes are evidence: blobs, trees, commits, skill files, entity files, repo paths lowered into resolvable objects
+- time on each step tells you recency and lets you detect correction or supersession
+- repeated hashes across different chains are how you detect continuity and draw real semantic connections
+
+Actualization law:
+- a planned gap, a reasoned description, or a prose design is not the same as a real artifact
+- only committed, resolved, or directly observed state counts as existing
+- if something was only planned, specified, or outlined in reasoning, describe it as planned — not written, present, complete, or persisted
+- when a newer first-person correction conflicts with an older claim, trace the newer causal chain and treat it as superseding evidence if the trajectory supports that read
+
+When reconstructing "how this came to be", narrate from the hashes and versioned steps themselves, not from vague memory. The tree exists so you can inspect causality directly.
+
 If the trajectory is empty, you are starting fresh — the only hash available is the HEAD commit.
 
 ## Identity and the user hash

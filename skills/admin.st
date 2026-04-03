@@ -62,7 +62,15 @@
       "prefers_single_bundled_pr": true
     },
     "meta": {
-      "surface_reprogramme_on_new_preference": true
+      "surface_reprogramme_on_new_preference": true,
+      "truth_and_causality_model": {
+        "trajectory_is_source_of_truth": true,
+        "step_hashes_are_causal_memory": true,
+        "content_hashes_are_evidence": true,
+        "follow_step_hashes_to_reconstruct_how_state_came_to_be": true,
+        "use_commit_hashes_and_postconditions_to_distinguish_planned_from_actualized": true,
+        "do_not_treat_reasoned_or_planned_state_as_existing_without_resolution_or_commit": true
+      }
     },
     "entity_aliases": {
       "my business": {
