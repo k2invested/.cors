@@ -61,10 +61,12 @@
     "warning": "Nested freeform descriptive structures can be useful documentation, but runtime behavior is governed primarily by the fields above."
   },
   "authoring_levels": {
+    "protocol": "Author exactly one layer per iteration. Validate it. If valid, actualize and commit it before attempting a higher-order layer. Parent layers may only embed already-existing committed child layers or already-existing tool paths.",
     "level_0_executable_spine": "Start with the smallest valid action flow: name, trigger, artifact.kind, root, one actionable phase, one terminal phase, and closure aligned to that terminal. No nested phases[*].steps. No decorative schema.",
     "level_1_control_semantics": "Add runtime-effective phase configuration only after L0 is coherent: manifestation, generation, allowed_vocab, and transitions. Control flow must be true in transitions, not only in prose.",
-    "level_2_capability_expansion": "Add extra phases, clarify branches, verification, or deeper branching only after L1 is valid and runtime-effective.",
-    "level_3_descriptive_enrichment": "Only after L0/L1/L2 are coherent should you add input_schema, output_schema, extra tool declarations, or richer descriptive metadata. Enrichment without runtime linkage is validator-worthy drift."
+    "level_2_capability_expansion": "Add extra phases, clarify branches, verification, deeper branching, or embedding of lower-order committed layers only after L1 is valid and runtime-effective.",
+    "level_3_descriptive_enrichment": "Only after L0/L1/L2 are coherent should you add input_schema, output_schema, extra tool declarations, or richer descriptive metadata. Enrichment without runtime linkage is validator-worthy drift.",
+    "inside_out_rule": "Complex workflows must be built inside out / back to front. Foundational lower-order chains or vocab-mapped tools must already exist before a higher-order flow embeds them."
   },
   "common_failure_modes": [
     "Schema-valid but runtime-inert package: prose claims behavior that manifestation/allowed_vocab/transitions do not encode.",

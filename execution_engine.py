@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from compile import GovernorSignal, is_mutate, is_observe
+from skills.loader import compute_skill_hash
 from step import Epistemic, Gap, Step
 import manifest_engine as me
 from tools import st_builder as st_builder_module
@@ -81,6 +82,23 @@ def _record_step(step_result: Step, *, entry: Any, trajectory: Any, compiler: An
         trajectory.append(step_result)
     compiler.add_step_to_chain(step_result.hash)
     print(f"  step:{step_result.hash}" + (f" commit:{step_result.commit}" if step_result.commit else ""))
+
+
+def _reason_next_layer_gap(intent: dict | None, *, step_hash: str, authored_refs: list[str], current_turn: int) -> Gap | None:
+    if not isinstance(intent, dict):
+        return None
+    desc = intent.get("next_layer_desc")
+    if not isinstance(desc, str) or not desc.strip():
+        return None
+    gap = Gap.create(
+        desc=desc.strip(),
+        step_refs=[step_hash],
+        content_refs=authored_refs + list(intent.get("next_layer_content_refs", []) or []),
+    )
+    gap.scores = Epistemic(relevance=0.95, confidence=0.8, grounded=0.0)
+    gap.vocab = "reason_needed"
+    gap.turn_id = current_turn
+    return gap
 
 
 def _make_rogue_step(
@@ -990,7 +1008,9 @@ def execute_iteration(
             )
             session.inject(
                 "## Editable Action Skeleton\n"
-                "Return JSON only. Author the new action/workflow directly through this semantic_skeleton.v1 frame.\n"
+                "Return JSON only. Author exactly one workflow layer through this semantic_skeleton.v1 frame.\n"
+                "Build inside out / back to front: foundational lower-order layers must already exist before a higher-order layer embeds them.\n"
+                "If this layer is complete but a higher-order layer is still needed, include next_layer_desc so the next reason_needed iteration can build on the committed layer hash.\n"
                 f"{json.dumps(frame, indent=2)}"
             )
         raw = session.call(
@@ -1000,9 +1020,9 @@ def execute_iteration(
             "- Anything involving skills/actions/*.st is your domain under reason_needed.\n"
             "- Do not hand action/workflow creation, repair, schema alignment, or restructuring to reprogramme_needed.\n"
             "- reprogramme_needed may only be surfaced from reason_needed for entity-tree persistence.\n"
-            f"- {'If this is new skills/actions/*.st origination, you own workflow authoring. Return a concrete semantic_skeleton.v1 action package and actualize it now; do not emit another generic create/write file gap.' if author_actions else 'If new reusable workflow structure is needed, author the concrete creation/update gap(s) needed to actualize it.'}\n"
+            f"- {'If this is new skills/actions/*.st origination, you own workflow authoring. Return one concrete semantic_skeleton.v1 action layer and actualize it now; do not emit another generic create/write file gap.' if author_actions else 'If new reusable workflow structure is needed, author the concrete creation/update gap(s) needed to actualize it.'}\n"
             "- If an existing workflow should be triggered, emit the activation gap(s) for that path.\n"
-            f"{'- For new action/workflow packages, return only semantic_skeleton.v1 JSON with artifact.kind=action or hybrid. Do not restate the request as content_needed, hash_edit_needed, or reprogramme_needed.\n' if author_actions else ''}"
+            f"{'- For new action/workflow packages, return only semantic_skeleton.v1 JSON with artifact.kind=action or hybrid. Do not restate the request as content_needed, hash_edit_needed, or reprogramme_needed.\n- Author one layer per iteration. Do not try to manifest the full multi-layer workflow in one pass.\n- Embedded workflows, action packages, or tool-mapped foundations must already exist before you embed them.\n- If a higher-order layer is still needed after this layer commits, include next_layer_desc and optionally next_layer_content_refs using only existing committed hashes or existing tool paths.\n' if author_actions else ''}"
             "Keep reasoning stateful and current-turn; do not defer by scheduling background work unless a later gap explicitly does so."
         )
         intent = hooks.extract_json(raw)
@@ -1030,10 +1050,16 @@ def execute_iteration(
                         output = "\n".join(precommit_assessment)
                 if commit_sha:
                     print(f"  → committed: {commit_sha}")
+                    authored_refs: list[str] = []
+                    if written_path:
+                        try:
+                            authored_refs.append(compute_skill_hash(Path(written_path).read_text()))
+                        except OSError:
+                            pass
                     step_result = Step.create(
                         desc=f"reason actualized workflow: {gap.desc}",
                         step_refs=[origin_step.hash],
-                        content_refs=gap.content_refs,
+                        content_refs=gap.content_refs + authored_refs,
                         commit=commit_sha,
                         chain_id=entry.chain_id,
                     )
@@ -1059,6 +1085,22 @@ def execute_iteration(
                         chain_id=entry.chain_id,
                         assessment=assessment_lines,
                     )
+                    next_layer_gap = _reason_next_layer_gap(
+                        intent,
+                        step_hash=step_result.hash,
+                        authored_refs=authored_refs,
+                        current_turn=current_turn,
+                    )
+                    if next_layer_gap is not None:
+                        next_layer_step = Step.create(
+                            desc=f"next layer frontier: {gap.desc}",
+                            step_refs=[step_result.hash],
+                            content_refs=authored_refs,
+                            gaps=[next_layer_gap],
+                            chain_id=entry.chain_id,
+                        )
+                        trajectory.append(next_layer_step)
+                        compiler.emit(next_layer_step)
                     trajectory.append(postcond_step)
                     compiler.emit(postcond_step)
                     compiler.resolve_current_gap(gap.hash)

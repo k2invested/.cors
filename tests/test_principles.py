@@ -2344,6 +2344,110 @@ def test_p12_reason_needed_can_actualize_new_action_skeleton():
     assert any("Editable Action Skeleton" in content for content in session.injected)
 
 
+def test_p12_reason_needed_can_surface_next_layer_after_successful_layer_commit():
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps({
+                "version": "semantic_skeleton.v1",
+                "artifact": {"kind": "action", "protected_kind": "action", "lineage": "research", "version_strategy": "hash_pinned"},
+                "name": "research",
+                "desc": "Research workflow layer",
+                "trigger": "on_vocab:research_needed",
+                "refs": {},
+                "root": "phase_root",
+                "phases": [
+                    {
+                        "id": "phase_root",
+                        "kind": "observe",
+                        "goal": "Observe request",
+                        "action": "observe_request",
+                        "gap_template": {"desc": "Observe request", "content_refs": [], "step_refs": []},
+                        "manifestation": {
+                            "kernel_class": "observe",
+                            "dispersal": "context",
+                            "execution_mode": "runtime_vocab",
+                            "runtime_vocab": "hash_resolve_needed",
+                        },
+                        "generation": {
+                            "spawn_mode": "none",
+                            "spawn_trigger": "none",
+                            "branch_policy": "depth_first_to_parent",
+                            "sibling_policy": "after_descendants",
+                            "return_policy": "resume_transition",
+                        },
+                        "allowed_vocab": ["hash_resolve_needed"],
+                        "post_diff": False,
+                        "transitions": {"on_close": "phase_done"},
+                    },
+                    {"id": "phase_done", "kind": "terminal", "goal": "done", "action": "close_loop", "terminal": True},
+                ],
+                "closure": {"success": {"requires_terminal": "phase_done", "requires_no_active_gaps": True}},
+                "next_layer_desc": "Build the higher-order orchestration layer embedding the committed research leaf.",
+            })
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap(
+        "Create a new workflow file at skills/actions/research.st that implements a research workflow triggered by the vocab research_needed.",
+        vocab="reason_needed",
+    )
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("Written: /Users/k2invested/Desktop/cors/skills/actions/research.st", 0),
+        auto_commit=lambda message, paths=None: ("abc123", None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=loop._is_reprogramme_intent,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=loop._emit_reason_skill,
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: ["skills/actions/research.st [step] +10 -0"],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    frontier_steps = [step for step in traj.steps.values() if step.desc.startswith("next layer frontier:")]
+    assert len(frontier_steps) == 1
+    assert len(frontier_steps[0].gaps) == 1
+    assert frontier_steps[0].gaps[0].vocab == "reason_needed"
+    assert "higher-order orchestration layer" in frontier_steps[0].gaps[0].desc
+
+
 def test_p12_reprogramme_failure_does_not_commit_without_written_path():
     class FakeSession:
         def __init__(self):
@@ -2705,6 +2809,38 @@ def test_p12_validate_st_rejects_descriptive_enrichment_without_runtime_linkage(
     errors = st_builder_module.validate_st(st, artifact_kind="action")
     assert any("runtime-effective non-bridge phase" in e for e in errors)
     assert any("declared tool refs are not linked" in e for e in errors)
+
+
+def test_p12_validate_st_rejects_missing_embedded_foundation_ref():
+    st = {
+        "name": "research",
+        "desc": "workflow",
+        "trigger": "on_vocab:research_needed",
+        "refs": {"missing_tool": "tools/does_not_exist.py"},
+        "artifact": {"kind": "action", "protected_kind": "action"},
+        "root": "phase_root",
+        "phases": [
+            {
+                "id": "phase_root",
+                "kind": "observe",
+                "goal": "root",
+                "action": "root",
+                "gap_template": {"desc": "root", "content_refs": ["@missing_tool"], "step_refs": []},
+                "manifestation": {"kernel_class": "observe", "dispersal": "context", "execution_mode": "runtime_vocab", "runtime_vocab": "hash_resolve_needed"},
+                "generation": {"spawn_mode": "none", "spawn_trigger": "none", "branch_policy": "depth_first_to_parent", "sibling_policy": "after_descendants", "return_policy": "resume_transition"},
+                "allowed_vocab": ["hash_resolve_needed"],
+                "post_diff": False,
+                "transitions": {"on_close": "phase_done"},
+            },
+            {"id": "phase_done", "kind": "terminal", "goal": "done", "action": "close_loop", "terminal": True},
+        ],
+        "steps": [{"action": "root", "desc": "root", "vocab": "hash_resolve_needed", "post_diff": False}],
+        "closure": {"success": {"requires_terminal": "phase_done", "requires_no_active_gaps": True}},
+    }
+
+    errors = st_builder_module.validate_st(st, artifact_kind="action", output_dir=str(ROOT / "skills"))
+    assert any("must already exist before embedding" in e for e in errors)
+    assert any("must point to an existing tool path or committed skill hash" in e for e in errors)
 
 
 def test_p12_render_skill_package_surfaces_action_tree_details():

@@ -146,6 +146,18 @@ def _resolve_phase_ref(ref: str, refs: dict[str, str]) -> str | None:
     return ref
 
 
+def _embedded_ref_exists(ref: str, output_dir: str | None) -> bool:
+    if not isinstance(ref, str) or not ref:
+        return False
+    if ref.startswith("tools/"):
+        return (ROOT / ref).exists()
+    if ref.startswith("skills/"):
+        return (ROOT / ref).exists()
+    if HEX_REF_RE.fullmatch(ref):
+        return bool(output_dir and find_existing_skill_path(ref, output_dir))
+    return True
+
+
 def _phase_has_runtime_effective_surface(phase: dict) -> bool:
     if _is_terminal_phase(phase):
         return False
@@ -161,7 +173,7 @@ def _phase_has_runtime_effective_surface(phase: dict) -> bool:
     return False
 
 
-def _flow_authored_action_errors(data: dict) -> list[str]:
+def _flow_authored_action_errors(data: dict, *, output_dir: str | None = None) -> list[str]:
     errors: list[str] = []
     root = data.get("root")
     phases = data.get("phases")
@@ -201,11 +213,32 @@ def _flow_authored_action_errors(data: dict) -> list[str]:
         for target in (phase.get("transitions", {}) or {}).values():
             if target not in phase_map:
                 errors.append(f"L1 control semantics: phase {pid} transition points to missing target {target}")
+        manifestation = dict(phase.get("manifestation", {}) or {})
+        activation_ref = _resolve_phase_ref(manifestation.get("activation_ref"), refs)
+        if activation_ref and not _embedded_ref_exists(activation_ref, output_dir):
+            errors.append(
+                f"L1/L2 embedding: phase {pid} activation_ref must reference an existing committed skill or existing tool path: {activation_ref}"
+            )
+        for raw_ref in list((phase.get("gap_template", {}) or {}).get("content_refs", []) or []):
+            resolved_ref = _resolve_phase_ref(raw_ref, refs)
+            if resolved_ref and not _embedded_ref_exists(resolved_ref, output_dir):
+                errors.append(
+                    f"L0/L1 embedding: phase {pid} gap_template content ref must already exist before embedding: {resolved_ref}"
+                )
 
     declared_tool_refs = {
         value for value in refs.values()
         if isinstance(value, str) and value.startswith("tools/")
     }
+    declared_skill_refs = {
+        value for value in refs.values()
+        if isinstance(value, str) and HEX_REF_RE.fullmatch(value)
+    }
+    for ref in sorted(declared_tool_refs | declared_skill_refs):
+        if not _embedded_ref_exists(ref, output_dir):
+            errors.append(
+                f"L0/L2 embedding: declared ref must point to an existing tool path or committed skill hash before use: {ref}"
+            )
     runtime_linked_refs: set[str] = set()
     for phase in phase_map.values():
         manifestation = dict(phase.get("manifestation", {}) or {})
@@ -278,7 +311,7 @@ def validate_st(data: dict,
         errors.append("entity packages with semantic content require deterministic context-injection steps")
 
     if artifact_kind in {"action", "hybrid", "action_update", "hybrid_update"} and data.get("root") and data.get("phases") and data.get("closure"):
-        errors.extend(_flow_authored_action_errors(data))
+        errors.extend(_flow_authored_action_errors(data, output_dir=output_dir))
 
     if output_dir and existing_ref and not find_existing_skill_path(existing_ref, output_dir):
         errors.append(f"existing_ref not found: {existing_ref}")
