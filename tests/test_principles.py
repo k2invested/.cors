@@ -2459,8 +2459,23 @@ def test_p12_turn_outcome_facts_forbid_ready_claims_after_failed_authoring():
         "successful_mutations": [],
         "attempted_mutations": ["reason_needed: create skills/actions/research.st"],
         "rogue_failures": ["reason actualization failed: create skills/actions/research.st | source=st_builder | kind=validation_error"],
+        "exhausted_reason_loops": [],
     })
 
+    assert "attempted but not validated or persisted" in rendered
+    assert "ready, live, built, or complete" in rendered
+
+
+def test_p12_turn_outcome_facts_treat_exhausted_reason_loop_as_unconfirmed():
+    rendered = loop._render_turn_outcome_facts({
+        "commits": [],
+        "successful_mutations": [],
+        "attempted_mutations": ["reason_needed: create skills/actions/research.st"],
+        "rogue_failures": [],
+        "exhausted_reason_loops": ["reason loop: exhausted after 5 attempts: create skills/actions/research.st"],
+    })
+
+    assert "Exhausted controller loops:" in rendered
     assert "attempted but not validated or persisted" in rendered
     assert "ready, live, built, or complete" in rendered
 
@@ -2851,6 +2866,7 @@ def test_p12_reason_needed_retries_inside_reason_loop_until_success():
     assert session.calls == 2
     assert chain.loop_state["status"] == "succeeded"
     assert chain.loop_state["attempt_count"] == 2
+    assert chain.stable_id is not None
 
 
 def test_p12_reason_needed_exhausts_reason_loop_after_five_attempts():
@@ -2967,9 +2983,11 @@ def test_p12_reason_needed_exhausts_reason_loop_after_five_attempts():
         assert chain.loop_state["attempt_count"] == expected_attempt
 
     assert final_outcome.step_result is not None
-    assert final_outcome.step_result.rogue is True
+    assert final_outcome.step_result.rogue is False
+    assert final_outcome.step_result.desc.startswith("reason loop: exhausted after 5 attempts")
     assert session.calls == 5
     assert chain.loop_state["status"] == "exhausted"
+    assert chain.stable_id is not None
 
 
 def test_p12_reason_normalizes_trigger_to_manual_when_next_layer_remains():

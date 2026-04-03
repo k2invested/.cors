@@ -1558,6 +1558,7 @@ def run_turn(
         "successful_mutations": [],
         "attempted_mutations": [],
         "rogue_failures": [],
+        "exhausted_reason_loops": [],
     }
     clarify_frontier_step: Step | None = None
     if pre_bootstrap_step and pre_bootstrap_step.commit:
@@ -1663,6 +1664,8 @@ def run_turn(
             if outcome.step_result.rogue_kind:
                 failure_bits.append(f"kind={outcome.step_result.rogue_kind}")
             turn_facts["rogue_failures"].append(" | ".join(failure_bits))
+        if outcome.step_result and outcome.step_result.desc.startswith("reason loop: exhausted after"):
+            turn_facts["exhausted_reason_loops"].append(outcome.step_result.desc)
 
         if discord_contact:
             pruned_runtime = _prune_discord_ledger(compiler)
@@ -2581,6 +2584,7 @@ def _render_turn_outcome_facts(turn_facts: dict[str, list[str]]) -> str:
     successful = turn_facts.get("successful_mutations", [])
     attempted = turn_facts.get("attempted_mutations", [])
     rogue_failures = turn_facts.get("rogue_failures", [])
+    exhausted = turn_facts.get("exhausted_reason_loops", [])
 
     lines = ["## Turn Outcome Facts"]
     lines.append("Successful commits:")
@@ -2591,6 +2595,8 @@ def _render_turn_outcome_facts(turn_facts: dict[str, list[str]]) -> str:
     lines.extend(f"- {item}" for item in attempted) if attempted else lines.append("- none")
     lines.append("Observed failures:")
     lines.extend(f"- {item}" for item in rogue_failures) if rogue_failures else lines.append("- none")
+    lines.append("Exhausted controller loops:")
+    lines.extend(f"- {item}" for item in exhausted) if exhausted else lines.append("- none")
     lines.append(
         "Rule: only say something was changed, removed, updated, saved, or persisted if Successful commits or Successful mutations above prove it."
     )
@@ -2601,7 +2607,7 @@ def _render_turn_outcome_facts(turn_facts: dict[str, list[str]]) -> str:
         lines.append(
             "Do not say 'I'll update', 'I will proceed', or any equivalent future-write promise when no mutation succeeded this turn."
         )
-    if attempted or rogue_failures:
+    if attempted or rogue_failures or exhausted:
         lines.append(
             "If authoring or actualization was attempted but failed validation, manifestation, or persistence, say it was attempted but not validated or persisted."
         )

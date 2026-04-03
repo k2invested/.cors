@@ -513,6 +513,7 @@ def _ensure_reason_loop_chain(*, trajectory: Any, chain_id: str | None, gap: Gap
         return None
     if chain.chain_kind != "reason_loop":
         chain.chain_kind = "reason_loop"
+        chain.stable_id = chain.stable_id or chain.hash
         chain.controller_vocab = "reason_needed"
         chain.target_desc = gap.desc
         chain.target_refs = list(gap.content_refs)
@@ -1514,19 +1515,16 @@ def execute_iteration(
                     else:
                         if controller_chain is not None:
                             controller_chain.loop_state["status"] = "exhausted"
+                            controller_chain.loop_state["attempt_count"] = attempt
                             _refresh_reason_loop_chain_desc(controller_chain)
-                        step_result = _emit_rogue_with_diagnosis(
-                            desc=f"reason actualization failed: {gap.desc}",
-                            origin_step=origin_step,
-                            gap=gap,
+                        step_result = Step.create(
+                            desc=f"reason loop: exhausted after {REASON_LOOP_MAX_ATTEMPTS} attempts: {gap.desc}",
+                            step_refs=[origin_step.hash],
+                            content_refs=gap.content_refs,
                             chain_id=entry.chain_id,
-                            rogue_kind="validation_error" if code != 0 else "manifest_failure",
-                            failure_source="st_builder",
-                            trajectory=trajectory,
-                            compiler=compiler,
-                            failure_detail=failure_output or None,
+                            assessment=[failure_output] if failure_output else [],
                         )
-                        compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
+                        compiler.resolve_current_gap(gap.hash)
             else:
                 step_result, child_gaps = hooks.parse_step_output(
                     raw,
@@ -1560,18 +1558,17 @@ def execute_iteration(
             else:
                 if controller_chain is not None and author_actions:
                     exhausted_step = Step.create(
-                        desc=f"reason loop: unresolved without structural output: {gap.desc}",
+                        desc=f"reason loop: exhausted after {REASON_LOOP_MAX_ATTEMPTS} attempts: {gap.desc}",
                         step_refs=[origin_step.hash],
                         content_refs=gap.content_refs,
                         chain_id=entry.chain_id,
-                        rogue=True,
-                        rogue_kind="non_progress",
-                        failure_source="reason_needed",
+                        assessment=["non-progress: no structural output returned from reason_needed"],
                     )
                     step_result = exhausted_step
                     controller_chain.loop_state["status"] = "exhausted"
+                    controller_chain.loop_state["attempt_count"] = attempt
                     _refresh_reason_loop_chain_desc(controller_chain)
-                    compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
+                    compiler.resolve_current_gap(gap.hash)
                 else:
                     compiler.resolve_current_gap(gap.hash)
 
