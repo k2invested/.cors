@@ -2336,6 +2336,69 @@ def test_p12_render_skill_package_surfaces_action_tree_details():
     assert "allowed_vocab: hash_resolve_needed" in rendered
 
 
+def test_p12_build_semantic_tree_from_action_skill_exposes_gap_configuration():
+    debug_skill = registry().resolve_command("debug")
+    assert debug_skill is not None
+
+    tree = manifest_engine_module.build_semantic_tree(
+        debug_skill.payload,
+        source_type="skill_package",
+        source_ref=debug_skill.hash,
+    )
+
+    assert tree["version"] == "semantic_tree.v1"
+    assert tree["root_id"].startswith("phase_")
+    first = tree["nodes"][0]
+    assert first["gap"]["runtime_vocab"] == "hash_resolve_needed"
+    assert first["manifestation"]["kernel_class"] == "observe"
+    assert first["generation"]["branch_policy"] == "depth_first_to_parent"
+
+
+def test_p12_build_semantic_tree_from_realized_chain_preserves_causal_links():
+    chain_doc = {
+        "hash": "chain123",
+        "origin_gap": "gap0",
+        "steps": [
+            {
+                "hash": "step_a",
+                "desc": "resolve context",
+                "gaps": [
+                    {
+                        "hash": "gap_a",
+                        "desc": "resolve context",
+                        "vocab": "hash_resolve_needed",
+                        "step_refs": ["seed"],
+                        "content_refs": ["blob_a"],
+                        "scores": {"relevance": 1.0, "confidence": 0.7, "grounded": 0.2},
+                    }
+                ],
+            },
+            {
+                "hash": "step_b",
+                "desc": "edit file",
+                "commit": "abc123",
+                "gaps": [
+                    {
+                        "hash": "gap_b",
+                        "desc": "edit file",
+                        "vocab": "hash_edit_needed",
+                        "step_refs": ["step_a"],
+                        "content_refs": ["blob_b"],
+                        "scores": {"relevance": 0.8, "confidence": 0.8, "grounded": 0.6},
+                    }
+                ],
+            },
+        ],
+    }
+
+    tree = manifest_engine_module.build_semantic_tree(chain_doc, source_type="realized_chain", source_ref="chain123")
+
+    assert tree["version"] == "semantic_tree.v1"
+    assert tree["nodes"][1]["parent_id"] == "step_a"
+    assert tree["nodes"][1]["gap"]["runtime_vocab"] == "hash_edit_needed"
+    assert tree["nodes"][1]["gap"]["post_diff"] is True
+
+
 def test_p12_resolve_hash_renders_action_packages_as_semantic_tree(monkeypatch):
     monkeypatch.setattr(loop, "_skill_registry", registry())
     architect_skill = registry().resolve_command("architect")
