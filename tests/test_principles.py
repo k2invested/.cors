@@ -611,6 +611,8 @@ P6_CASES += [
     ("resolve_entity_top_rate_injects_business_context", lambda: "Top Rate Estates LTD" in loop._resolve_entity([skill("Top Rate Estates LTD").hash], registry(), Trajectory())),
     ("resolve_entity_clinton_injects_identity", lambda: "Cyber security developer" in loop._resolve_entity([skill("clinton").hash], registry(), Trajectory())),
     ("render_entity_includes_trigger", lambda: "trigger:" in loop._render_entity(skill("clinton"))),
+    ("render_chain_spec_exposes_field_semantics", lambda: "## Field Semantics" in loop._render_identity(skill("commitment_chain_construction_spec"))),
+    ("render_chain_spec_mentions_action_tree_ownership", lambda: "skills/actions/*.st belongs to reason_needed" in loop._render_identity(skill("commitment_chain_construction_spec"))),
 ]
 
 

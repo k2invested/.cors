@@ -2383,6 +2383,25 @@ def _render_identity(skill: Skill) -> str:
     except (json.JSONDecodeError, FileNotFoundError):
         return ""
 
+    def _render_section_value(lines: list[str], value, indent: int = 2):
+        prefix = " " * indent
+        if isinstance(value, dict):
+            for k, v in value.items():
+                if isinstance(v, (dict, list)):
+                    lines.append(f"{prefix}{k}:")
+                    _render_section_value(lines, v, indent + 2)
+                else:
+                    lines.append(f"{prefix}{k}: {v}")
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, (dict, list)):
+                    lines.append(f"{prefix}-")
+                    _render_section_value(lines, item, indent + 2)
+                else:
+                    lines.append(f"{prefix}- {item}")
+        else:
+            lines.append(f"{prefix}{value}")
+
     lines = [f"## Identity: {skill.display_name}:{skill.hash}"]
     try:
         rel_source = Path(skill.source).resolve().relative_to(CORS_ROOT)
@@ -2421,6 +2440,15 @@ def _render_identity(skill: Skill) -> str:
     if init.get("status") == "pending" and skill.steps:
         lines.append("## Initiation")
         lines.append(f"  {skill.steps[0].desc}")
+
+    rendered_sections = {"name", "desc", "trigger", "author", "refs", "steps", "identity", "preferences", "access_rules", "init"}
+    extra_sections = [
+        key for key in data.keys()
+        if key not in rendered_sections and data.get(key) not in ({}, [], "", None)
+    ]
+    for key in extra_sections:
+        lines.append(f"## {key.replace('_', ' ').title()}")
+        _render_section_value(lines, data[key], indent=2)
 
     return "\n".join(lines)
 
