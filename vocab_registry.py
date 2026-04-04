@@ -97,6 +97,7 @@ VOCABS: dict[str, VocabSpec] = {
         category="mutate",
         priority=40,
         tool="tools/code_exec.py",
+        post_observe="bot.log",
         desc="Execute a shell command to mutate state.",
     ),
     "message_needed": VocabSpec(

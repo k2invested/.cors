@@ -424,6 +424,7 @@ P3_CASES = [
     ("loop_deterministic_matches_registry", lambda: loop.DETERMINISTIC_VOCAB == vocab_registry_module.DETERMINISTIC_VOCAB),
     ("tool_map_hash_edit_routes_hash_manifest", lambda: loop.TOOL_MAP["hash_edit_needed"]["tool"] == "tools/hash_manifest.py"),
     ("tool_map_stitch_has_post_observe", lambda: loop.TOOL_MAP["stitch_needed"]["post_observe"] == "ui_output/"),
+    ("tool_map_command_has_log_post_observe", lambda: loop.TOOL_MAP["command_needed"]["post_observe"] == "bot.log"),
     ("priority_observe_before_mutate", lambda: vocab_priority("pattern_needed") < vocab_priority("content_needed")),
     ("priority_mutate_before_reason", lambda: vocab_priority("content_needed") < vocab_priority("reason_needed")),
     ("priority_reason_before_await", lambda: vocab_priority("reason_needed") < vocab_priority("await_needed")),
@@ -928,6 +929,9 @@ P10_CASES += [
     ) is False),
     ("reason_requires_workflow_authoring_for_new_actions", lambda: execution_engine_module._reason_requires_workflow_authoring(make_gap("Create a new research workflow in skills/actions/"), registry())),
     ("reason_skips_workflow_authoring_for_existing_target", lambda: execution_engine_module._reason_requires_workflow_authoring(make_gap("Update existing hash_edit workflow", content_refs=[skill("hash_edit").hash]), registry()) is False),
+    ("reason_target_path_prefers_desc_action_path_over_tool_ref", lambda: execution_engine_module._target_path_from_gap(make_gap("Create a new research workflow in skills/actions/research.st", content_refs=["tools/research_web.py"])) == "skills/actions/research.st"),
+    ("reason_collects_foundations_first_for_new_origination_without_refs", lambda: execution_engine_module._reason_should_collect_foundations_first(make_gap("Create a new research workflow in skills/actions/research.st", vocab="reason_needed"), registry()) is True),
+    ("reason_does_not_collect_foundations_first_when_foundations_are_explicit", lambda: execution_engine_module._reason_should_collect_foundations_first(make_gap("Create a new research workflow in skills/actions/research.st", vocab="reason_needed", content_refs=[skill("hash_edit").hash]), registry()) is False),
     ("chain_spec_injection_detects_research", lambda: execution_engine_module._should_inject_chain_spec_for_reason(make_gap("build a research workflow"))),
     ("chain_spec_injection_skips_simple_preference", lambda: execution_engine_module._should_inject_chain_spec_for_reason(make_gap("remember my favourite colour")) is False),
     ("entity_editor_coercion_strips_flow_fields", lambda: (lambda frame: ("root" not in frame and "phases" not in frame and "closure" not in frame and frame["artifact"]["kind"] == "entity"))(
@@ -1830,6 +1834,155 @@ def test_p12_inline_reprogramme_emits_postcondition_assessment_before_synth():
     assert postconditions[0].gaps[0].vocab == "hash_resolve_needed"
 
 
+def test_p12_command_needed_commit_postcondition_resolves_bot_log(monkeypatch):
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            return "pytest -q"
+
+    class Result:
+        stdout = "tests passed"
+        stderr = ""
+        returncode = 0
+
+    monkeypatch.setattr(execution_engine_module.subprocess, "run", lambda *args, **kwargs: Result())
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("run test suite", vocab="command_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda message, paths=None: ("abc123", None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: None,
+        extract_command=lambda raw: raw,
+        extract_written_path=lambda output: None,
+        is_reprogramme_intent=loop._is_reprogramme_intent,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=loop._emit_reason_skill,
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: ["bot log pending"],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert outcome.step_result.commit == "abc123"
+    postconditions = [step for step in traj.steps.values() if step.desc == "postcondition: run test suite"]
+    assert len(postconditions) == 1
+    assert postconditions[0].content_refs == ["bot.log"]
+    assert len(postconditions[0].gaps) == 1
+    assert postconditions[0].gaps[0].content_refs == ["bot.log"]
+    assert postconditions[0].gaps[0].vocab == "hash_resolve_needed"
+
+
+def test_p12_command_needed_without_commit_still_emits_log_postcondition(monkeypatch):
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            return "pytest -q"
+
+    class Result:
+        stdout = "tests passed"
+        stderr = ""
+        returncode = 0
+
+    monkeypatch.setattr(execution_engine_module.subprocess, "run", lambda *args, **kwargs: Result())
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("run test suite", vocab="command_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: None,
+        extract_command=lambda raw: raw,
+        extract_written_path=lambda output: None,
+        is_reprogramme_intent=loop._is_reprogramme_intent,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=loop._emit_reason_skill,
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert outcome.step_result.commit is None
+    assert outcome.step_result.desc == "executed: run test suite"
+    postconditions = [step for step in traj.steps.values() if step.desc == "postcondition: run test suite"]
+    assert len(postconditions) == 1
+    assert postconditions[0].content_refs == ["bot.log"]
+    assert len(postconditions[0].gaps) == 1
+    assert postconditions[0].gaps[0].content_refs == ["bot.log"]
+    assert postconditions[0].gaps[0].vocab == "hash_resolve_needed"
+
+
 def test_p12_hash_resolve_runs_in_deterministic_branch_and_can_surface_follow_on_mutation():
     class FakeSession:
         def __init__(self):
@@ -2179,6 +2332,167 @@ def test_p12_reason_needed_runs_inline_and_emits_child_gaps():
     assert compiler.ledger.stack[-1].gap.vocab == "content_needed"
 
 
+def test_p12_reason_needed_prompt_says_collect_foundations_before_new_workflow_write():
+    class FakeSession:
+        def __init__(self):
+            self.calls = 0
+            self.injected = []
+            self.prompts = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            self.calls += 1
+            self.prompts.append(user_content or "")
+            return "Inline reasoning complete.\n{}"
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap(
+        "Create a new research workflow in skills/actions/research.st triggered by research_needed.",
+        vocab="reason_needed",
+    )
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: {},
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: None,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        render_session_context=lambda trajectory, registry_obj, user_message, active_chain_id=None, active_gap=None: "## Session Context\nactive session",
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert session.prompts
+    assert any("If the committed foundations are not explicit yet, do not return semantic_skeleton.v1 yet." in prompt for prompt in session.prompts)
+
+
+def test_p12_reason_needed_keeps_foundation_judgment_inside_first_iteration():
+    class FakeSession:
+        def __init__(self):
+            self.calls = 0
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            self.calls += 1
+            return json.dumps({
+                "version": "semantic_skeleton.v1",
+                "artifact": {"kind": "action", "protected_kind": "action", "lineage": "research", "version_strategy": "hash_pinned"},
+                "name": "research",
+                "desc": "Research workflow",
+                "trigger": "on_vocab:research_needed",
+                "refs": {},
+                "root": "phase_root",
+                "phases": [
+                    {
+                        "id": "phase_root",
+                        "kind": "observe",
+                        "goal": "Observe request",
+                        "action": "observe_request",
+                        "gap_template": {"desc": "Observe request", "content_refs": [], "step_refs": []},
+                        "manifestation": {"runtime_vocab": "hash_resolve_needed"},
+                        "allowed_vocab": ["hash_resolve_needed"],
+                    }
+                ],
+                "closure": {"success": {}},
+            })
+
+    tool_calls: list[tuple[str, dict]] = []
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap(
+        "Create a new research workflow in skills/actions/research.st triggered by research_needed.",
+        vocab="reason_needed",
+    )
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: (tool_calls.append((tool, params)) or ("Written: /Users/k2invested/Desktop/cors/skills/actions/research.st", 0)),
+        auto_commit=lambda message, paths=None: ("abc123", None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        render_session_context=lambda trajectory, registry_obj, user_message, active_chain_id=None, active_gap=None: "## Session Context\nactive session",
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert outcome.step_result.desc.startswith("reason actualized workflow:")
+    assert outcome.step_result.commit == "abc123"
+    assert len(tool_calls) == 1
+    assert tool_calls[0][0] == "tools/st_builder.py"
+
+
 def test_p12_reason_needed_cannot_surface_reprogramme_for_action_tree():
     class FakeSession:
         def __init__(self):
@@ -2473,11 +2787,27 @@ def test_p12_turn_outcome_facts_treat_exhausted_reason_loop_as_unconfirmed():
         "attempted_mutations": ["reason_needed: create skills/actions/research.st"],
         "rogue_failures": [],
         "exhausted_reason_loops": ["reason loop: exhausted after 5 attempts: create skills/actions/research.st"],
+        "persisted_frontiers": [],
     })
 
     assert "Exhausted controller loops:" in rendered
     assert "attempted but not validated or persisted" in rendered
     assert "ready, live, built, or complete" in rendered
+
+
+def test_p12_turn_outcome_facts_treat_persisted_frontier_as_unresolved():
+    rendered = loop._render_turn_outcome_facts({
+        "commits": [],
+        "successful_mutations": [],
+        "attempted_mutations": ["reason_needed: create skills/actions/research.st"],
+        "rogue_failures": [],
+        "exhausted_reason_loops": [],
+        "persisted_frontiers": ["forced frontier: create skills/actions/research.st"],
+    })
+
+    assert "Persisted unresolved frontiers:" in rendered
+    assert "still structurally invalid, unresolved, exhausted, or persisted for a later turn" in rendered
+    assert "instead of saying it is ready to be built" in rendered
 
 
 def test_p12_hash_resolve_is_not_observation_only_auto_close():
@@ -2544,6 +2874,7 @@ def test_p12_reason_needed_can_actualize_new_action_skeleton():
     gap = make_gap(
         "Create a new workflow file at skills/actions/research.st that implements a research workflow triggered by the vocab research_needed.",
         vocab="reason_needed",
+        content_refs=["tools/research_web.py"],
     )
     entry = SimpleNamespace(gap=gap, chain_id="chain1")
     session = FakeSession()
@@ -2647,6 +2978,7 @@ def test_p12_reason_needed_can_surface_next_layer_after_successful_layer_commit(
     gap = make_gap(
         "Create a new workflow file at skills/actions/research.st that implements a research workflow triggered by the vocab research_needed.",
         vocab="reason_needed",
+        content_refs=["tools/research_web.py"],
     )
     entry = SimpleNamespace(gap=gap, chain_id="chain1")
     session = FakeSession()
@@ -2782,6 +3114,7 @@ def test_p12_reason_needed_retries_inside_reason_loop_until_success():
     gap = make_gap(
         "Create a new workflow file at skills/actions/research.st that implements a research workflow triggered by the vocab research_needed.",
         vocab="reason_needed",
+        content_refs=["tools/research_web.py"],
     )
     origin_step = make_step("origin", gaps=[gap])
     traj.append(origin_step)
@@ -2869,6 +3202,113 @@ def test_p12_reason_needed_retries_inside_reason_loop_until_success():
     assert chain.stable_id is not None
 
 
+def test_p12_reason_needed_retry_gap_increments_visible_attempt_counter():
+    class FakeSession:
+        def __init__(self):
+            self.calls = 0
+
+        def inject(self, content: str, role: str = "user"):
+            pass
+
+        def call(self, user_content: str = None) -> str:
+            self.calls += 1
+            return json.dumps({
+                "version": "semantic_skeleton.v1",
+                "artifact": {"kind": "action", "protected_kind": "action", "lineage": "research", "version_strategy": "hash_pinned"},
+                "name": "research",
+                "desc": "Research workflow",
+                "trigger": "on_vocab:research_needed",
+                "refs": {},
+                "root": "phase_root",
+                "phases": [
+                    {
+                        "id": "phase_root",
+                        "kind": "observe",
+                        "goal": "Observe request",
+                        "action": "observe_request",
+                        "gap_template": {"desc": "Observe request", "content_refs": [], "step_refs": []},
+                        "manifestation": {"runtime_vocab": "hash_resolve_needed"},
+                        "allowed_vocab": ["hash_resolve_needed"],
+                    }
+                ],
+                "closure": {"success": {}},
+            })
+
+    traj = Trajectory()
+    gap = make_gap(
+        "Create a new workflow file at skills/actions/research.st that implements a research workflow triggered by the vocab research_needed.",
+        vocab="reason_needed",
+        content_refs=["tools/research_web.py"],
+    )
+    origin_step = make_step("origin", gaps=[gap])
+    traj.append(origin_step)
+    chain = Chain(hash="chain1", origin_gap=gap.hash, steps=[origin_step.hash])
+    traj.add_chain(chain)
+    compiler = Compiler(traj)
+    compiler.active_chain = chain
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("Validation errors:\n- L0 executable spine: action flow must include a terminal phase", 1),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=loop._is_reprogramme_intent,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=loop._emit_reason_skill,
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        render_session_context=lambda trajectory, registry_obj, user_message, active_chain_id=None, active_gap=None: "## Session Context\nactive session",
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    first = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+    assert first.step_result is not None
+    assert first.step_result.gaps[0].desc.find("(1/5)") != -1
+
+    next_entry, next_signal = compiler.next()
+    assert next_entry is not None
+    second = execution_engine_module.execute_iteration(
+        entry=next_entry,
+        signal=next_signal,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+    assert second.step_result is not None
+    assert second.step_result.gaps[0].desc.find("(2/5)") != -1
+
+
 def test_p12_reason_needed_exhausts_reason_loop_after_five_attempts():
     class FakeSession:
         def __init__(self):
@@ -2905,6 +3345,7 @@ def test_p12_reason_needed_exhausts_reason_loop_after_five_attempts():
     gap = make_gap(
         "Create a new workflow file at skills/actions/research.st that implements a research workflow triggered by the vocab research_needed.",
         vocab="reason_needed",
+        content_refs=["tools/research_web.py"],
     )
     origin_step = make_step("origin", gaps=[gap])
     traj.append(origin_step)
@@ -2988,6 +3429,14 @@ def test_p12_reason_needed_exhausts_reason_loop_after_five_attempts():
     assert session.calls == 5
     assert chain.loop_state["status"] == "exhausted"
     assert chain.stable_id is not None
+
+
+def test_p12_chain_log_label_prefers_reason_loop_stable_id():
+    chain = Chain(hash="abcdef123456", origin_gap="gap1", steps=[])
+    chain.chain_kind = "reason_loop"
+    chain.stable_id = "stable123456"
+
+    assert execution_engine_module._chain_log_label(chain) == "stable12"
 
 
 def test_p12_reason_normalizes_trigger_to_manual_when_next_layer_remains():
@@ -3319,6 +3768,7 @@ def test_p12_reason_authored_action_strips_existing_ref_before_actualization():
     gap = make_gap(
         "Create a new workflow file at skills/actions/research.st that implements a research workflow triggered by the vocab research_needed.",
         vocab="reason_needed",
+        content_refs=["tools/research_web.py"],
     )
     entry = SimpleNamespace(gap=gap, chain_id="chain1")
     session = FakeSession()
@@ -3882,6 +4332,30 @@ def test_p12_resolve_hash_renders_action_packages_as_semantic_tree(monkeypatch):
     assert "name: architect" in rendered
     assert "action:resolve_source_and_docs" in rendered
     assert "transitions: on_close->" in rendered
+
+
+def test_p12_resolve_hash_renders_log_tail_for_local_log(monkeypatch, tmp_path):
+    log_path = tmp_path / "bot.log"
+    lines = [f"line {i}" for i in range(150)]
+    log_path.write_text("\n".join(lines))
+
+    monkeypatch.setattr(loop, "CORS_ROOT", tmp_path)
+
+    rendered = loop.resolve_hash("bot.log", Trajectory())
+
+    assert rendered is not None
+    assert rendered.startswith("log_tail:bot.log")
+    assert "showing tail;" in rendered
+    assert "line 149" in rendered
+    assert "line 0" not in rendered
+
+
+def test_p12_render_log_resolution_caps_chars():
+    rendered = loop._render_log_resolution("x" * (loop.LOG_RESOLVE_MAX_CHARS + 500), source_ref="bot.log")
+
+    assert rendered.startswith("log_tail:bot.log")
+    assert len(rendered) < loop.LOG_RESOLVE_MAX_CHARS + 200
+    assert "chars<=" in rendered
 
 
 def test_p12_existing_action_update_does_not_require_reason():

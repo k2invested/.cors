@@ -78,7 +78,7 @@ def _record_step(step_result: Step, *, entry: Any, trajectory: Any, compiler: An
             if pc.hash != (entry.chain_id if entry else None):
                 trajectory.append_to_passive_chain(pc.hash, step_result)
                 passive_appended = True
-                print(f"  → appended to passive chain:{pc.hash[:8]}")
+                print(f"  → appended to passive chain:{_chain_log_label(pc)}")
                 break
         if passive_appended:
             break
@@ -87,6 +87,34 @@ def _record_step(step_result: Step, *, entry: Any, trajectory: Any, compiler: An
         trajectory.append(step_result)
     compiler.add_step_to_chain(step_result.hash)
     print(f"  step:{step_result.hash}" + (f" commit:{step_result.commit}" if step_result.commit else ""))
+
+
+def _chain_log_label(chain: Any | None) -> str:
+    if chain is None:
+        return "unknown"
+    if getattr(chain, "chain_kind", None) == "reason_loop" and getattr(chain, "stable_id", None):
+        return str(chain.stable_id)[:8]
+    return str(getattr(chain, "hash", "unknown"))[:8]
+
+
+def _post_observe_resolution(
+    *,
+    vocab: str | None,
+    tool_conf: dict | Any,
+    commit_sha: str | None,
+    hooks: ExecutionHooks,
+    config: ExecutionConfig,
+) -> tuple[list[str], str] | tuple[None, None]:
+    post_observe = tool_conf.get("post_observe") if isinstance(tool_conf, dict) else None
+    if isinstance(post_observe, str) and post_observe.endswith(".log"):
+        return [post_observe], f"observe {post_observe}: {post_observe}"
+    if post_observe and commit_sha:
+        tree_files = hooks.git(["ls-tree", "-r", "--name-only", commit_sha, post_observe], str(config.cors_root))
+        targeted_refs = [f"{commit_sha}:{f}" for f in tree_files.split("\n") if f.strip()]
+        return targeted_refs or [commit_sha], f"observe {post_observe}: {', '.join(targeted_refs or [commit_sha])}"
+    if commit_sha:
+        return [commit_sha], f"observe commit:{commit_sha}"
+    return None, None
 
 
 def _reason_next_layer_gap(intent: dict | None, *, step_hash: str, authored_refs: list[str], current_turn: int) -> Gap | None:
@@ -414,6 +442,46 @@ def _reason_requires_workflow_authoring(gap: Gap, registry: Any) -> bool:
     return explicit_new and workflowish
 
 
+def _reason_should_collect_foundations_first(gap: Gap, registry: Any) -> bool:
+    lowered = gap.desc.lower()
+    if any(token in lowered for token in (
+        "repair structural target",
+        "after validator error",
+        "corrected semantic_skeleton",
+        "correct the phase",
+        "fix the phase",
+        "retry actualization",
+    )):
+        return False
+    target_path = _target_path_from_gap(gap)
+    for ref in gap.content_refs:
+        candidate = _structural_ref_candidate(str(ref))
+        if target_path and candidate == target_path:
+            continue
+        if "/" in candidate:
+            return False
+        if registry.resolve(str(ref)) is not None:
+            return False
+        if re.fullmatch(r"[0-9a-f]{12,64}", str(ref)):
+            return False
+    return True
+
+
+def _reason_has_explicit_foundations(gap: Gap, registry: Any) -> bool:
+    target_path = _target_path_from_gap(gap)
+    for ref in gap.content_refs:
+        candidate = _structural_ref_candidate(str(ref))
+        if target_path and candidate == target_path:
+            continue
+        if candidate.startswith("tools/") or candidate.startswith("skills/actions/"):
+            return True
+        if registry.resolve(str(ref)) is not None:
+            return True
+        if re.fullmatch(r"[0-9a-f]{12,64}", str(ref)):
+            return True
+    return False
+
+
 def _inject_chain_spec(
     *,
     session: Any,
@@ -472,14 +540,14 @@ REASON_LOOP_MAX_ATTEMPTS = 5
 
 
 def _target_path_from_gap(gap: Gap) -> str | None:
-    for ref in gap.content_refs:
-        candidate = _structural_ref_candidate(str(ref))
-        if "/" in candidate and candidate.endswith((".st", ".py")):
-            return candidate
     lowered = gap.desc.lower()
     match = re.search(r"(skills/actions/[a-z0-9_]+\.st|tools/[a-z0-9_]+\.py)", lowered)
     if match:
         return match.group(1)
+    for ref in gap.content_refs:
+        candidate = _structural_ref_candidate(str(ref))
+        if "/" in candidate and candidate.endswith((".st", ".py")):
+            return candidate
     return None
 
 
@@ -586,6 +654,22 @@ def _reason_loop_attempt_count(chain: Any | None, trajectory: Any) -> int:
         if step and step.desc.startswith("reason loop attempt"):
             count += 1
     return count
+
+
+def _reason_loop_next_attempt(*, controller_chain: Any | None, trajectory: Any, gap: Gap) -> int:
+    desc = gap.desc or ""
+    match = re.search(r"after validator error \((\d+)/(\d+)\)", desc.lower())
+    if match:
+        try:
+            return int(match.group(1)) + 1
+        except ValueError:
+            pass
+    if controller_chain is not None:
+        loop_state = dict(getattr(controller_chain, "loop_state", {}) or {})
+        recorded = loop_state.get("attempt_count", 0)
+        counted = _reason_loop_attempt_count(controller_chain, trajectory)
+        return max(int(recorded or 0), counted) + 1
+    return 1
 
 
 def _make_reason_loop_follow_on_gap(
@@ -1078,6 +1162,7 @@ def execute_iteration(
         if executed:
             commit_paths = [written_path] if written_path else None
             commit_sha, on_reject = hooks.auto_commit(f"step: {gap.desc[:50]}", paths=commit_paths)
+            tool_conf = config.tool_map.get(vocab, {})
             if commit_sha:
                 print(f"  → committed: {commit_sha}")
                 step_result = Step.create(
@@ -1088,17 +1173,13 @@ def execute_iteration(
                     chain_id=entry.chain_id,
                 )
                 compiler.record_execution(vocab, True)
-
-                tool_conf = config.tool_map.get(vocab, {})
-                post_observe = tool_conf.get("post_observe") if isinstance(tool_conf, dict) else None
-                if post_observe:
-                    tree_files = hooks.git(["ls-tree", "-r", "--name-only", commit_sha, post_observe], str(config.cors_root))
-                    targeted_refs = [f"{commit_sha}:{f}" for f in tree_files.split("\n") if f.strip()]
-                    postcond_refs = targeted_refs or [commit_sha]
-                    postcond_desc = f"observe {post_observe}: {', '.join(postcond_refs)}"
-                else:
-                    postcond_refs = [commit_sha]
-                    postcond_desc = f"observe commit:{commit_sha}"
+                postcond_refs, postcond_desc = _post_observe_resolution(
+                    vocab=vocab,
+                    tool_conf=tool_conf,
+                    commit_sha=commit_sha,
+                    hooks=hooks,
+                    config=config,
+                )
 
                 postcond = Gap.create(
                     desc=postcond_desc,
@@ -1195,12 +1276,37 @@ def execute_iteration(
 
                 session.inject(f"## Command output (no mutation)\n{output}")
                 step_result = Step.create(
-                    desc=f"observed: {gap.desc}",
+                    desc=f"executed: {gap.desc}",
                     step_refs=[origin_step.hash],
                     content_refs=gap.content_refs,
                     chain_id=entry.chain_id,
                 )
                 compiler.record_execution(vocab, False)
+                postcond_refs, postcond_desc = _post_observe_resolution(
+                    vocab=vocab,
+                    tool_conf=tool_conf,
+                    commit_sha=None,
+                    hooks=hooks,
+                    config=config,
+                )
+                if postcond_refs and postcond_desc:
+                    postcond = Gap.create(
+                        desc=postcond_desc,
+                        content_refs=postcond_refs,
+                        step_refs=[step_result.hash],
+                    )
+                    postcond.scores = Epistemic(relevance=1.0, confidence=1.0, grounded=0.0)
+                    postcond.vocab = "hash_resolve_needed"
+                    postcond_step = Step.create(
+                        desc=f"postcondition: {gap.desc}",
+                        step_refs=[step_result.hash],
+                        content_refs=postcond_refs,
+                        gaps=[postcond],
+                        chain_id=entry.chain_id,
+                    )
+                    trajectory.append(postcond_step)
+                    compiler.emit(postcond_step)
+                    print(f"  → postcondition gap injected: hash_resolve_needed → {postcond_refs}")
                 compiler.resolve_current_gap(gap.hash)
         else:
             compiler.resolve_current_gap(gap.hash)
@@ -1310,6 +1416,7 @@ def execute_iteration(
         if resolved_data:
             session.inject(f"## Context\n{resolved_data}")
         if author_actions:
+            collect_foundations_first = _reason_should_collect_foundations_first(gap, registry)
             session.inject(f"## Step Network\n{hooks.render_step_network(registry)}")
             session.inject(
                 foundations.render_action_foundations(
@@ -1343,8 +1450,11 @@ def execute_iteration(
                 "Tool foundations do not need kernel vocab entries. They may be referenced later by committed blob hash.\n"
                 "If a higher-order layer is still needed after this layer, do not claim the final public on_vocab trigger yet. Lower-order layers should usually stay manual/internal; the highest-order completed workflow owns the public trigger.\n"
                 "If this layer is complete but a higher-order layer is still needed, include next_layer_desc so the next reason_needed iteration can build on the committed layer hash.\n"
+                f"{'For new workflow origination, do not attempt the .st write immediately if the committed foundations are not explicit yet. First identify which tools, scripts, workflows, or extracted chains already exist and which missing foundations must be authored before the .st layer.\n' if collect_foundations_first else ''}"
                 f"{json.dumps(frame, indent=2)}"
             )
+        else:
+            collect_foundations_first = False
         controller_chain = _ensure_reason_loop_chain(
             trajectory=trajectory,
             chain_id=entry.chain_id if author_actions else None,
@@ -1352,7 +1462,11 @@ def execute_iteration(
         )
         attempt = 1
         if controller_chain is not None:
-            attempt = _reason_loop_attempt_count(controller_chain, trajectory) + 1
+            attempt = _reason_loop_next_attempt(
+                controller_chain=controller_chain,
+                trajectory=trajectory,
+                gap=gap,
+            )
             controller_chain.loop_state["attempt_count"] = attempt
             controller_chain.loop_state.setdefault("max_attempts", REASON_LOOP_MAX_ATTEMPTS)
             controller_chain.loop_state["status"] = "active"
@@ -1376,6 +1490,7 @@ def execute_iteration(
             f"- {'If this is new skills/actions/*.st origination, you own workflow authoring. Return one concrete semantic_skeleton.v1 action layer and actualize it now; do not emit another generic create/write file gap.' if author_actions else 'If new reusable workflow structure is needed, author the concrete creation/update gap(s) needed to actualize it.'}\n"
             "- If an existing workflow should be triggered, emit the activation gap(s) for that path.\n"
             f"{'- For new action/workflow packages, return semantic_skeleton.v1 JSON only when the current .st layer is actually ready to be authored.\n- If a foundational tool is missing, emit the concrete tool-authoring gap(s) first: content_needed for a new tools/*.py file, script_edit_needed or hash_edit_needed for an existing tool.\n- Treat action packages/codons, extracted chains, and tool scripts as one hash-native action environment.\n- surface=semantic_tree means an embeddable compositional unit. surface=described_blob means a foundational executable/data block.\n- Name/vocab activation uses the canonical default gap contract. Hash embedding may specialize manifestation only through an explicit embedding.gap_override.\n- Reference action/codon packages by committed skill hash, extracted chains by chain hash, and tool foundations by committed blob hash.\n- Tools with no classifier vocab are still lawful foundations; do not try to invent kernel vocab entries for them.\n- Author one layer per iteration. Do not try to manifest the full multi-layer workflow in one pass.\n- Embedded workflows, action packages, extracted chains, or tool foundations must already exist before you embed them.\n- If a higher-order layer is still needed after this layer commits, include next_layer_desc and optionally next_layer_content_refs using only existing committed hashes.\n- If a higher-order layer is still needed, keep trigger=manual on the current layer; the final public on_vocab trigger belongs on the highest-order completed workflow.\n- This controller is a visible chain. If authoring fails, surface the corrected reason_needed follow-on gap for the same target instead of ending in prose.\n' if author_actions else ''}"
+            f"{'- If the committed foundations are not explicit yet, do not return semantic_skeleton.v1 yet. First surface the observation/judgment gaps needed to identify which tools, scripts, workflows, or chains already exist and which missing foundations must be authored before the .st layer.\n' if collect_foundations_first else ''}"
             "Keep reasoning stateful and current-turn; do not defer by scheduling background work unless a later gap explicitly does so."
         )
         intent = hooks.extract_json(raw)

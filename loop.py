@@ -67,6 +67,8 @@ CHAINS_DIR   = CORS_ROOT / "chains"
 MAX_ITERATIONS = 30
 TRAJECTORY_WINDOW = 10   # how many recent chains to render for LLM
 _turn_counter = 0        # increments each turn — used for cross-turn gap threshold
+LOG_RESOLVE_MAX_LINES = 120
+LOG_RESOLVE_MAX_CHARS = 12000
 
 load_env()
 
@@ -631,7 +633,9 @@ def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
         return me.render_chain_package(package, ref)
 
     repo_path = CORS_ROOT / ref
-    if ("/" in ref or ref.endswith(".st")) and repo_path.exists() and repo_path.is_file():
+    if ("/" in ref or ref.endswith((".st", ".log"))) and repo_path.exists() and repo_path.is_file():
+        if repo_path.suffix == ".log":
+            return _render_log_resolution(repo_path.read_text(errors="replace"), source_ref=ref)
         content = git_show(f"HEAD:{ref}")
         if not content.startswith("(unresolvable"):
             rendered = _render_structured_content(content, source_ref=ref)
@@ -640,6 +644,8 @@ def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
     # Try git object
     content = git_show(ref)
     if not content.startswith("(unresolvable"):
+        if ref.endswith(".log") or re.search(r":[^:]+\.log$", ref):
+            return _render_log_resolution(content, source_ref=ref)
         rendered = _render_structured_content(content, source_ref=ref)
         return rendered or content
 
@@ -741,6 +747,27 @@ def _render_structured_content(content: str, *, source_ref: str) -> str | None:
     if any(key in doc for key in ("root", "phases", "steps", "artifact", "identity", "preferences")):
         return me.render_semantic_tree(me.build_semantic_tree(doc, source_type="resolved_package", source_ref=source_ref))
     return None
+
+
+def _render_log_resolution(content: str, *, source_ref: str) -> str:
+    lines = content.splitlines()
+    total_lines = len(lines)
+    tail_lines = lines[-LOG_RESOLVE_MAX_LINES:]
+    body = "\n".join(tail_lines)
+    truncated_by_lines = total_lines > len(tail_lines)
+    truncated_by_chars = len(body) > LOG_RESOLVE_MAX_CHARS
+    if truncated_by_chars:
+        body = body[-LOG_RESOLVE_MAX_CHARS:]
+    header = [f"log_tail:{source_ref}"]
+    if truncated_by_lines or truncated_by_chars:
+        header.append(
+            f"(showing tail; lines={min(total_lines, LOG_RESOLVE_MAX_LINES)}/{total_lines}"
+            f", chars<={LOG_RESOLVE_MAX_CHARS})"
+        )
+    if not body.strip():
+        header.append("(empty log)")
+        return "\n".join(header)
+    return "\n".join(header + [body])
 
 
 def _render_step_tree(step, trajectory: Trajectory, depth: int = 0,
@@ -1559,6 +1586,7 @@ def run_turn(
         "attempted_mutations": [],
         "rogue_failures": [],
         "exhausted_reason_loops": [],
+        "persisted_frontiers": [],
     }
     clarify_frontier_step: Step | None = None
     if pre_bootstrap_step and pre_bootstrap_step.commit:
@@ -1701,6 +1729,7 @@ def run_turn(
         forced_step = _persist_forced_synth_frontier(trajectory, compiler, origin_step, current_turn)
         if forced_step:
             print(f"  → forced frontier persisted with {len(forced_step.gaps)} gap(s)")
+            turn_facts["persisted_frontiers"].append(forced_step.desc)
 
     # ── 6. SYNTHESIS ─────────────────────────────────────────────────
 
@@ -2585,6 +2614,7 @@ def _render_turn_outcome_facts(turn_facts: dict[str, list[str]]) -> str:
     attempted = turn_facts.get("attempted_mutations", [])
     rogue_failures = turn_facts.get("rogue_failures", [])
     exhausted = turn_facts.get("exhausted_reason_loops", [])
+    persisted = turn_facts.get("persisted_frontiers", [])
 
     lines = ["## Turn Outcome Facts"]
     lines.append("Successful commits:")
@@ -2597,6 +2627,8 @@ def _render_turn_outcome_facts(turn_facts: dict[str, list[str]]) -> str:
     lines.extend(f"- {item}" for item in rogue_failures) if rogue_failures else lines.append("- none")
     lines.append("Exhausted controller loops:")
     lines.extend(f"- {item}" for item in exhausted) if exhausted else lines.append("- none")
+    lines.append("Persisted unresolved frontiers:")
+    lines.extend(f"- {item}" for item in persisted) if persisted else lines.append("- none")
     lines.append(
         "Rule: only say something was changed, removed, updated, saved, or persisted if Successful commits or Successful mutations above prove it."
     )
@@ -2607,12 +2639,15 @@ def _render_turn_outcome_facts(turn_facts: dict[str, list[str]]) -> str:
         lines.append(
             "Do not say 'I'll update', 'I will proceed', or any equivalent future-write promise when no mutation succeeded this turn."
         )
-    if attempted or rogue_failures or exhausted:
+    if attempted or rogue_failures or exhausted or persisted:
         lines.append(
             "If authoring or actualization was attempted but failed validation, manifestation, or persistence, say it was attempted but not validated or persisted."
         )
         lines.append(
             "Do not describe a workflow, file, or structure as ready, live, built, or complete unless a successful commit above proves it."
+        )
+        lines.append(
+            "Describe repeated structural failure directly as still structurally invalid, unresolved, exhausted, or persisted for a later turn instead of saying it is ready to be built."
         )
     return "\n".join(lines)
 
