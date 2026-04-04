@@ -1,6 +1,6 @@
 {
   "name": "commitment_chain_construction_spec",
-  "desc": "Semantic state for the commitment chain construction specification: when planning, write the commitment chain as a semantic tree following the chain construction spec. Each step encodes full gap configuration. Embed existing .st files by placing their hash in a step's content_refs. Embed await_needed after any background trigger. Write new .st embeddings inline as steps with all 7 gap axes specified. Build layers back-to-front: leaf chains first, then mid-level chains that adopt them, then top-level orchestration. The resulting tree is directly extractable to .st via chain_to_st. If refining: hash_edit updates the reasoning chain. If manifesting: compose agent trigger + inject commitment gaps + trailing commit_needed. If judging persistence: articulate whether the semantic update is stable enough to persist and surface reprogramme_needed only when warranted. If heartbeat: emit close/revisit/refine gaps. If reorienting: reconstruct the rejected chain with corrections.",
+  "desc": "Semantic state for the commitment chain construction specification: build one chain at a time as a semantic tree. The default authoring move is step_chain_append.v1: append one step with full gap configuration, manifestation, allowed vocab, relevance, post_diff, and optional embedding; then let the builder compile the cumulative chain, validate it against system laws, and re-render the accepted chain as a semantic tree before the next append. Build higher-order layers inside out / back to front: lower-order chains and tool foundations must already exist before they are embedded. Embedding is strategic, not default: use it when a reusable grouped sub-flow is needed, especially post-mutation observation or self-review bundles. Multi-chain systems may still be built, but consecutively, never by manifesting multiple unfinished layers in one pass.",
   "trigger": "manual",
   "author": "agent",
   "refs": {
@@ -12,21 +12,24 @@
   },
   "identity": {
     "purpose": "Defines the canonical structure and rules for constructing commitment chains as semantic trees, ensuring all planning, refinement, manifestation, and persistence steps are composable, auditable, and hash-native.",
-    "authoring_note": "When reason_needed is authoring a semantic_skeleton.v1 action package, this specification is the executable contract. Treat it as the field-by-field meaning of the skeleton, not as loose design guidance."
+    "authoring_note": "When reason_needed is authoring or repairing workflow structure, this specification is the executable contract. Default to step_chain_append.v1 for incremental authoring. Use step_chain.v1 for a complete simple chain and semantic_skeleton.v1 only when explicit manual spine control is truly necessary."
   },
   "constraints": {
     "must_follow_chain_spec": true,
     "must_embed_existing_st_by_hash": true,
     "must_build_layers_back_to_front": true,
     "must_distinguish_runtime_effective_from_descriptive_fields": true,
-    "must_align_transitions_root_and_closure": true
+    "must_align_transitions_root_and_closure": true,
+    "must_author_one_step_per_iteration": true
   },
   "scope": "All planning, refinement, manifestation, and persistence flows that require commitment chain construction or semantic tree extraction.",
   "field_semantics": {
     "artifact.kind": "Declares whether the package is entity, action, or hybrid. This determines who owns authoring and persistence. New skills/actions/*.st packages should be authored under reason_needed as action or hybrid, not reprogramme_needed.",
     "trigger": "How the package activates: command:X, on_vocab:X, on_contact:X, or manual. Public trigger vocab belongs to the highest-order completed workflow, not an unfinished lower-order layer. Lower layers should usually stay manual/internal until the final composition exists.",
     "refs": "Named handles for existing foundations. Treat action/codon .st packages and tool scripts as one hash-native action environment: committed .st packages by skill hash, tool files by committed blob hash. Semantic-tree hashes are embeddable compositional units; described-blob hashes are foundational executable/data blocks.",
-    "root": "Entry phase id. It must point to a real phase.id. If root does not match a real phase id, the package is structurally incoherent.",
+    "step_chain_append.v1": "Incremental authoring surface. Append one step at a time to the current working chain, validate the compiled cumulative chain, then re-render that accepted chain as a semantic tree before the next iteration.",
+    "step_chain.v1": "Default simple chain authoring surface when one ordered chain is enough. The author still supplies real step semantics, but the builder supplies root, default transitions, terminal, and closure.",
+    "root": "Entry phase id for the compiled cumulative chain. The builder derives this automatically for step_chain.v1 and step_chain_append.v1.",
     "phases[*].id": "Canonical phase identifier. Transitions and closure point at these ids. They must be unique.",
     "phases[*].kind": "Runtime role of the phase: observe, reason, verify, clarify, await, higher_order, terminal, etc. This affects allowed vocab and manifestation defaults.",
     "phases[*].goal": "What this phase is trying to achieve. This is the semantic obligation represented by the phase.",
@@ -64,11 +67,11 @@
     "warning": "Nested freeform descriptive structures can be useful documentation, but runtime behavior is governed primarily by the fields above."
   },
   "authoring_levels": {
-    "protocol": "Author exactly one layer per iteration. Validate it. If valid, actualize and commit it before attempting a higher-order layer. Parent layers may only embed already-existing committed child layers or committed tool blob hashes.",
-    "level_0_executable_spine": "Start with the smallest valid action flow: name, trigger, artifact.kind, root, one actionable phase, one terminal phase, and closure aligned to that terminal. No nested phases[*].steps. No decorative schema.",
-    "level_1_control_semantics": "Add runtime-effective phase configuration only after L0 is coherent: manifestation, generation, allowed_vocab, and transitions. Control flow must be true in transitions, not only in prose.",
-    "level_2_capability_expansion": "Add extra phases, clarify branches, verification, deeper branching, or embedding of lower-order committed layers only after L1 is valid and runtime-effective. Foundational Python tools under tools/*.py are lawful lower-order layers and may need to be authored before the .st layer that embeds them.",
-    "level_3_descriptive_enrichment": "Only after L0/L1/L2 are coherent should you add input_schema, output_schema, extra tool declarations, or richer descriptive metadata. Enrichment without runtime linkage is validator-worthy drift.",
+    "protocol": "Author exactly one step append per iteration by default. Validate the compiled cumulative chain. If valid, keep building or actualize it. If invalid, repair the next append against the current working semantic tree instead of re-authoring the whole workflow.",
+    "level_0_executable_spine": "Start with the smallest valid chain that does real work. In incremental mode, the author supplies the meaningful step and the builder supplies root, terminal, closure, and default ordered transitions.",
+    "level_1_control_semantics": "Each authored step must still carry runtime-effective semantics: gap_template, manifestation, allowed_vocab, relevance, post_diff, and optional embedding. Runtime behavior must be true in those fields, not only in prose.",
+    "level_2_capability_expansion": "Add extra steps, verification, branching, or embedding of lower-order committed layers only after the current cumulative chain is valid. Foundational Python tools under tools/*.py are lawful lower-order layers and may need to be authored before the .st layer that embeds them.",
+    "level_3_descriptive_enrichment": "Only after the cumulative chain is coherent should you add extra descriptive metadata. Enrichment without runtime linkage is validator-worthy drift.",
     "inside_out_rule": "Complex workflows must be built inside out / back to front. Foundational lower-order chains, Python tools, or vocab-mapped tools must already exist before a higher-order flow embeds them.",
     "tool_foundations": "If a required tool script does not exist yet, reason_needed should first surface the concrete tool-authoring gap (content_needed for a new tool, script_edit_needed/hash_edit_needed for an existing tool), commit that layer, and only then author the higher-order .st package that references it.",
     "public_trigger_rule": "If a higher-order layer still remains, the current layer should not claim the final public on_vocab trigger. The public trigger is a deterministic activation field attached to the highest-order completed workflow."

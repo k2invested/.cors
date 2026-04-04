@@ -536,7 +536,7 @@ def _inferred_action_name_from_gap(gap: Gap) -> str:
     return "new_action"
 
 
-REASON_LOOP_MAX_ATTEMPTS = 5
+REASON_LOOP_MAX_ATTEMPTS = 10
 
 
 def _target_path_from_gap(gap: Gap) -> str | None:
@@ -689,6 +689,89 @@ def _make_reason_loop_follow_on_gap(
     next_gap.turn_id = current_turn
     next_gap.route_mode = gap.route_mode or "action_editor"
     return next_gap
+
+
+def _initial_step_chain_doc(*, gap: Gap, inferred_name: str) -> dict:
+    trigger = "manual"
+    lowered = (gap.desc or "").lower()
+    trigger_match = re.search(r"(on_vocab:[a-z0-9_]+|command:[a-z0-9_]+|on_contact:[^ ,]+)", lowered)
+    if trigger_match:
+        trigger = trigger_match.group(1)
+    return {
+        "version": "step_chain.v1",
+        "name": inferred_name,
+        "desc": gap.desc,
+        "trigger": trigger,
+        "artifact": {
+            "kind": "action",
+            "protected_kind": "action",
+        },
+        "refs": {},
+        "steps": [],
+    }
+
+
+def _merge_step_chain_metadata(base: dict, updates: dict | None) -> dict:
+    doc = dict(base)
+    if not isinstance(updates, dict):
+        return doc
+    for field in ("name", "desc", "trigger", "next_layer_desc"):
+        value = updates.get(field)
+        if isinstance(value, str) and value.strip():
+            doc[field] = value.strip()
+    if isinstance(updates.get("artifact"), dict):
+        artifact = dict(doc.get("artifact", {}) or {})
+        artifact.update(updates.get("artifact", {}) or {})
+        doc["artifact"] = artifact
+    if isinstance(updates.get("refs"), dict):
+        refs = dict(doc.get("refs", {}) or {})
+        refs.update(updates.get("refs", {}) or {})
+        doc["refs"] = refs
+    semantics = updates.get("semantics")
+    if isinstance(semantics, dict):
+        merged = dict(doc.get("semantics", {}) or {})
+        merged.update(semantics)
+        doc["semantics"] = merged
+    return doc
+
+
+def _render_working_step_chain(doc: dict, *, gap: Gap) -> str:
+    source_ref = _target_path_from_gap(gap) or doc.get("name") or "working_step_chain"
+    tree = me.build_semantic_tree(doc, source_type="working_step_chain", source_ref=source_ref)
+    return me.render_semantic_tree(tree)
+
+
+def _render_lowered_working_package(doc: dict) -> str:
+    return "\n".join(
+        [
+            f"name: {doc.get('name', '(none)')}",
+            f"trigger: {doc.get('trigger', '(none)')}",
+            f"root: {doc.get('root', '(none)')}",
+            f"steps: {len(doc.get('steps', []) or [])}",
+            f"closure.success.requires_terminal: {dict(doc.get('closure', {}) or {}).get('success', {}).get('requires_terminal', '(none)')}",
+        ]
+    )
+
+
+def _reason_loop_retry_desc(
+    *,
+    controller_chain: Any | None,
+    gap: Gap,
+    inferred_name: str,
+    attempt: int,
+    failure_output: str,
+) -> str:
+    target = _target_path_from_gap(gap) or inferred_name
+    working_doc = dict(getattr(controller_chain, "loop_state", {}) or {}).get("working_step_chain", {}) or {}
+    if isinstance(working_doc, dict) and list(working_doc.get("steps", []) or []):
+        return (
+            f"Repair the next step append for structural target {target} against the current working chain "
+            f"after validator error ({attempt}/{REASON_LOOP_MAX_ATTEMPTS}). Error: {failure_output[:200]}"
+        )
+    return (
+        f"Repair structural target {target} after validator error "
+        f"({attempt}/{REASON_LOOP_MAX_ATTEMPTS}). Error: {failure_output[:200]}"
+    )
 
 
 def _reason_loop_retry_step(
@@ -1440,7 +1523,7 @@ def execute_iteration(
             )
             session.inject(
                 "## Editable Action Skeleton\n"
-                "If you are authoring the current .st layer, return JSON only through this semantic_skeleton.v1 frame.\n"
+                "If you are authoring the current .st layer, prefer step_chain_append.v1 to append one step at a time to the working chain. Use step_chain.v1 for a full simple linear chain only when needed, or semantic_skeleton.v1 for advanced/manual control.\n"
                 "Build inside out / back to front: foundational lower-order layers must already exist before a higher-order layer embeds them.\n"
                 "Foundational Python tools under tools/*.py are lawful lower-order layers. If one is missing, emit the concrete tool-authoring gap(s) first instead of forcing a premature skeleton.\n"
                 "Tool-script authoring is part of your structural judgment surface here: decide whether the next lawful move is to author a tool foundation, reuse an existing foundation hash, or continue the current .st layer.\n"
@@ -1451,6 +1534,7 @@ def execute_iteration(
                 "If a higher-order layer is still needed after this layer, do not claim the final public on_vocab trigger yet. Lower-order layers should usually stay manual/internal; the highest-order completed workflow owns the public trigger.\n"
                 "If this layer is complete but a higher-order layer is still needed, include next_layer_desc so the next reason_needed iteration can build on the committed layer hash.\n"
                 f"{'For new workflow origination, do not attempt the .st write immediately if the committed foundations are not explicit yet. First identify which tools, scripts, workflows, or extracted chains already exist and which missing foundations must be authored before the .st layer.\n' if collect_foundations_first else ''}"
+                "Prefer step_chain_append.v1 for incremental authoring. Each authored step should still carry full gap_template, manifestation, allowed_vocab, relevance, post_diff, and optional embedding. The builder will supply root, terminal, closure, and default linear transitions for the cumulative chain.\n"
                 f"{json.dumps(frame, indent=2)}"
             )
         else:
@@ -1478,6 +1562,15 @@ def execute_iteration(
                 chain_id=entry.chain_id,
             )
             _append_reason_loop_step(trajectory=trajectory, step=attempt_step, chain=controller_chain)
+            working_doc = dict(controller_chain.loop_state.get("working_step_chain", {}) or {})
+            if working_doc:
+                session.inject("## Current Working Chain\n" + _render_working_step_chain(working_doc, gap=gap))
+            working_lowered = dict(controller_chain.loop_state.get("working_lowered", {}) or {})
+            if working_lowered:
+                session.inject("## Lowered Working Package\n" + _render_lowered_working_package(working_lowered))
+            last_failure = str(controller_chain.loop_state.get("last_failure", "") or "").strip()
+            if last_failure:
+                session.inject("## Last Validation Failure\n" + last_failure)
 
         raw = session.call(
             f"Reason inline about: gap:{gap.hash} \"{gap.desc}\".\n"
@@ -1487,10 +1580,10 @@ def execute_iteration(
             "- Foundational tool-script authoring under tools/*.py for workflow construction is also your domain.\n"
             "- Do not hand action/workflow creation, repair, schema alignment, or restructuring to reprogramme_needed.\n"
             "- reprogramme_needed may only be surfaced from reason_needed for entity-tree persistence.\n"
-            f"- {'If this is new skills/actions/*.st origination, you own workflow authoring. Return one concrete semantic_skeleton.v1 action layer and actualize it now; do not emit another generic create/write file gap.' if author_actions else 'If new reusable workflow structure is needed, author the concrete creation/update gap(s) needed to actualize it.'}\n"
+            f"- {'If this is new skills/actions/*.st origination, you own workflow authoring. Prefer returning one step_chain_append.v1 increment at a time against the working chain. You may return step_chain.v1 for a full simple chain or semantic_skeleton.v1 only when explicit manual spine control is necessary; actualize only when the chain is complete; do not emit another generic create/write file gap.' if author_actions else 'If new reusable workflow structure is needed, author the concrete creation/update gap(s) needed to actualize it.'}\n"
             "- If an existing workflow should be triggered, emit the activation gap(s) for that path.\n"
-            f"{'- For new action/workflow packages, return semantic_skeleton.v1 JSON only when the current .st layer is actually ready to be authored.\n- If a foundational tool is missing, emit the concrete tool-authoring gap(s) first: content_needed for a new tools/*.py file, script_edit_needed or hash_edit_needed for an existing tool.\n- Treat action packages/codons, extracted chains, and tool scripts as one hash-native action environment.\n- surface=semantic_tree means an embeddable compositional unit. surface=described_blob means a foundational executable/data block.\n- Name/vocab activation uses the canonical default gap contract. Hash embedding may specialize manifestation only through an explicit embedding.gap_override.\n- Reference action/codon packages by committed skill hash, extracted chains by chain hash, and tool foundations by committed blob hash.\n- Tools with no classifier vocab are still lawful foundations; do not try to invent kernel vocab entries for them.\n- Author one layer per iteration. Do not try to manifest the full multi-layer workflow in one pass.\n- Embedded workflows, action packages, extracted chains, or tool foundations must already exist before you embed them.\n- If a higher-order layer is still needed after this layer commits, include next_layer_desc and optionally next_layer_content_refs using only existing committed hashes.\n- If a higher-order layer is still needed, keep trigger=manual on the current layer; the final public on_vocab trigger belongs on the highest-order completed workflow.\n- This controller is a visible chain. If authoring fails, surface the corrected reason_needed follow-on gap for the same target instead of ending in prose.\n' if author_actions else ''}"
-            f"{'- If the committed foundations are not explicit yet, do not return semantic_skeleton.v1 yet. First surface the observation/judgment gaps needed to identify which tools, scripts, workflows, or chains already exist and which missing foundations must be authored before the .st layer.\n' if collect_foundations_first else ''}"
+            f"{'- For new action/workflow packages, prefer step_chain_append.v1 for incremental authoring, step_chain.v1 for a full simple single-chain action, and semantic_skeleton.v1 only when you need explicit manual spine control.\n- step_chain_append.v1 should contain one authored step and optional metadata updates; use complete=true when the current working chain is ready to actualize.\n- step_chain.v1 and step_chain_append.v1 steps must still carry real chain semantics: gap_template, manifestation, allowed_vocab, relevance, post_diff, and optional embedding.\n- The builder will derive root, terminal, closure, and default ordered transitions for the cumulative chain.\n- If a foundational tool is missing, emit the concrete tool-authoring gap(s) first: content_needed for a new tools/*.py file, script_edit_needed or hash_edit_needed for an existing tool.\n- Treat action packages/codons, extracted chains, and tool scripts as one hash-native action environment.\n- surface=semantic_tree means an embeddable compositional unit. surface=described_blob means a foundational executable/data block.\n- Name/vocab activation uses the canonical default gap contract. Hash embedding may specialize manifestation only through an explicit embedding.gap_override.\n- Reference action/codon packages by committed skill hash, extracted chains by chain hash, and tool foundations by committed blob hash.\n- Tools with no classifier vocab are still lawful foundations; do not try to invent kernel vocab entries for them.\n- Author one chain step per iteration. Do not try to manifest the full multi-layer workflow in one pass.\n- Embedded workflows, action packages, extracted chains, or tool foundations must already exist before you embed them.\n- If a higher-order layer is still needed after this layer commits, include next_layer_desc and optionally next_layer_content_refs using only existing committed hashes.\n- If a higher-order layer is still needed, keep trigger=manual on the current layer; the final public on_vocab trigger belongs on the highest-order completed workflow.\n- This controller is a visible chain. If authoring fails, surface the corrected reason_needed follow-on gap for the same target instead of ending in prose.\n' if author_actions else ''}"
+            f"{'- If the committed foundations are not explicit yet, do not return step_chain_append.v1, step_chain.v1, or semantic_skeleton.v1 yet. First surface the observation/judgment gaps needed to identify which tools, scripts, workflows, or chains already exist and which missing foundations must be authored before the .st layer.\n' if collect_foundations_first else ''}"
             "Keep reasoning stateful and current-turn; do not defer by scheduling background work unless a later gap explicitly does so."
         )
         intent = hooks.extract_json(raw)
@@ -1500,7 +1593,79 @@ def execute_iteration(
             intent.pop("existing_ref", None)
             intent.pop("existing_action_ref", None)
             intent.setdefault("name", inferred_name)
-            if intent.get("version") == "semantic_skeleton.v1" and artifact.get("kind") in {"action", "hybrid"}:
+            output = None
+            code = None
+            if intent.get("version") == "step_chain_append.v1":
+                append_errors = st_builder_module.validate_step_chain_append_intent(intent)
+                working_doc = dict(
+                    (dict(controller_chain.loop_state.get("working_step_chain", {}) or {}) if controller_chain is not None else {})
+                    or _initial_step_chain_doc(gap=gap, inferred_name=inferred_name)
+                )
+                working_doc = _merge_step_chain_metadata(working_doc, intent)
+                if not append_errors and isinstance(intent.get("step"), dict):
+                    try:
+                        working_doc = st_builder_module.append_step_chain_step(working_doc, intent["step"])
+                    except ValueError as exc:
+                        append_errors = [str(exc)]
+                if not append_errors:
+                    _normalize_reason_action_trigger(working_doc)
+                    append_errors = st_builder_module.validate_step_chain_intent(working_doc)
+                if not append_errors:
+                    lowered, lowered_kind, _ = st_builder_module.lower_step_chain(working_doc)
+                    append_errors = st_builder_module.validate_st(
+                        lowered,
+                        artifact_kind=lowered_kind,
+                        output_dir=str(config.cors_root / "skills"),
+                    )
+                if append_errors:
+                    output = "Validation errors:\n" + "\n".join(f"- {e}" for e in append_errors)
+                    code = 1
+                    session.inject(f"## ST BUILDER FAILED\n{output}")
+                    artifact = working_doc.get("artifact", {}) or {"kind": "action"}
+                    if controller_chain is not None:
+                        controller_chain.loop_state["working_validation"] = list(append_errors)
+                        controller_chain.loop_state["last_failure"] = output[:500]
+                else:
+                    rendered_working_chain = _render_working_step_chain(working_doc, gap=gap)
+                    if controller_chain is not None:
+                        controller_chain.loop_state["working_step_chain"] = working_doc
+                        controller_chain.loop_state["working_tree"] = rendered_working_chain
+                        controller_chain.loop_state["working_lowered"] = lowered
+                        controller_chain.loop_state["working_validation"] = ["ok"]
+                        controller_chain.loop_state["last_failure"] = ""
+                    session.inject("## Accepted Working Chain\n" + rendered_working_chain)
+                    if bool(intent.get("complete", False)):
+                        intent = working_doc
+                        artifact = intent.get("artifact", {}) or {}
+                    else:
+                        appended_step = intent.get("step", {}) or {}
+                        appended_id = appended_step.get("id") or f"step_{len(working_doc.get('steps', []) or [])}"
+                        step_result = Step.create(
+                            desc=f"reason loop: appended step {appended_id} to {(_target_path_from_gap(gap) or inferred_name)}",
+                            step_refs=[origin_step.hash],
+                            content_refs=gap.content_refs,
+                            chain_id=entry.chain_id,
+                            assessment=[f"working_steps: {len(working_doc.get('steps', []) or [])}"],
+                        )
+                        continue_desc = (
+                            f"Continue building structural target {(_target_path_from_gap(gap) or inferred_name)}. "
+                            f"The current working chain has {len(working_doc.get('steps', []) or [])} step(s). "
+                            "Append the next step via step_chain_append.v1, or return complete=true if the chain is ready to actualize."
+                        )
+                        continue_gap = _make_reason_loop_follow_on_gap(
+                            desc=continue_desc,
+                            failure_step_hash=step_result.hash,
+                            gap=gap,
+                            current_turn=current_turn,
+                        )
+                        step_result.gaps.append(continue_gap)
+                        compiler.emit(step_result)
+                        compiler.resolve_current_gap(gap.hash)
+                        if controller_chain is not None:
+                            controller_chain.loop_state["status"] = "active"
+                            controller_chain.loop_state["last_progress_hash"] = step_result.hash
+                            _refresh_reason_loop_chain_desc(controller_chain)
+            if step_result is None and intent.get("version") in {"semantic_skeleton.v1", "step_chain.v1"} and artifact.get("kind") in {"action", "hybrid"}:
                 output, code = hooks.execute_tool("tools/st_builder.py", intent)
                 print(f"  st_builder: {output[:150]}")
                 written_path = hooks.extract_written_path(output)
@@ -1536,6 +1701,7 @@ def execute_iteration(
                         controller_chain.loop_state["status"] = "succeeded"
                         controller_chain.loop_state["attempt_count"] = attempt
                         controller_chain.loop_state["last_progress_hash"] = step_result.hash
+                        controller_chain.loop_state["working_validation"] = ["ok"]
                         controller_chain.loop_state["last_failure"] = ""
                         _refresh_reason_loop_chain_desc(controller_chain)
                     commit_path = None
@@ -1584,63 +1750,67 @@ def execute_iteration(
                         print("  → postcondition assessment:")
                         for line in assessment_lines:
                             print(f"    {line}")
-                else:
-                    failure_output = output[:500] if output else ""
-                    if code != 0:
-                        session.inject(f"## ST BUILDER FAILED\n{output}")
-                    failure_kind = _classify_reason_loop_failure(output)
+            if step_result is None and code is not None:
+                failure_output = output[:500] if output else ""
+                if code != 0 and output and "## ST BUILDER FAILED" not in output:
+                    session.inject(f"## ST BUILDER FAILED\n{output}")
+                failure_kind = _classify_reason_loop_failure(output or "")
+                if controller_chain is not None:
+                    controller_chain.loop_state["attempt_count"] = attempt
+                    controller_chain.loop_state["working_validation"] = [failure_output] if failure_output else []
+                    controller_chain.loop_state["last_failure"] = failure_output
+                if failure_kind == "retryable_structural" and attempt < REASON_LOOP_MAX_ATTEMPTS:
+                    retry_desc = _reason_loop_retry_desc(
+                        controller_chain=controller_chain,
+                        gap=gap,
+                        inferred_name=inferred_name,
+                        attempt=attempt,
+                        failure_output=failure_output,
+                    )
+                    retry_step = _reason_loop_retry_step(
+                        origin_step=origin_step,
+                        gap=gap,
+                        chain_id=entry.chain_id,
+                        current_turn=current_turn,
+                        attempt=attempt,
+                        max_attempts=REASON_LOOP_MAX_ATTEMPTS,
+                        failure_output=failure_output,
+                        retry_desc=retry_desc,
+                    )
+                    compiler.emit(retry_step)
+                    compiler.resolve_current_gap(gap.hash)
+                    step_result = retry_step
                     if controller_chain is not None:
+                        controller_chain.loop_state["status"] = "active"
+                        _refresh_reason_loop_chain_desc(controller_chain)
+                elif failure_kind == "blocked_missing_foundation":
+                    blocked_step = _reason_loop_blocked_step(
+                        origin_step=origin_step,
+                        gap=gap,
+                        chain_id=entry.chain_id,
+                        current_turn=current_turn,
+                        failure_output=failure_output,
+                    )
+                    compiler.emit(blocked_step)
+                    compiler.resolve_current_gap(gap.hash)
+                    step_result = blocked_step
+                    if controller_chain is not None:
+                        controller_chain.loop_state["status"] = "blocked"
+                        _refresh_reason_loop_chain_desc(controller_chain)
+                else:
+                    if controller_chain is not None:
+                        controller_chain.loop_state["status"] = "exhausted"
                         controller_chain.loop_state["attempt_count"] = attempt
-                        controller_chain.loop_state["last_failure"] = failure_output
-                    if failure_kind == "retryable_structural" and attempt < REASON_LOOP_MAX_ATTEMPTS:
-                        retry_desc = (
-                            f"Repair structural target {(_target_path_from_gap(gap) or inferred_name)} after validator error "
-                            f"({attempt}/{REASON_LOOP_MAX_ATTEMPTS}). Error: {failure_output[:200]}"
-                        )
-                        retry_step = _reason_loop_retry_step(
-                            origin_step=origin_step,
-                            gap=gap,
-                            chain_id=entry.chain_id,
-                            current_turn=current_turn,
-                            attempt=attempt,
-                            max_attempts=REASON_LOOP_MAX_ATTEMPTS,
-                            failure_output=failure_output,
-                            retry_desc=retry_desc,
-                        )
-                        compiler.emit(retry_step)
-                        compiler.resolve_current_gap(gap.hash)
-                        step_result = retry_step
-                        if controller_chain is not None:
-                            controller_chain.loop_state["status"] = "active"
-                            _refresh_reason_loop_chain_desc(controller_chain)
-                    elif failure_kind == "blocked_missing_foundation":
-                        blocked_step = _reason_loop_blocked_step(
-                            origin_step=origin_step,
-                            gap=gap,
-                            chain_id=entry.chain_id,
-                            current_turn=current_turn,
-                            failure_output=failure_output,
-                        )
-                        compiler.emit(blocked_step)
-                        compiler.resolve_current_gap(gap.hash)
-                        step_result = blocked_step
-                        if controller_chain is not None:
-                            controller_chain.loop_state["status"] = "blocked"
-                            _refresh_reason_loop_chain_desc(controller_chain)
-                    else:
-                        if controller_chain is not None:
-                            controller_chain.loop_state["status"] = "exhausted"
-                            controller_chain.loop_state["attempt_count"] = attempt
-                            _refresh_reason_loop_chain_desc(controller_chain)
-                        step_result = Step.create(
-                            desc=f"reason loop: exhausted after {REASON_LOOP_MAX_ATTEMPTS} attempts: {gap.desc}",
-                            step_refs=[origin_step.hash],
-                            content_refs=gap.content_refs,
-                            chain_id=entry.chain_id,
-                            assessment=[failure_output] if failure_output else [],
-                        )
-                        compiler.resolve_current_gap(gap.hash)
-            else:
+                        _refresh_reason_loop_chain_desc(controller_chain)
+                    step_result = Step.create(
+                        desc=f"reason loop: exhausted after {REASON_LOOP_MAX_ATTEMPTS} attempts: {gap.desc}",
+                        step_refs=[origin_step.hash],
+                        content_refs=gap.content_refs,
+                        chain_id=entry.chain_id,
+                        assessment=[failure_output] if failure_output else [],
+                    )
+                    compiler.resolve_current_gap(gap.hash)
+            elif step_result is None:
                 step_result, child_gaps = hooks.parse_step_output(
                     raw,
                     step_refs=[origin_step.hash],

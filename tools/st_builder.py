@@ -436,6 +436,16 @@ def looks_like_semantic_skeleton(data: dict) -> bool:
     return data.get("version") == "semantic_skeleton.v1" and isinstance(data.get("artifact"), dict)
 
 
+def looks_like_step_chain(data: dict) -> bool:
+    return data.get("version") == "step_chain.v1" and isinstance(data.get("steps"), list)
+
+
+def looks_like_step_chain_append(data: dict) -> bool:
+    return data.get("version") == "step_chain_append.v1" and (
+        isinstance(data.get("step"), dict) or data.get("complete") is True
+    )
+
+
 def looks_like_new_action_request(data: dict) -> bool:
     artifact_kind = data.get("artifact_kind")
     if artifact_kind in {"action", "hybrid"}:
@@ -621,6 +631,78 @@ def _default_closure() -> dict:
     }
 
 
+def _step_chain_step_to_phase(raw_step: dict, index: int, total: int) -> dict:
+    step = _object_or_empty(raw_step)
+    action = step.get("action") or slugify(
+        step.get("goal")
+        or _object_or_empty(step.get("gap_template", {}) or {}).get("desc")
+        or step.get("desc", "")
+        or f"step {index + 1}"
+    )
+    gap_template = _object_or_empty(step.get("gap_template", step.get("gap", {})) or {})
+    if not gap_template and step.get("desc"):
+        gap_template["desc"] = step.get("desc")
+    goal = step.get("goal") or gap_template.get("desc") or step.get("desc") or action
+    post_diff = bool(step.get("post_diff", False))
+    manifestation = _object_or_empty(step.get("manifestation", {}) or {})
+    runtime_vocab = manifestation.get("runtime_vocab") or step.get("vocab")
+    step_like = {
+        "action": action,
+        "desc": goal,
+        "post_diff": post_diff,
+    }
+    if runtime_vocab:
+        step_like["vocab"] = runtime_vocab
+    if gap_template.get("content_refs"):
+        step_like["resolve"] = list(gap_template.get("content_refs") or [])
+    kind = step.get("kind") or _phase_kind_for_step(step_like)
+    phase = {
+        "id": step.get("id") or _flow_phase_id(action, index),
+        "kind": kind,
+        "goal": goal,
+        "action": action,
+        "gap_template": {
+            "desc": gap_template.get("desc", goal),
+            "content_refs": list(gap_template.get("content_refs", []) or []),
+            "step_refs": list(gap_template.get("step_refs", []) or []),
+        },
+        "manifestation": manifestation or _manifestation_for_phase(kind, step_like),
+        "generation": _object_or_empty(step.get("generation", {}) or {}) or _default_generation(kind, post_diff),
+        "allowed_vocab": list(step.get("allowed_vocab", []) or []) or _allowed_vocab_for_phase(kind, step_like),
+        "post_diff": post_diff,
+    }
+    if "relevance" in step:
+        phase["relevance"] = step.get("relevance")
+    if isinstance(step.get("embedding"), dict):
+        phase["embedding"] = step["embedding"]
+    if "inject" in step:
+        phase["inject"] = step["inject"]
+    return phase
+
+
+def _build_flow_from_step_chain_steps(steps: list[dict]) -> tuple[str, list[dict], dict] | tuple[None, list, None]:
+    if not steps:
+        return None, [], None
+    phases = [_step_chain_step_to_phase(step, idx, len(steps)) for idx, step in enumerate(steps)]
+    for idx, phase in enumerate(phases):
+        if phase.get("kind") == "clarify":
+            continue
+        if idx < len(phases) - 1:
+            phase["transitions"] = {"on_done": phases[idx + 1]["id"]}
+        else:
+            phase["transitions"] = {"on_close": "phase_done"}
+    phases.append(
+        {
+            "id": "phase_done",
+            "kind": "terminal",
+            "goal": "done",
+            "action": "close_loop",
+            "terminal": True,
+        }
+    )
+    return phases[0]["id"], phases, _default_closure()
+
+
 def _build_flow_from_steps(steps: list[dict]) -> tuple[str, list[dict], dict] | tuple[None, list, None]:
     if not steps:
         return None, [], None
@@ -750,6 +832,10 @@ def semantic_skeleton_from_st(
     *,
     existing_ref: str | None = None,
 ) -> dict:
+    if looks_like_step_chain(data):
+        lowered, _, _ = lower_step_chain(data)
+        return lowered
+
     artifact_kind = _artifact_kind_from_st(data)
     artifact = _object_or_empty(data.get("artifact", {}))
     artifact.setdefault("kind", artifact_kind)
@@ -860,6 +946,142 @@ def lower_semantic_skeleton(intent: dict) -> tuple[dict, str, str | None]:
     if artifact_kind == "entity" and not st["steps"]:
         st["steps"] = default_entity_steps(st)
 
+    return st, lowered_kind, existing_ref
+
+
+def validate_step_chain_intent(intent: dict) -> list[str]:
+    errors: list[str] = []
+    trigger = intent.get("trigger")
+    next_layer_desc = intent.get("next_layer_desc")
+    artifact_value = intent.get("artifact", {})
+    if artifact_value not in ({}, None) and not isinstance(artifact_value, dict):
+        errors.append("step_chain.v1: artifact must be an object")
+    refs_value = intent.get("refs", {})
+    if refs_value not in ({}, None) and not isinstance(refs_value, dict):
+        errors.append("step_chain.v1: refs must be an object")
+    steps_value = intent.get("steps")
+    if not isinstance(steps_value, list) or not steps_value:
+        errors.append("step_chain.v1: steps must be a non-empty list")
+        return errors
+    seen_ids: set[str] = set()
+    for idx, step in enumerate(steps_value):
+        if not isinstance(step, dict):
+            errors.append(f"step_chain.v1: step {idx} must be an object")
+            continue
+        step_id = step.get("id")
+        if not isinstance(step_id, str) or not step_id.strip():
+            errors.append(f"step_chain.v1: step {idx} id must be a non-empty string")
+        elif step_id in seen_ids:
+            errors.append(f"step_chain.v1: step id {step_id} must be unique")
+        else:
+            seen_ids.add(step_id)
+        gap_template = step.get("gap_template", step.get("gap"))
+        if gap_template not in ({}, None) and not isinstance(gap_template, dict):
+            errors.append(f"step_chain.v1: step {idx} gap_template must be an object")
+        elif not isinstance(gap_template, dict) or not isinstance(gap_template.get("desc"), str) or not gap_template.get("desc", "").strip():
+            errors.append(f"step_chain.v1: step {idx} gap_template.desc must be a non-empty string")
+        manifestation = step.get("manifestation", {})
+        if manifestation not in ({}, None) and not isinstance(manifestation, dict):
+            errors.append(f"step_chain.v1: step {idx} manifestation must be an object")
+        allowed_vocab = step.get("allowed_vocab")
+        if allowed_vocab not in (None, []) and not isinstance(allowed_vocab, list):
+            errors.append(f"step_chain.v1: step {idx} allowed_vocab must be a list")
+        if "post_diff" in step and not isinstance(step.get("post_diff"), bool):
+            errors.append(f"step_chain.v1: step {idx} post_diff must be true or false")
+        if "embedding" in step and step.get("embedding") not in ({}, None) and not isinstance(step.get("embedding"), dict):
+            errors.append(f"step_chain.v1: step {idx} embedding must be an object")
+    artifact = _object_or_empty(artifact_value)
+    artifact_kind = artifact.get("kind", "action")
+    if (
+        artifact_kind in {"action", "hybrid"}
+        and isinstance(trigger, str)
+        and trigger.startswith("on_vocab:")
+        and isinstance(next_layer_desc, str)
+        and next_layer_desc.strip()
+    ):
+        errors.append(
+            "Higher-order layering: a lower-order action layer with next_layer_desc may not claim the final public on_vocab trigger; keep trigger=manual until the highest-order workflow is complete."
+        )
+    return errors
+
+
+def validate_step_chain_append_intent(intent: dict) -> list[str]:
+    errors: list[str] = []
+    artifact_value = intent.get("artifact", {})
+    if artifact_value not in ({}, None) and not isinstance(artifact_value, dict):
+        errors.append("step_chain_append.v1: artifact must be an object")
+    refs_value = intent.get("refs", {})
+    if refs_value not in ({}, None) and not isinstance(refs_value, dict):
+        errors.append("step_chain_append.v1: refs must be an object")
+    step_value = intent.get("step")
+    complete = bool(intent.get("complete", False))
+    if not isinstance(step_value, dict):
+        if not complete:
+            errors.append("step_chain_append.v1: step must be an object unless complete=true")
+        return errors
+    step_errors = validate_step_chain_intent(
+        {
+            "version": "step_chain.v1",
+            "name": intent.get("name", "working_chain"),
+            "desc": intent.get("desc", ""),
+            "trigger": intent.get("trigger", "manual"),
+            "artifact": _object_or_empty(intent.get("artifact", {})),
+            "refs": _object_or_empty(intent.get("refs", {})),
+            "steps": [step_value],
+        }
+    )
+    for error in step_errors:
+        errors.append(error.replace("step_chain.v1", "step_chain_append.v1"))
+    return errors
+
+
+def append_step_chain_step(current_doc: dict, step: dict) -> dict:
+    next_doc = dict(current_doc)
+    next_doc["version"] = "step_chain.v1"
+    next_doc["artifact"] = _object_or_empty(current_doc.get("artifact", {}))
+    next_doc["refs"] = _object_or_empty(current_doc.get("refs", {}))
+    next_doc["steps"] = list(current_doc.get("steps", []) or [])
+    step_copy = _object_or_empty(step)
+    step_id = step_copy.get("id")
+    if isinstance(step_id, str) and any(existing.get("id") == step_id for existing in next_doc["steps"] if isinstance(existing, dict)):
+        raise ValueError(f"duplicate step id: {step_id}")
+    next_doc["steps"].append(step_copy)
+    return next_doc
+
+
+def lower_step_chain(intent: dict) -> tuple[dict, str, str | None]:
+    artifact = _object_or_empty(intent.get("artifact", {}))
+    artifact_kind = artifact.get("kind", "action")
+    artifact.setdefault("kind", artifact_kind)
+    artifact.setdefault("protected_kind", "entity" if artifact_kind == "entity" else "action")
+    artifact.setdefault("lineage", intent.get("name", "untitled"))
+    artifact.setdefault("version_strategy", "hash_pinned")
+    existing_ref = normalize_existing_ref(intent.get("existing_ref"))
+
+    if artifact_kind == "entity":
+        lowered_kind = "entity"
+    elif artifact_kind == "action":
+        lowered_kind = "action_update" if existing_ref else "action"
+    else:
+        lowered_kind = "hybrid_update" if existing_ref else "hybrid"
+
+    st: dict = {
+        "name": intent.get("name", "untitled"),
+        "desc": intent.get("desc", ""),
+        "trigger": intent.get("trigger", "manual"),
+        "refs": _object_or_empty(intent.get("refs", {})),
+        "artifact": artifact,
+    }
+    semantics = _object_or_empty(intent.get("semantics", {}))
+    for field, value in semantics.items():
+        st[field] = value
+
+    root, phases, closure = _build_flow_from_step_chain_steps(list(intent.get("steps", []) or []))
+    if root is not None:
+        st["root"] = root
+    st["phases"] = phases
+    st["closure"] = closure
+    st["steps"] = [step for phase in phases if (step := _phase_to_step(phase, st["refs"])) is not None]
     return st, lowered_kind, existing_ref
 
 
@@ -1088,6 +1310,13 @@ def main():
                 print(f"\nGenerated (invalid):\n{json.dumps(intent, indent=2)}")
                 raise SystemExit(1)
             st, artifact_kind, existing_ref = lower_semantic_skeleton(intent)
+        elif looks_like_step_chain(intent):
+            intent_errors = validate_step_chain_intent(intent)
+            if intent_errors:
+                print(f"Validation errors:\n" + "\n".join(f"  - {e}" for e in intent_errors))
+                print(f"\nGenerated (invalid):\n{json.dumps(intent, indent=2)}")
+                raise SystemExit(1)
+            st, artifact_kind, existing_ref = lower_step_chain(intent)
         else:
             if looks_like_skeleton(intent):
                 print(

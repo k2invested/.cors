@@ -402,6 +402,10 @@ def build_runtime_semantic_tree(steps: list[dict], *, source_type: str, source_r
 
 
 def build_semantic_tree(doc: dict, *, source_type: str, source_ref: str | None = None) -> dict:
+    if doc.get("version") == "step_chain.v1":
+        lowered, _, _ = st_builder_module.lower_step_chain(doc)
+        return build_semantic_tree(lowered, source_type=source_type, source_ref=source_ref or doc.get("name"))
+
     if doc.get("version") == "stepchain.v1":
         phases = [dict(node or {}) for node in doc.get("nodes", []) if not (node or {}).get("terminal")]
         root_id = doc.get("root")

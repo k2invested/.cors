@@ -2398,7 +2398,7 @@ def test_p12_reason_needed_prompt_says_collect_foundations_before_new_workflow_w
     )
 
     assert session.prompts
-    assert any("If the committed foundations are not explicit yet, do not return semantic_skeleton.v1 yet." in prompt for prompt in session.prompts)
+    assert any("If the committed foundations are not explicit yet, do not return step_chain_append.v1, step_chain.v1, or semantic_skeleton.v1 yet." in prompt for prompt in session.prompts)
 
 
 def test_p12_reason_needed_keeps_foundation_judgment_inside_first_iteration():
@@ -2786,7 +2786,7 @@ def test_p12_turn_outcome_facts_treat_exhausted_reason_loop_as_unconfirmed():
         "successful_mutations": [],
         "attempted_mutations": ["reason_needed: create skills/actions/research.st"],
         "rogue_failures": [],
-        "exhausted_reason_loops": ["reason loop: exhausted after 5 attempts: create skills/actions/research.st"],
+        "exhausted_reason_loops": ["reason loop: exhausted after 10 attempts: create skills/actions/research.st"],
         "persisted_frontiers": [],
     })
 
@@ -3175,7 +3175,7 @@ def test_p12_reason_needed_retries_inside_reason_loop_until_success():
     assert chain.chain_kind == "reason_loop"
     assert chain.loop_state["status"] == "active"
     assert chain.loop_state["attempt_count"] == 1
-    assert any(step.desc.startswith("reason loop attempt 1/5:") for step in traj.steps.values())
+    assert any(step.desc.startswith("reason loop attempt 1/10:") for step in traj.steps.values())
 
     next_entry, next_signal = compiler.next()
     assert next_entry is not None
@@ -3289,7 +3289,7 @@ def test_p12_reason_needed_retry_gap_increments_visible_attempt_counter():
         config=config,
     )
     assert first.step_result is not None
-    assert first.step_result.gaps[0].desc.find("(1/5)") != -1
+    assert first.step_result.gaps[0].desc.find("(1/10)") != -1
 
     next_entry, next_signal = compiler.next()
     assert next_entry is not None
@@ -3306,10 +3306,10 @@ def test_p12_reason_needed_retry_gap_increments_visible_attempt_counter():
         config=config,
     )
     assert second.step_result is not None
-    assert second.step_result.gaps[0].desc.find("(2/5)") != -1
+    assert second.step_result.gaps[0].desc.find("(2/10)") != -1
 
 
-def test_p12_reason_needed_exhausts_reason_loop_after_five_attempts():
+def test_p12_reason_needed_exhausts_reason_loop_after_ten_attempts():
     class FakeSession:
         def __init__(self):
             self.calls = 0
@@ -3406,7 +3406,7 @@ def test_p12_reason_needed_exhausts_reason_loop_after_five_attempts():
     assert chain.loop_state["attempt_count"] == 1
 
     final_outcome = outcome
-    for expected_attempt in range(2, 6):
+    for expected_attempt in range(2, 11):
         next_entry, next_signal = compiler.next()
         assert next_entry is not None
         final_outcome = execution_engine_module.execute_iteration(
@@ -3425,8 +3425,8 @@ def test_p12_reason_needed_exhausts_reason_loop_after_five_attempts():
 
     assert final_outcome.step_result is not None
     assert final_outcome.step_result.rogue is False
-    assert final_outcome.step_result.desc.startswith("reason loop: exhausted after 5 attempts")
-    assert session.calls == 5
+    assert final_outcome.step_result.desc.startswith("reason loop: exhausted after 10 attempts")
+    assert session.calls == 10
     assert chain.loop_state["status"] == "exhausted"
     assert chain.stable_id is not None
 
@@ -3463,6 +3463,407 @@ def test_p12_validate_semantic_skeleton_intent_rejects_public_trigger_before_top
 
     errors = st_builder_module.validate_semantic_skeleton_intent(intent)
     assert any("may not claim the final public on_vocab trigger" in e for e in errors)
+
+
+def test_p12_lower_step_chain_builds_valid_action_spine():
+    intent = {
+        "version": "step_chain.v1",
+        "artifact": {"kind": "action", "protected_kind": "action"},
+        "name": "test",
+        "desc": "Execute project tests.",
+        "trigger": "on_vocab:test_needed",
+        "steps": [
+            {
+                "id": "run_tests",
+                "kind": "mutate",
+                "goal": "Execute all relevant test scripts.",
+                "gap_template": {
+                    "desc": "Compose a command that executes all relevant test scripts.",
+                    "content_refs": [],
+                    "step_refs": [],
+                },
+                "manifestation": {
+                    "execution_mode": "runtime_vocab",
+                    "runtime_vocab": "command_needed",
+                },
+                "allowed_vocab": ["command_needed"],
+                "relevance": 1.0,
+                "post_diff": True,
+            }
+        ],
+    }
+
+    lowered, artifact_kind, existing_ref = st_builder_module.lower_step_chain(intent)
+
+    assert artifact_kind == "action"
+    assert existing_ref is None
+    assert lowered["root"] == "run_tests"
+    assert lowered["closure"]["success"]["requires_terminal"] == "phase_done"
+    assert lowered["phases"][0]["transitions"] == {"on_close": "phase_done"}
+    assert lowered["phases"][0]["manifestation"]["runtime_vocab"] == "command_needed"
+    assert lowered["steps"][0]["vocab"] == "command_needed"
+    assert st_builder_module.validate_st(lowered, artifact_kind="action") == []
+
+
+def test_p12_manifest_engine_build_semantic_tree_uses_normalized_path_for_step_chain():
+    doc = {
+        "version": "step_chain.v1",
+        "artifact": {"kind": "action", "protected_kind": "action"},
+        "name": "test",
+        "desc": "Execute project tests.",
+        "trigger": "on_vocab:test_needed",
+        "steps": [
+            {
+                "id": "run_tests",
+                "kind": "mutate",
+                "goal": "Execute all relevant test scripts.",
+                "gap_template": {
+                    "desc": "Compose a command that executes all relevant test scripts.",
+                    "content_refs": [],
+                    "step_refs": [],
+                },
+                "manifestation": {
+                    "execution_mode": "runtime_vocab",
+                    "runtime_vocab": "command_needed",
+                },
+                "allowed_vocab": ["command_needed"],
+                "relevance": 1.0,
+                "post_diff": True,
+            }
+        ],
+    }
+
+    tree = manifest_engine_module.build_semantic_tree(doc, source_type="working_step_chain", source_ref="test")
+
+    assert tree["version"] == "semantic_tree.v1"
+    assert tree["package"]["name"] == "test"
+    assert tree["package"]["closure"]["success"]["requires_terminal"] == "phase_done"
+    assert tree["nodes"][0]["gap"]["runtime_vocab"] == "command_needed"
+
+
+def test_p12_validate_step_chain_intent_rejects_public_trigger_before_top_layer():
+    intent = {
+        "version": "step_chain.v1",
+        "artifact": {"kind": "action", "protected_kind": "action"},
+        "name": "research",
+        "trigger": "on_vocab:research_needed",
+        "next_layer_desc": "Build the higher-order orchestration layer.",
+        "steps": [
+            {
+                "id": "observe_request",
+                "goal": "Observe request",
+                "gap_template": {"desc": "Observe request"},
+                "manifestation": {"runtime_vocab": "hash_resolve_needed"},
+            }
+        ],
+    }
+
+    errors = st_builder_module.validate_step_chain_intent(intent)
+    assert any("may not claim the final public on_vocab trigger" in e for e in errors)
+
+
+def test_p12_reason_needed_accepts_step_chain_v1_action_intent(tmp_path):
+    written_path = tmp_path / "skills" / "actions" / "test.st"
+    written_path.parent.mkdir(parents=True, exist_ok=True)
+    written_path.write_text(
+        json.dumps(
+            {
+                "name": "test",
+                "desc": "Execute project tests.",
+                "trigger": "on_vocab:test_needed",
+                "artifact": {"kind": "action", "protected_kind": "action"},
+                "root": "run_tests",
+                "phases": [
+                    {
+                        "id": "run_tests",
+                        "kind": "mutate",
+                        "goal": "Execute tests",
+                        "action": "run_tests",
+                        "gap_template": {"desc": "Compose a test command", "content_refs": [], "step_refs": []},
+                        "manifestation": {
+                            "kernel_class": "mutate",
+                            "dispersal": "action",
+                            "execution_mode": "runtime_vocab",
+                            "runtime_vocab": "command_needed",
+                        },
+                        "generation": {
+                            "spawn_mode": "action",
+                            "spawn_trigger": "on_post_diff",
+                            "branch_policy": "depth_first_to_parent",
+                            "sibling_policy": "after_descendants",
+                            "return_policy": "resume_transition",
+                        },
+                        "allowed_vocab": ["command_needed"],
+                        "post_diff": True,
+                        "transitions": {"on_close": "phase_done"},
+                    },
+                    {"id": "phase_done", "kind": "terminal", "goal": "done", "action": "close_loop", "terminal": True},
+                ],
+                "steps": [{"action": "run_tests", "desc": "Execute tests", "vocab": "command_needed", "post_diff": True}],
+                "closure": {"success": {"requires_terminal": "phase_done", "requires_no_active_gaps": True}},
+            }
+        )
+    )
+
+    class FakeSession:
+        def __init__(self):
+            self.prompts = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.prompts.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps(
+                {
+                    "version": "step_chain.v1",
+                    "artifact": {"kind": "action", "protected_kind": "action"},
+                    "name": "test",
+                    "desc": "Execute project tests.",
+                    "trigger": "on_vocab:test_needed",
+                    "steps": [
+                        {
+                            "id": "run_tests",
+                            "kind": "mutate",
+                            "goal": "Execute all relevant test scripts.",
+                            "gap_template": {
+                                "desc": "Compose a command that executes all relevant test scripts.",
+                                "content_refs": [],
+                                "step_refs": [],
+                            },
+                            "manifestation": {
+                                "execution_mode": "runtime_vocab",
+                                "runtime_vocab": "command_needed",
+                            },
+                            "allowed_vocab": ["command_needed"],
+                            "relevance": 1.0,
+                            "post_diff": True,
+                        }
+                    ],
+                }
+            )
+
+    captured = {}
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap(
+        "Create a new workflow file at skills/actions/test.st that executes all tests via test_needed.",
+        vocab="reason_needed",
+    )
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: (captured.update({"tool": tool, "params": params}) or (f"Written: {written_path}", 0)),
+        auto_commit=lambda message, paths=None: ("abc123", None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        render_session_context=lambda trajectory, registry_obj, user_message, active_chain_id=None, active_gap=None: "## Session Context\nactive session",
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert outcome.step_result.desc.startswith("reason actualized workflow:")
+    assert captured["tool"] == "tools/st_builder.py"
+    assert captured["params"]["version"] == "step_chain.v1"
+    assert any("prefer step_chain_append.v1 to append one step at a time" in prompt.lower() for prompt in session.prompts)
+
+
+def test_p12_reason_needed_appends_step_chain_increment_then_actualizes(tmp_path):
+    written_path = tmp_path / "skills" / "actions" / "test.st"
+    written_path.parent.mkdir(parents=True, exist_ok=True)
+
+    class FakeSession:
+        def __init__(self):
+            self.calls = 0
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            self.calls += 1
+            if self.calls == 1:
+                return json.dumps(
+                    {
+                        "version": "step_chain_append.v1",
+                        "artifact": {"kind": "action", "protected_kind": "action"},
+                        "name": "test",
+                        "desc": "Execute project tests.",
+                        "trigger": "on_vocab:test_needed",
+                        "step": {
+                            "id": "run_tests",
+                            "kind": "mutate",
+                            "goal": "Execute all relevant test scripts.",
+                            "gap_template": {
+                                "desc": "Compose a command that executes all relevant test scripts.",
+                                "content_refs": [],
+                                "step_refs": [],
+                            },
+                            "manifestation": {
+                                "execution_mode": "runtime_vocab",
+                                "runtime_vocab": "command_needed",
+                            },
+                            "allowed_vocab": ["command_needed"],
+                            "relevance": 1.0,
+                            "post_diff": True,
+                        },
+                    }
+                )
+            return json.dumps({"version": "step_chain_append.v1", "complete": True})
+
+    captured: list[dict] = []
+
+    def exec_tool(tool, params):
+        captured.append(params)
+        lowered, _, _ = st_builder_module.lower_step_chain(params)
+        written_path.write_text(json.dumps(lowered))
+        return (f"Written: {written_path}", 0)
+
+    traj = Trajectory()
+    gap = make_gap(
+        "Create a new workflow file at skills/actions/test.st that executes all tests via test_needed.",
+        vocab="reason_needed",
+    )
+    origin_step = make_step("origin", gaps=[gap])
+    traj.append(origin_step)
+    chain = Chain(hash="chain1", origin_gap=gap.hash, steps=[origin_step.hash])
+    traj.add_chain(chain)
+    compiler = Compiler(traj)
+    compiler.active_chain = chain
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=exec_tool,
+        auto_commit=lambda message, paths=None: ("abc123", None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        render_session_context=lambda trajectory, registry_obj, user_message, active_chain_id=None, active_gap=None: "## Session Context\nactive session",
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    first = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert first.step_result is not None
+    assert first.step_result.desc.startswith("reason loop: appended step run_tests")
+    assert first.step_result.gaps
+    assert chain.loop_state["working_step_chain"]["steps"][0]["id"] == "run_tests"
+    assert chain.loop_state["working_tree"].startswith("semantic_tree:working_step_chain:")
+    assert chain.loop_state["working_lowered"]["root"] == "run_tests"
+    assert chain.loop_state["working_validation"] == ["ok"]
+
+    next_entry, next_signal = compiler.next()
+    assert next_entry is not None
+
+    second = execution_engine_module.execute_iteration(
+        entry=next_entry,
+        signal=next_signal,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert second.step_result is not None
+    assert second.step_result.desc.startswith("reason actualized workflow:")
+    assert captured
+    assert captured[-1]["version"] == "step_chain.v1"
+    assert any(content.startswith("## Current Working Chain\nsemantic_tree:working_step_chain:") for content in session.injected)
+    assert any(content.startswith("## Lowered Working Package\n") for content in session.injected)
+
+
+def test_p12_reason_loop_retry_desc_repairs_next_step_append_when_working_chain_exists():
+    gap = make_gap(
+        "Create skills/actions/test.st with test_needed.",
+        vocab="reason_needed",
+    )
+    chain = Chain(hash="chain1", origin_gap=gap.hash, steps=[])
+    chain.chain_kind = "reason_loop"
+    chain.loop_state = {
+        "working_step_chain": {
+            "version": "step_chain.v1",
+            "name": "test",
+            "trigger": "on_vocab:test_needed",
+            "artifact": {"kind": "action", "protected_kind": "action"},
+            "steps": [{"id": "run_tests", "gap_template": {"desc": "Compose a test command"}}],
+        }
+    }
+
+    desc = execution_engine_module._reason_loop_retry_desc(
+        controller_chain=chain,
+        gap=gap,
+        inferred_name="test",
+        attempt=1,
+        failure_output="Validation errors:\n- duplicate step id",
+    )
+
+    assert "Repair the next step append" in desc
+    assert "(1/10)" in desc
 
 
 def test_p12_action_foundations_render_skills_tools_and_default_contracts():
