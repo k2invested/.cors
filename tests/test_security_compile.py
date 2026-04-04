@@ -240,7 +240,7 @@ def test_security_compile_rejects_codon_surface_persist():
         "version": "security_compile.v1",
         "input": {
             "artifact_type": "st_package",
-            "candidate_path": "skills/codons/reason.st",
+            "candidate_path": "skills/codons/trigger.st",
             "source": "authoring",
             "mode": "pre_persist",
             "candidate": {},
@@ -258,7 +258,7 @@ def test_security_compile_allows_codon_activation_surface():
         "version": "security_compile.v1",
         "input": {
             "artifact_type": "st_package",
-            "candidate_path": "skills/codons/reason.st",
+            "candidate_path": "skills/codons/trigger.st",
             "source": "registry",
             "mode": "pre_activation",
             "candidate": {},

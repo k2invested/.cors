@@ -439,7 +439,7 @@ P3_CASES = [
     ("tree_policy_actions_reroute_to_reason", lambda: loop._match_policy("skills/actions/hash_edit.st", loop._load_tree_policy())["on_mutate"] == "reason_needed"),
     ("tree_policy_actions_set_action_editor_mode", lambda: loop._match_policy("skills/actions/hash_edit.st", loop._load_tree_policy())["reprogramme_mode"] == "action_editor"),
     ("tree_policy_exact_match_compile_immutable", lambda: loop._match_policy("compile.py", loop._load_tree_policy())["immutable"] is True),
-    ("tree_policy_longest_prefix_wins", lambda: loop._match_policy("skills/codons/reason.st", loop._load_tree_policy())["on_reject"] == "reason_needed"),
+    ("tree_policy_longest_prefix_wins", lambda: loop._match_policy("skills/codons/trigger.st", loop._load_tree_policy())["on_reject"] == "reason_needed"),
     ("tree_policy_vocab_targets_are_valid", lambda: vocab_registry_module.validate_tree_policy_targets(loop._load_tree_policy()) == []),
 ]
 
@@ -507,7 +507,7 @@ P5_CASES = [
     ("workflow_trigger_terms_not_in_kernel_vocab_registry", lambda: "research_needed" not in vocab_registry_module.VOCABS),
     ("render_for_prompt_has_header", lambda: registry().render_for_prompt().startswith("## Available Skills")),
     ("render_for_prompt_has_trigger_vocab_section", lambda: "## Available Trigger Vocab" in registry().render_for_prompt()),
-    ("resolve_vocab_trigger_finds_reason", lambda: any(s.name == "reason" for s in registry().resolve_vocab_trigger("reason_needed"))),
+    ("resolve_vocab_trigger_does_not_find_reason", lambda: all(s.name != "reason" for s in registry().resolve_vocab_trigger("reason_needed"))),
     ("build_st_forwards_identity", lambda: "identity" in st_builder_module.build_st({"name": "person", "desc": "d", "identity": {"name": "Ada"}})),
     ("build_st_allows_empty_actions", lambda: st_builder_module.build_st({"name": "entity", "desc": "d", "actions": []})["steps"] == []),
     ("build_st_entity_adds_context_injection_steps", lambda: st_builder_module.build_st({
@@ -540,11 +540,7 @@ P5_CASES = [
     ("render_identity_pending_bootstrap_shows_initiation", lambda: "## Initiation" in render_bootstrap_identity()),
     ("reprogramme_skill_trigger_is_vocab", lambda: skill("reprogramme").trigger == "on_vocab:reprogramme_needed"),
     ("reprogramme_skill_all_steps_loaded", lambda: skill("reprogramme").step_count() == 3),
-    ("reason_skill_mentions_inline_current_turn", lambda: "inline within the current turn" in skill_data("reason")["desc"].lower()),
-    ("reason_skill_forbids_clarify", lambda: "do not use clarify_needed" in skill_data("reason")["desc"].lower()),
-    ("reason_skill_mentions_stateful_judgment", lambda: "stateful judgment" in skill_data("reason")["desc"].lower()),
-    ("reason_skill_rejects_passive_deferral", lambda: "not as a passive deferral" in skill_data("reason")["desc"].lower()),
-    ("reason_skill_says_new_actions_use_skeleton_path", lambda: "semantic_skeleton path" in skill_data("reason")["desc"].lower()),
+    ("trigger_skill_marks_activation_surface", lambda: "activation codon for workflow starts and background launches" in skill_data("trigger")["desc"].lower()),
     ("reprogramme_skill_says_it_does_not_own_judgment", lambda: "does not own the judgment layer" in skill_data("reprogramme")["desc"].lower()),
     ("pre_diff_prompt_routes_inferred_preferences_to_reason_first", lambda: "use reason_needed first to judge whether it should become semantic state" in loop.PRE_DIFF_SYSTEM.lower()),
     ("pre_diff_prompt_says_stable_preferences_are_not_no_gap", lambda: "stable user-model updates are not no-gap" in loop.PRE_DIFF_SYSTEM.lower()),
@@ -689,7 +685,7 @@ def test_p13_reprogramme_failure_materializes_rogue_step():
         is_reprogramme_intent=lambda intent: True,
         load_tree_policy=lambda: {},
         match_policy=lambda path, policy: None,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: "semantic_tree:skill_package:hash_edit\nname: hash_edit" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
         git=lambda cmd, cwd=None: "",
@@ -753,8 +749,6 @@ P7_CASES = [
     ("hash_edit_has_one_flexible_step", lambda: len(skill("hash_edit").flexible_steps()) == 1),
     ("hash_edit_has_flexible_steps_again", lambda: any(s.post_diff for s in skill("hash_edit").steps)),
     ("hash_edit_has_deterministic_steps_again", lambda: any(not s.post_diff for s in skill("hash_edit").steps)),
-    ("reason_first_step_deterministic", lambda: skill("reason").steps[0].post_diff is False),
-    ("reason_skill_single_policy_step", lambda: len(skill("reason").steps) == 1),
     ("await_first_two_deterministic", lambda: all(not s.post_diff for s in skill("await").steps[:2])),
     ("await_last_step_flexible", lambda: skill("await").steps[-1].post_diff is True),
     ("commit_first_step_deterministic", lambda: skill("commit").steps[0].post_diff is False),
@@ -870,9 +864,7 @@ P9_CASES += [
 
 
 P10_CASES = [
-    ("reason_trigger", lambda: skill("reason").trigger == "on_vocab:reason_needed"),
-    ("reason_step1_observe", lambda: skill("reason").steps[0].vocab == "hash_resolve_needed"),
-    ("reason_relevance_descends", lambda: [s["relevance"] for s in skill_data("reason")["steps"]] == [1.0]),
+    ("trigger_trigger_manual", lambda: skill("trigger").trigger == "manual"),
     ("await_trigger", lambda: skill("await").trigger == "on_vocab:await_needed"),
     ("await_wait_step_observe", lambda: skill("await").steps[0].vocab == "hash_resolve_needed"),
     ("await_last_step_flexible", lambda: skill("await").steps[-1].post_diff is True),
@@ -890,13 +882,12 @@ P10_CASES = [
     )[2])(Trajectory(), make_gap("active"))),
     ("dangling_gaps_ignore_dormant", lambda: len(loop._find_dangling_gaps((lambda traj: (traj.append(make_step("s", gaps=[make_gap("d", dormant=True)])), traj)[1])(Trajectory()))) == 0),
     ("dangling_gaps_ignore_resolved", lambda: len(loop._find_dangling_gaps((lambda traj: (traj.append(make_step("s", gaps=[make_gap("r", resolved=True)])), traj)[1])(Trajectory()))) == 0),
-    ("reason_steps_count", lambda: skill("reason").step_count() == 1),
     ("await_steps_count", lambda: skill("await").step_count() == 3),
     ("commit_steps_count", lambda: skill("commit").step_count() == 3),
 ]
 
 P10_CASES += [
-    ("reason_skill_is_codon", lambda: skill("reason").artifact_kind == "codon"),
+    ("trigger_skill_is_codon", lambda: skill("trigger").artifact_kind == "codon"),
     ("await_skill_is_codon", lambda: skill("await").artifact_kind == "codon"),
     ("commit_skill_is_codon", lambda: skill("commit").artifact_kind == "codon"),
     ("reprogramme_skill_is_codon", lambda: skill("reprogramme").artifact_kind == "codon"),
@@ -1031,12 +1022,12 @@ P12_CASES += [
         traj.append(make_step("s", gaps=[gap])),
         len(loop._find_dangling_gaps(traj)) == 0,
     )[2])(Trajectory(), make_gap("clarify", vocab="clarify_needed"))),
-    ("emit_reason_skill_is_context_only", lambda: len(loop._emit_reason_skill(skill("reason"), make_gap("reason about this"), make_step("origin"), "c1").gaps) == 0),
+    ("emit_reason_skill_is_context_only", lambda: len(loop._emit_reason_skill(skill("trigger"), make_gap("reason about this"), make_step("origin"), "c1").gaps) == 0),
     ("activate_chain_reference_background_schedules_without_gaps", lambda: (lambda comp, step: (comp.record_background_trigger("c1"), True)[1] if step.desc.startswith("scheduled background chain:") and not step.gaps else False)(
         Compiler(Trajectory()),
         manifest_engine_module.activate_chain_reference(
             ROOT / "chains",
-            skill("reason").hash,
+            skill("trigger").hash,
             "background",
             make_gap("reason about this"),
             make_step("origin"),
@@ -1047,6 +1038,18 @@ P12_CASES += [
             0,
         ),
     )),
+    ("activate_chain_reference_background_includes_trigger_context", lambda: skill("trigger").hash in manifest_engine_module.activate_chain_reference(
+        ROOT / "chains",
+        skill("trigger").hash,
+        "background",
+        make_gap("reason about this"),
+        make_step("origin"),
+        "c1",
+        registry(),
+        Compiler(Trajectory()),
+        Trajectory(),
+        0,
+    ).content_refs),
 ]
 
 
@@ -1055,7 +1058,6 @@ P13_CASES = [
     ("chain_extract_length_constant", lambda: CHAIN_EXTRACT_LENGTH == 8),
     ("ledger_entry_depth_defaults_zero", lambda: LedgerEntry(make_gap("g"), "c").depth == 0),
     ("push_child_sets_depth", lambda: (lambda ledger: (ledger.push_child(make_gap("g"), "c", "p", 3), ledger.peek().depth == 3)[1])(Ledger())),
-    ("reason_relevance_descending", lambda: (lambda vals: vals == sorted(vals, reverse=True))([s["relevance"] for s in skill_data("reason")["steps"]])),
     ("await_relevance_descending", lambda: (lambda vals: vals == sorted(vals, reverse=True))([s["relevance"] for s in skill_data("await")["steps"]])),
     ("commit_relevance_descending", lambda: (lambda vals: vals == sorted(vals, reverse=True))([s["relevance"] for s in skill_data("commit")["steps"]])),
     ("reprogramme_relevance_descending", lambda: (lambda vals: vals == sorted(vals, reverse=True))([s["relevance"] for s in skill_data("reprogramme")["steps"]])),
@@ -1070,19 +1072,19 @@ P13_CASES = [
     ("extract_st_steps_preserves_content_refs", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "observe target", "gaps": [{"content_refs": ["entity_hash"], "step_refs": [], "scores": {"relevance": 0.9}, "vocab": "hash_resolve_needed"}]}]})[0]["content_refs"] == ["entity_hash"]),
     ("extract_st_steps_derives_relevance_when_missing", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "observe", "gaps": [{}]}]})[0]["relevance"] == 1.0),
     ("extract_st_steps_slugifies_action", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "Observe target file", "gaps": []}]})[0]["action"] == "observe_target_file"),
-    ("compose_over_construction_keeps_codon_steps_short", lambda: all(skill(name).step_count() <= 4 for name in ("reason", "await", "commit", "reprogramme"))),
+    ("compose_over_construction_keeps_codon_steps_short", lambda: all(skill(name).step_count() <= 4 for name in ("trigger", "await", "commit", "reprogramme"))),
 ]
 
 P13_CASES += [
     ("root_skills_only_admin", lambda: sorted(path.name for path in SKILLS_DIR.glob("*.st")) == ["admin.st"]),
     ("action_tree_contains_curated_actions", lambda: {"architect.st", "debug.st", "hash_edit.st"}.issubset({path.name for path in (SKILLS_DIR / "actions").glob("*.st")})),
     ("entity_tree_contains_runtime_entities", lambda: {"clinton.st", "cors_ui.st", "top_rate_estates_ltd.st"}.issubset({path.name for path in (SKILLS_DIR / "entities").glob("*.st")})),
-    ("codon_tree_contains_bridge_and_spec", lambda: sorted(path.name for path in (SKILLS_DIR / "codons").glob("*.st")) == ["await.st", "commit.st", "commitment_chain_construction_spec.st", "reason.st", "reprogramme.st"]),
+    ("codon_tree_contains_bridge_and_spec", lambda: sorted(path.name for path in (SKILLS_DIR / "codons").glob("*.st")) == ["await.st", "commit.st", "commitment_chain_construction_spec.st", "reprogramme.st", "trigger.st"]),
     ("loader_treats_admin_as_entity", lambda: skill("admin").artifact_kind == "entity"),
     ("loader_treats_hash_edit_as_action", lambda: skill("hash_edit").artifact_kind == "action"),
-    ("loader_treats_reason_as_codon", lambda: skill("reason").artifact_kind == "codon"),
+    ("loader_treats_trigger_as_codon", lambda: skill("trigger").artifact_kind == "codon"),
     ("loader_treats_chain_spec_as_entity_even_in_codon_tree", lambda: skill("commitment_chain_construction_spec").artifact_kind == "entity"),
-    ("policy_marks_codon_tree_immutable", lambda: loop._match_policy("skills/codons/reason.st", loop._load_tree_policy())["immutable"] is True),
+    ("policy_marks_codon_tree_immutable", lambda: loop._match_policy("skills/codons/trigger.st", loop._load_tree_policy())["immutable"] is True),
     ("policy_marks_action_tree_reason_first", lambda: loop._match_policy("skills/actions/debug.st", loop._load_tree_policy())["on_mutate"] == "reason_needed"),
     ("policy_marks_action_tree_action_editor", lambda: loop._match_policy("skills/actions/debug.st", loop._load_tree_policy())["reprogramme_mode"] == "action_editor"),
 ]
@@ -1270,7 +1272,7 @@ def test_p12_auto_commit_contract_rejection(monkeypatch):
 
     monkeypatch.setattr(loop, "git", fake_git)
     monkeypatch.setattr(loop, "git_head", lambda: "abc123")
-    monkeypatch.setattr(loop, "_check_protected", lambda post, pre: (["skills/codons/reason.st"], "reason_needed"))
+    monkeypatch.setattr(loop, "_check_protected", lambda post, pre: (["skills/codons/trigger.st"], "reason_needed"))
 
     assert loop.auto_commit("bad") == (None, "reason_needed")
     assert ("revert", "--no-commit", "HEAD") in calls
@@ -1732,7 +1734,7 @@ def test_p12_inline_reprogramme_does_not_trigger_heartbeat():
         is_reprogramme_intent=lambda intent: True,
         load_tree_policy=lambda: {},
         match_policy=lambda path, policy: None,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: "semantic_tree:skill_package:hash_edit\nname: hash_edit" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
         git=lambda cmd, cwd=None: "",
@@ -1798,7 +1800,7 @@ def test_p12_inline_reprogramme_emits_postcondition_assessment_before_synth():
         is_reprogramme_intent=lambda intent: True,
         load_tree_policy=lambda: {},
         match_policy=lambda path, policy: None,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: "semantic_tree:skill_package:hash_edit\nname: hash_edit" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
         git=lambda cmd, cwd=None: "",
@@ -1870,7 +1872,7 @@ def test_p12_command_needed_commit_postcondition_resolves_bot_log(monkeypatch):
         is_reprogramme_intent=loop._is_reprogramme_intent,
         load_tree_policy=lambda: {},
         match_policy=lambda path, policy: None,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: "semantic_tree:skill_package:hash_edit\nname: hash_edit" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=loop._emit_reason_skill,
         git=lambda cmd, cwd=None: "",
@@ -1944,7 +1946,7 @@ def test_p12_command_needed_without_commit_still_emits_log_postcondition(monkeyp
         is_reprogramme_intent=loop._is_reprogramme_intent,
         load_tree_policy=lambda: {},
         match_policy=lambda path, policy: None,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: "semantic_tree:stub\nname: foundation" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=loop._emit_reason_skill,
         git=lambda cmd, cwd=None: "",
@@ -2029,7 +2031,7 @@ def test_p12_hash_resolve_runs_in_deterministic_branch_and_can_surface_follow_on
         is_reprogramme_intent=lambda intent: False,
         load_tree_policy=lambda: {},
         match_policy=lambda path, policy: None,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: "semantic_tree:stub\nname: foundation" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
         git=lambda cmd, cwd=None: "",
@@ -2204,7 +2206,7 @@ def test_p12_clarify_iteration_emits_single_merged_step():
         is_reprogramme_intent=lambda intent: False,
         load_tree_policy=lambda: {},
         match_policy=lambda path, policy: None,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: "semantic_tree:stub\nname: foundation" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
         git=lambda cmd, cwd=None: "",
@@ -2294,7 +2296,7 @@ def test_p12_reason_needed_runs_inline_and_emits_child_gaps():
         is_reprogramme_intent=lambda intent: False,
         load_tree_policy=lambda: {},
         match_policy=lambda path, policy: None,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: "semantic_tree:stub\nname: foundation" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
         git=lambda cmd, cwd=None: "",
@@ -2328,7 +2330,7 @@ def test_p12_reason_needed_runs_inline_and_emits_child_gaps():
     assert session.calls == 1
     assert compiler.needs_heartbeat() is False
     assert any("## Session Context" in content for content in session.injected)
-    assert any("Delegation Preferences" in content for content in session.injected)
+    assert not any("Delegation Preferences" in content for content in session.injected)
     assert compiler.ledger.stack[-1].gap.vocab == "content_needed"
 
 
@@ -2368,7 +2370,7 @@ def test_p12_reason_needed_prompt_says_collect_foundations_before_new_workflow_w
         is_reprogramme_intent=lambda intent: False,
         load_tree_policy=lambda: {},
         match_policy=lambda path, policy: None,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: "semantic_tree:stub\nname: foundation" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
         git=lambda cmd, cwd=None: "",
@@ -2457,7 +2459,7 @@ def test_p12_reason_needed_keeps_foundation_judgment_inside_first_iteration():
         is_reprogramme_intent=lambda intent: False,
         load_tree_policy=lambda: {},
         match_policy=lambda path, policy: None,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: f"semantic_tree:skill_package:{skill('hash_edit').hash}\nname: hash_edit" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
         git=lambda cmd, cwd=None: "",
@@ -2530,7 +2532,7 @@ def test_p12_reason_needed_cannot_surface_reprogramme_for_action_tree():
         is_reprogramme_intent=lambda intent: False,
         load_tree_policy=loop._load_tree_policy,
         match_policy=lambda path, policy: None,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: "semantic_tree:stub\nname: foundation" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
         git=lambda cmd, cwd=None: "",
@@ -2586,7 +2588,7 @@ def test_p12_reprogramme_trigger_assignment_reroutes_to_reason_needed():
         is_reprogramme_intent=lambda intent: False,
         load_tree_policy=loop._load_tree_policy,
         match_policy=loop._match_policy,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: "semantic_tree:stub\nname: foundation" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=loop._emit_reason_skill,
         git=lambda cmd, cwd=None: "",
@@ -2669,7 +2671,7 @@ def test_p12_hash_edit_tool_write_reroutes_to_reason_needed():
         is_reprogramme_intent=lambda intent: False,
         load_tree_policy=loop._load_tree_policy,
         match_policy=loop._match_policy,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: f"semantic_tree:skill_package:{skill('hash_edit').hash}\nname: hash_edit" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=loop._emit_reason_skill,
         git=lambda cmd, cwd=None: "",
@@ -2890,7 +2892,7 @@ def test_p12_reason_needed_can_actualize_new_action_skeleton():
         is_reprogramme_intent=loop._is_reprogramme_intent,
         load_tree_policy=lambda: {},
         match_policy=lambda path, policy: None,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: "semantic_tree:stub\nname: foundation" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=loop._emit_reason_skill,
         git=lambda cmd, cwd=None: "",
@@ -2922,7 +2924,9 @@ def test_p12_reason_needed_can_actualize_new_action_skeleton():
     assert outcome.step_result.commit == "abc123"
     assert outcome.step_result.desc.startswith("reason actualized workflow:")
     assert compiler.ledger.stack[-1].gap.vocab == "hash_resolve_needed"
-    assert any("Editable Action Skeleton" in content for content in session.injected)
+    assert any(content.startswith("## Tool Descriptions") for content in session.injected)
+    assert any(content.startswith("## Action Semantic Trees") for content in session.injected)
+    assert not any("Editable Action Skeleton" in content for content in session.injected)
 
 
 def test_p12_reason_needed_can_surface_next_layer_after_successful_layer_commit():
@@ -3664,7 +3668,7 @@ def test_p12_reason_needed_accepts_step_chain_v1_action_intent(tmp_path):
         is_reprogramme_intent=lambda intent: False,
         load_tree_policy=lambda: {},
         match_policy=lambda path, policy: None,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: "semantic_tree:stub\nname: foundation" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
         git=lambda cmd, cwd=None: "",
@@ -3697,7 +3701,7 @@ def test_p12_reason_needed_accepts_step_chain_v1_action_intent(tmp_path):
     assert outcome.step_result.desc.startswith("reason actualized workflow:")
     assert captured["tool"] == "tools/st_builder.py"
     assert captured["params"]["version"] == "step_chain.v1"
-    assert any("prefer step_chain_append.v1 to append one step at a time" in prompt.lower() for prompt in session.prompts)
+    assert any(prompt.startswith("## Chain Construction Spec") for prompt in session.prompts)
 
 
 def test_p12_reason_needed_appends_step_chain_increment_then_actualizes(tmp_path):
@@ -4189,7 +4193,7 @@ def test_p12_reason_authored_action_strips_existing_ref_before_actualization():
         is_reprogramme_intent=loop._is_reprogramme_intent,
         load_tree_policy=lambda: {},
         match_policy=lambda path, policy: None,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: f"semantic_tree:skill_package:{skill('hash_edit').hash}\nname: hash_edit" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=loop._emit_reason_skill,
         git=lambda cmd, cwd=None: "",
@@ -4609,7 +4613,7 @@ def test_p12_reason_injects_tool_foundations_for_action_authoring():
         is_reprogramme_intent=loop._is_reprogramme_intent,
         load_tree_policy=lambda: {},
         match_policy=lambda path, policy: None,
-        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: f"semantic_tree:skill_package:{skill('hash_edit').hash}\nname: hash_edit" if content_refs else None,
         render_step_network=lambda registry_obj: "step_network",
         emit_reason_skill=loop._emit_reason_skill,
         git=lambda cmd, cwd=None: "0123456789abcdef0123456789abcdef01234567",
@@ -4637,11 +4641,12 @@ def test_p12_reason_injects_tool_foundations_for_action_authoring():
         config=config,
     )
 
-    assert any(content.startswith("## Step Network") for content in session.injected)
-    assert any(content.startswith("## Action Foundations") for content in session.injected)
-    assert any(skill("hash_edit").hash in content and "surface=semantic_tree" in content for content in session.injected)
-    assert any("kind=tool_blob surface=described_blob" in content for content in session.injected)
-    assert any("0123456789ab kind=tool_blob" in content and "source=tools/research_web.py" in content for content in session.injected)
+    assert any(content.startswith("## Tool Descriptions") for content in session.injected)
+    assert any(content.startswith("## Action Semantic Trees") for content in session.injected)
+    assert any("source=tools/research_web.py" in content for content in session.injected)
+    assert any(f"semantic_tree:skill_package:{skill('hash_edit').hash}" in content for content in session.injected)
+    assert not any(content.startswith("## Step Network") for content in session.injected)
+    assert not any(step.desc.startswith("reason parent context:") for step in traj.recent(20))
 
 
 def test_p12_render_skill_package_surfaces_action_tree_details():

@@ -1024,6 +1024,15 @@ def _effective_skill_step_vocab(skill: Skill, st_step: Any, foundation_contract:
     return None
 
 
+def _trigger_context_refs(registry: SkillRegistry | None) -> list[str]:
+    if registry is None:
+        return []
+    trigger_skill = registry.resolve_by_name("trigger")
+    if trigger_skill is None:
+        return []
+    return [trigger_skill.hash]
+
+
 def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
                            origin_step: Step, entry_chain_id: str,
                            turn_counter: int, task_prompt: str | None = None,
@@ -1040,10 +1049,11 @@ def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
     )
     if task_prompt:
         activation_desc += f" | task:{task_prompt}"
+    trigger_refs = _trigger_context_refs(registry)
     step = Step.create(
         desc=activation_desc,
         step_refs=[origin_step.hash],
-        content_refs=[package_ref] + gap.content_refs,
+        content_refs=trigger_refs + [package_ref] + gap.content_refs,
         chain_id=entry_chain_id,
     )
     foundation_contract = foundations.resolve_default_contract(
@@ -1092,10 +1102,11 @@ def activate_stepchain_package(package: dict, package_ref: str, gap: Gap,
     )
     if task_prompt:
         activation_desc += f" | task:{task_prompt}"
+    trigger_refs = _trigger_context_refs(registry)
     step = Step.create(
         desc=activation_desc,
         step_refs=[origin_step.hash],
-        content_refs=[package_ref] + gap.content_refs,
+        content_refs=trigger_refs + [package_ref] + gap.content_refs,
         chain_id=entry_chain_id,
     )
     nodes_by_id = {node["id"]: node for node in package.get("nodes", [])}
@@ -1147,14 +1158,15 @@ def activate_chain_reference(chains_dir: Path, chain_ref: str, activation: str, 
                              origin_step: Step, entry_chain_id: str,
                              registry: SkillRegistry, compiler, trajectory: Trajectory,
                              turn_counter: int, task_prompt: str | None = None,
-                             embedded: bool = False,
-                             tool_map: dict[str, dict] | None = None) -> Step | None:
+    embedded: bool = False,
+    tool_map: dict[str, dict] | None = None) -> Step | None:
+    trigger_refs = _trigger_context_refs(registry)
     if activation == "background":
-        compiler.record_background_trigger(entry_chain_id, refs=[chain_ref])
+        compiler.record_background_trigger(entry_chain_id, refs=trigger_refs + [chain_ref])
         return Step.create(
             desc=f"scheduled background chain:{chain_ref} for {gap.desc}",
             step_refs=[origin_step.hash],
-            content_refs=[chain_ref] + gap.content_refs,
+            content_refs=trigger_refs + [chain_ref] + gap.content_refs,
             chain_id=entry_chain_id,
         )
 

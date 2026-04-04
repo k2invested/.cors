@@ -498,11 +498,58 @@ def _inject_chain_spec(
         session.inject(f"{heading}\n{rendered}")
 
 
-def _inject_reason_parent_context(*, session: Any, reason_skill: Any) -> None:
+def _render_tool_foundations_context(
+    *,
+    registry: Any,
+    chains_dir: Path,
+    cors_root: Path,
+    tool_map: dict[str, dict],
+    git: Any,
+) -> str:
+    lines = ["## Tool Descriptions"]
+    for spec in foundations.list_action_foundations(
+        registry=registry,
+        chains_dir=chains_dir,
+        cors_root=cors_root,
+        tool_map=tool_map,
+        git=git,
+    ):
+        if spec.kind != "tool_blob":
+            continue
+        suffix = f" — {spec.desc}" if spec.desc else ""
+        lines.append(
+            f"  {spec.ref} source={spec.source} default_gap={spec.default_gap} activation={spec.activation}{suffix}"
+        )
+    if len(lines) == 1:
+        lines.append("  (no tool foundations)")
+    return "\n".join(lines)
+
+
+def _inject_reason_authoring_context(
+    *,
+    session: Any,
+    registry: Any,
+    trajectory: Any,
+    hooks: ExecutionHooks,
+    config: ExecutionConfig,
+) -> None:
     session.inject(
-        "## Delegation Preferences\n"
-        f"{reason_skill.desc}\n"
+        _render_tool_foundations_context(
+            registry=registry,
+            chains_dir=config.chains_dir,
+            cors_root=config.cors_root,
+            tool_map=config.tool_map,
+            git=hooks.git,
+        )
     )
+    action_hashes = [
+        skill.hash
+        for skill in sorted(registry.all_skills(), key=lambda skill: skill.display_name.lower())
+        if getattr(skill, "artifact_kind", None) == "action"
+    ]
+    rendered = hooks.resolve_entity(action_hashes, registry, trajectory) if action_hashes else None
+    if rendered:
+        session.inject("## Action Semantic Trees\n" + rendered)
 
 
 def _explicit_action_name_from_gap(gap: Gap) -> str | None:
@@ -1480,15 +1527,9 @@ def execute_iteration(
                 compiler.resolve_current_gap(gap.hash)
 
     elif vocab == "reason_needed":
-        print("  → reason (start codon)")
-        reason_skill = registry.resolve_by_name("reason")
-        if reason_skill:
-            _inject_reason_parent_context(session=session, reason_skill=reason_skill)
-            context_step = hooks.emit_reason_skill(reason_skill, gap, origin_step, entry.chain_id)
-            trajectory.append(context_step)
-            compiler.add_step_to_chain(context_step.hash)
+        print("  → reason controller")
         author_actions = _reason_requires_workflow_authoring(gap, registry)
-        if _should_inject_chain_spec_for_reason(gap):
+        if author_actions or _should_inject_chain_spec_for_reason(gap):
             _inject_chain_spec(
                 session=session,
                 registry=registry,
@@ -1500,43 +1541,14 @@ def execute_iteration(
             session.inject(f"## Context\n{resolved_data}")
         if author_actions:
             collect_foundations_first = _reason_should_collect_foundations_first(gap, registry)
-            session.inject(f"## Step Network\n{hooks.render_step_network(registry)}")
-            session.inject(
-                foundations.render_action_foundations(
-                    registry=registry,
-                    chains_dir=config.chains_dir,
-                    cors_root=config.cors_root,
-                    tool_map=config.tool_map,
-                    git=hooks.git,
-                )
+            _inject_reason_authoring_context(
+                session=session,
+                registry=registry,
+                trajectory=trajectory,
+                hooks=hooks,
+                config=config,
             )
             inferred_name = _inferred_action_name_from_gap(gap)
-            inferred_trigger = "manual"
-            trigger_match = re.search(r"\b([a-z_]+_needed)\b", gap.desc.lower())
-            if trigger_match:
-                inferred_trigger = f"on_vocab:{trigger_match.group(1)}"
-            frame = st_builder_module.blank_semantic_skeleton(
-                name=inferred_name,
-                desc=gap.desc,
-                trigger=inferred_trigger,
-                artifact_kind="action",
-            )
-            session.inject(
-                "## Editable Action Skeleton\n"
-                "If you are authoring the current .st layer, prefer step_chain_append.v1 to append one step at a time to the working chain. Use step_chain.v1 for a full simple linear chain only when needed, or semantic_skeleton.v1 for advanced/manual control.\n"
-                "Build inside out / back to front: foundational lower-order layers must already exist before a higher-order layer embeds them.\n"
-                "Foundational Python tools under tools/*.py are lawful lower-order layers. If one is missing, emit the concrete tool-authoring gap(s) first instead of forcing a premature skeleton.\n"
-                "Tool-script authoring is part of your structural judgment surface here: decide whether the next lawful move is to author a tool foundation, reuse an existing foundation hash, or continue the current .st layer.\n"
-                "Treat action packages/codons and tool scripts as one hash-native action environment.\n"
-                "In the Action Foundations inventory, surface=semantic_tree means an embeddable compositional unit; surface=described_blob means a foundational executable/data block.\n"
-                "When activated by name/vocab, a block uses its canonical default gap contract. When embedded by hash, you may specialize manifestation only through an explicit embedding.gap_override.\n"
-                "Tool foundations do not need kernel vocab entries. They may be referenced later by committed blob hash.\n"
-                "If a higher-order layer is still needed after this layer, do not claim the final public on_vocab trigger yet. Lower-order layers should usually stay manual/internal; the highest-order completed workflow owns the public trigger.\n"
-                "If this layer is complete but a higher-order layer is still needed, include next_layer_desc so the next reason_needed iteration can build on the committed layer hash.\n"
-                f"{'For new workflow origination, do not attempt the .st write immediately if the committed foundations are not explicit yet. First identify which tools, scripts, workflows, or extracted chains already exist and which missing foundations must be authored before the .st layer.\n' if collect_foundations_first else ''}"
-                "Prefer step_chain_append.v1 for incremental authoring. Each authored step should still carry full gap_template, manifestation, allowed_vocab, relevance, post_diff, and optional embedding. The builder will supply root, terminal, closure, and default linear transitions for the cumulative chain.\n"
-                f"{json.dumps(frame, indent=2)}"
-            )
         else:
             collect_foundations_first = False
         controller_chain = _ensure_reason_loop_chain(
@@ -1582,7 +1594,7 @@ def execute_iteration(
             "- reprogramme_needed may only be surfaced from reason_needed for entity-tree persistence.\n"
             f"- {'If this is new skills/actions/*.st origination, you own workflow authoring. Prefer returning one step_chain_append.v1 increment at a time against the working chain. You may return step_chain.v1 for a full simple chain or semantic_skeleton.v1 only when explicit manual spine control is necessary; actualize only when the chain is complete; do not emit another generic create/write file gap.' if author_actions else 'If new reusable workflow structure is needed, author the concrete creation/update gap(s) needed to actualize it.'}\n"
             "- If an existing workflow should be triggered, emit the activation gap(s) for that path.\n"
-            f"{'- For new action/workflow packages, prefer step_chain_append.v1 for incremental authoring, step_chain.v1 for a full simple single-chain action, and semantic_skeleton.v1 only when you need explicit manual spine control.\n- step_chain_append.v1 should contain one authored step and optional metadata updates; use complete=true when the current working chain is ready to actualize.\n- step_chain.v1 and step_chain_append.v1 steps must still carry real chain semantics: gap_template, manifestation, allowed_vocab, relevance, post_diff, and optional embedding.\n- The builder will derive root, terminal, closure, and default ordered transitions for the cumulative chain.\n- If a foundational tool is missing, emit the concrete tool-authoring gap(s) first: content_needed for a new tools/*.py file, script_edit_needed or hash_edit_needed for an existing tool.\n- Treat action packages/codons, extracted chains, and tool scripts as one hash-native action environment.\n- surface=semantic_tree means an embeddable compositional unit. surface=described_blob means a foundational executable/data block.\n- Name/vocab activation uses the canonical default gap contract. Hash embedding may specialize manifestation only through an explicit embedding.gap_override.\n- Reference action/codon packages by committed skill hash, extracted chains by chain hash, and tool foundations by committed blob hash.\n- Tools with no classifier vocab are still lawful foundations; do not try to invent kernel vocab entries for them.\n- Author one chain step per iteration. Do not try to manifest the full multi-layer workflow in one pass.\n- Embedded workflows, action packages, extracted chains, or tool foundations must already exist before you embed them.\n- If a higher-order layer is still needed after this layer commits, include next_layer_desc and optionally next_layer_content_refs using only existing committed hashes.\n- If a higher-order layer is still needed, keep trigger=manual on the current layer; the final public on_vocab trigger belongs on the highest-order completed workflow.\n- This controller is a visible chain. If authoring fails, surface the corrected reason_needed follow-on gap for the same target instead of ending in prose.\n' if author_actions else ''}"
+            f"{'- For new action/workflow packages, prefer step_chain_append.v1 for incremental authoring, step_chain.v1 for a full simple single-chain action, and semantic_skeleton.v1 only when you need explicit manual spine control.\n- step_chain_append.v1 should contain one authored step and optional metadata updates; use complete=true when the current working chain is ready to actualize.\n- step_chain.v1 and step_chain_append.v1 steps must still carry real chain semantics: gap_template, manifestation, allowed_vocab, relevance, post_diff, and optional embedding.\n- The builder will derive root, terminal, closure, and default ordered transitions for the cumulative chain.\n- The build loop sees tool descriptions, existing action chains as semantic trees, and the chain construction spec. Use that context to choose the next lawful append.\n- If a foundational tool is missing, emit the concrete tool-authoring gap(s) first: content_needed for a new tools/*.py file, script_edit_needed or hash_edit_needed for an existing tool.\n- Author one chain step per iteration. Do not try to manifest the full multi-layer workflow in one pass.\n- Embedded workflows, action packages, extracted chains, or tool foundations must already exist before you embed them.\n- If a higher-order layer is still needed after this layer commits, include next_layer_desc and optionally next_layer_content_refs using only existing committed hashes.\n- If a higher-order layer is still needed, keep trigger=manual on the current layer; the final public on_vocab trigger belongs on the highest-order completed workflow.\n- This controller is a visible chain. If authoring fails, surface the corrected reason_needed follow-on gap for the same target instead of ending in prose.\n' if author_actions else ''}"
             f"{'- If the committed foundations are not explicit yet, do not return step_chain_append.v1, step_chain.v1, or semantic_skeleton.v1 yet. First surface the observation/judgment gaps needed to identify which tools, scripts, workflows, or chains already exist and which missing foundations must be authored before the .st layer.\n' if collect_foundations_first else ''}"
             "Keep reasoning stateful and current-turn; do not defer by scheduling background work unless a later gap explicitly does so."
         )

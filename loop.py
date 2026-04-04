@@ -1461,7 +1461,7 @@ def run_turn(
         "    Use this when background work must explicitly rejoin the parent chain.\n"
         "    Suspends the parent flow until the sub-agent or background branch is ready.\n\n"
         "  commit_needed — END CODON. Do NOT emit this directly. It is injected automatically\n"
-        "    by reason.st when a commitment is manifested. It sits at lowest relevance behind\n"
+        "    by the workflow commitment path when a commitment is manifested. It sits at lowest relevance behind\n"
         "    all commitment gaps — fires last, reintegrates the full commitment tree into\n"
         "    main context, then closes or continues the chain. Compiler laws maintained.\n\n"
         "  reprogramme_needed — PERSIST CODON. Stateless semantic state update. USE THIS when:\n"

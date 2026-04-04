@@ -21,11 +21,11 @@ def test_entity_skill_detection_distinguishes_entity_from_action_and_codon():
     reg = registry()
     admin = reg.resolve_by_name("admin")
     hash_edit = reg.resolve_by_name("hash_edit")
-    reason = reg.resolve_by_name("reason")
+    trigger = reg.resolve_by_name("trigger")
 
     assert admin is not None and loop._is_entity_skill(admin) is True
     assert hash_edit is not None and loop._is_entity_skill(hash_edit) is False
-    assert reason is not None and loop._is_entity_skill(reason) is False
+    assert trigger is not None and loop._is_entity_skill(trigger) is False
 
 
 def test_resolve_hash_injects_entity_but_reads_action_package():
@@ -69,7 +69,7 @@ def test_render_step_network_shows_entities_packages_and_commands(tmp_path):
     assert "compiled_stepchains" in network
     assert "commands" in network
     assert "admin.st" in network
-    assert "reason.st" in network
+    assert "trigger.st" in network
     assert package_hash in network
 
 
