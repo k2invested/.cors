@@ -278,6 +278,48 @@ def _runtime_step_signature(step: dict, gaps: list[dict]) -> str:
     return f"{{{kind}{flow}{count}}}"
 
 
+def _runtime_explicit_step_state(node: dict) -> str | None:
+    meta = dict(node.get("meta", {}) or {})
+    text = " ".join(
+        str(part or "")
+        for part in (
+            node.get("goal"),
+            node.get("action"),
+            meta.get("failure_source"),
+            meta.get("failure_detail"),
+            meta.get("rogue_kind"),
+        )
+    ).lower()
+    if "exhausted after" in text or "reason loop: exhausted" in text:
+        return "exhausted"
+    if "blocked" in text:
+        return "blocked"
+    return None
+
+
+def _derive_runtime_step_states(nodes: list[dict]) -> None:
+    downstream_state: str | None = None
+    for node in reversed(nodes):
+        gaps = list(node.get("gaps", []) or ([] if not node.get("gap") else [node.get("gap")]))
+        has_active = any(gap.get("status") == "active" for gap in gaps)
+        has_dormant = any(gap.get("status") == "dormant" for gap in gaps)
+        explicit = _runtime_explicit_step_state(node)
+        if explicit:
+            state = explicit
+        elif has_active:
+            state = "open"
+        elif downstream_state in {"blocked", "exhausted"}:
+            state = downstream_state
+        elif downstream_state in {"open", "progressed"}:
+            state = "open"
+        elif has_dormant:
+            state = "progressed"
+        else:
+            state = "resolved"
+        node.setdefault("meta", {})["state"] = state
+        downstream_state = state if state in {"open", "progressed", "blocked", "exhausted"} else None
+
+
 def _semantic_parent_map(phases: list[dict]) -> dict[str, str]:
     parents: dict[str, str] = {}
     ids = {phase.get("id") for phase in phases}
@@ -383,6 +425,8 @@ def build_runtime_semantic_tree(steps: list[dict], *, source_type: str, source_r
             }
         )
         previous_id = step_id
+
+    _derive_runtime_step_states(nodes)
 
     semantic_tree = {
         "version": "semantic_tree.v1",
@@ -633,6 +677,8 @@ def render_semantic_tree(tree: dict) -> str:
             f"[{node.get('kind', 'unknown')}] action:{node.get('action', '?')}"
         )
         lines.append(f"  {cont}  goal: {node.get('goal', '(none)')}")
+        if meta.get("state"):
+            lines.append(f"  {cont}  step.state: {meta.get('state')}")
         lines.append(f"  {cont}  gap.desc: {gap.get('desc', node.get('goal', '(none)'))}")
         lines.append(
             f"  {cont}  gap.state: status={gap.get('status', '(n/a)')} "

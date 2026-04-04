@@ -916,13 +916,14 @@ class Trajectory:
                 ref_str = self._render_refs(refs.get("step_refs", []) or [], refs.get("content_refs", []) or [], registry)
                 commit_str = f" → commit:{meta.get('commit')}" if meta.get("commit") else ""
                 time_tag = f" ({absolute_time(meta['timestamp'])})" if meta.get("timestamp", 0) > 0 else ""
+                state_tag = f" [{meta.get('state')}]" if meta.get("state") else ""
                 rogue_tag = ""
                 if meta.get("rogue"):
                     extras = [part for part in [meta.get("rogue_kind"), meta.get("failure_source")] if part]
                     rogue_tag = f" (rogue:{', '.join(extras)})" if extras else " (rogue)"
                 lines.append(
                     f"  {branch}─ {node.get('signature')} step:{node.get('id')} "
-                    f"\"{node.get('goal', '')}\"{ref_str}{commit_str}{time_tag}{rogue_tag}{self._compact_contract_suffix(node)}"
+                    f"\"{node.get('goal', '')}\"{state_tag}{ref_str}{commit_str}{time_tag}{rogue_tag}{self._compact_contract_suffix(node)}"
                 )
                 for assessment_line in meta.get("assessment", []) or []:
                     lines.append(f"  {cont}   assessment: {assessment_line}")

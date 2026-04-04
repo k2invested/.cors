@@ -3870,6 +3870,223 @@ def test_p12_reason_loop_retry_desc_repairs_next_step_append_when_working_chain_
     assert "(1/10)" in desc
 
 
+def test_p12_reason_detects_same_target_authoring_restatement_as_nonprogress():
+    parent_gap = make_gap(
+        "Create skills/actions/test.st with test_needed.",
+        vocab="reason_needed",
+        content_refs=["skills/actions/test.st"],
+    )
+    child_gap = make_gap(
+        "Compose skills/actions/test.st as a valid step_chain.v1 action package ready for actualization.",
+        vocab="content_needed",
+        content_refs=["skills/actions/test.st"],
+    )
+
+    assert execution_engine_module._reason_child_gaps_are_authoring_nonprogress([child_gap], parent_gap)
+
+
+def test_p12_reason_detects_low_confidence_same_target_build_gap_as_nonprogress():
+    parent_gap = make_gap(
+        "Need to create a new skills/actions/test.st flow with a single command exec gap.",
+        vocab="reason_needed",
+        content_refs=["skills/actions/test.st"],
+    )
+    child_gap = make_gap(
+        "Inspect whether skills/actions/test.st should continue with the next build step.",
+        vocab="reason_needed",
+        content_refs=["skills/actions/test.st"],
+        confidence=0.4,
+    )
+
+    assert execution_engine_module._reason_child_gaps_are_low_confidence_build_nonprogress([child_gap], parent_gap)
+
+
+def test_p12_reason_needed_retries_when_authoring_output_is_same_target_restatement():
+    class FakeSession:
+        def __init__(self):
+            self.calls = 0
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            self.calls += 1
+            return json.dumps(
+                {
+                    "gaps": [
+                        {
+                            "desc": "Compose skills/actions/test.st as a valid step_chain.v1 action package ready for actualization.",
+                            "vocab": "content_needed",
+                            "content_refs": ["skills/actions/test.st"],
+                        }
+                    ]
+                }
+            )
+
+    traj = Trajectory()
+    gap = make_gap(
+        "Need to create a new skills/actions/test.st flow with a single command exec gap that prompts the user to compose a command to execute all test scripts, and set it up with a vocab trigger test_needed.",
+        vocab="reason_needed",
+        content_refs=["skills/actions/test.st"],
+    )
+    origin_step = make_step("origin", gaps=[gap])
+    traj.append(origin_step)
+    chain = Chain(hash="chain1", origin_gap=gap.hash, steps=[origin_step.hash])
+    traj.add_chain(chain)
+    compiler = Compiler(traj)
+    compiler.active_chain = chain
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        render_session_context=lambda trajectory, registry_obj, user_message, active_chain_id=None, active_gap=None: "## Session Context\nactive session",
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert outcome.step_result.desc.startswith("reason loop: validation failed (1/10):")
+    assert outcome.step_result.gaps
+    assert outcome.step_result.gaps[0].vocab == "reason_needed"
+    assert "non-progress: authoring restated the same structural target" in outcome.step_result.assessment[0]
+    assert chain.loop_state["status"] == "active"
+    assert chain.loop_state["attempt_count"] == 1
+    assert chain.loop_state["last_failure"].startswith("non-progress:")
+
+
+def test_p12_reason_authoring_prompt_reframes_confidence_for_build_loop():
+    class FakeSession:
+        def __init__(self):
+            self.prompts = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.prompts.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            self.prompts.append(user_content or "")
+            return json.dumps(
+                {
+                    "version": "step_chain.v1",
+                    "artifact": {"kind": "action", "protected_kind": "action"},
+                    "name": "test",
+                    "desc": "Execute project tests.",
+                    "trigger": "on_vocab:test_needed",
+                    "steps": [
+                        {
+                            "id": "run_tests",
+                            "kind": "mutate",
+                            "goal": "Execute all relevant test scripts.",
+                            "gap_template": {
+                                "desc": "Compose a command that executes all relevant test scripts.",
+                                "content_refs": [],
+                                "step_refs": [],
+                            },
+                            "manifestation": {
+                                "execution_mode": "runtime_vocab",
+                                "runtime_vocab": "command_needed",
+                            },
+                            "allowed_vocab": ["command_needed"],
+                            "relevance": 1.0,
+                            "post_diff": True,
+                        }
+                    ],
+                }
+            )
+
+    written_path = ROOT / "tmp_test_build_prompt.st"
+    captured = {}
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap(
+        "Create a new workflow file at skills/actions/test.st that executes all tests via test_needed.",
+        vocab="reason_needed",
+    )
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: (captured.update({"tool": tool, "params": params}) or (f"Written: {written_path}", 0)),
+        auto_commit=lambda message, paths=None: ("abc123", None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        render_session_context=lambda trajectory, registry_obj, user_message, active_chain_id=None, active_gap=None: "## Session Context\nactive session",
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    try:
+        outcome = execution_engine_module.execute_iteration(
+            entry=entry,
+            signal=GovernorSignal.ALLOW,
+            session=session,
+            origin_step=origin_step,
+            trajectory=traj,
+            compiler=compiler,
+            registry=registry(),
+            current_turn=0,
+            hooks=hooks,
+            config=config,
+        )
+        assert outcome.step_result is not None
+        prompt_blob = "\n".join(session.prompts)
+        assert "confidence should score only the semantic next-move fitness that the validator cannot deterministically prove" in prompt_blob
+    finally:
+        written_path.unlink(missing_ok=True)
+
+
 def test_p12_action_foundations_render_skills_tools_and_default_contracts():
     rendered = action_foundations_module.render_action_foundations(
         registry=registry(),
@@ -4544,6 +4761,65 @@ def test_p12_semantic_tree_render_shows_foundation_and_embedding_contract():
     assert "default_gap=hash_edit_needed" in rendered
     assert f"contract: block_ref={skill('hash_edit').hash} activation_mode=hash_embedded" in rendered
     assert "contract.gap_override:" in rendered
+
+
+def test_p13_runtime_semantic_tree_marks_parent_open_while_descendants_unresolved():
+    parent_gap = make_gap("inspect canonical action", resolved=True, vocab="hash_resolve_needed")
+    child_gap = make_gap("compose test flow", vocab="content_needed")
+    step1 = make_step("inspect structure", gaps=[parent_gap])
+    step2 = make_step("author test flow", step_refs=[step1.hash], gaps=[child_gap])
+
+    tree = manifest_engine_module.build_runtime_semantic_tree(
+        [step1.to_dict(), step2.to_dict()],
+        source_type="realized_chain",
+        source_ref="chain_state_demo",
+        summary_desc="authoring chain",
+    )
+    rendered_tree = manifest_engine_module.render_semantic_tree(tree)
+
+    assert rendered_tree.count("step.state: open") == 2
+
+    traj = Trajectory()
+    traj.append(step1)
+    traj.append(step2)
+    chain = Chain.create(parent_gap.hash, step1.hash)
+    traj.add_chain(chain)
+    chain.add_step(step2.hash)
+    traj.add_chain(chain)
+    rendered_chain = traj.render_chain(chain.hash, registry())
+
+    assert f"step:{step1.hash} \"inspect structure\" [open]" in rendered_chain
+    assert f"step:{step2.hash} \"author test flow\" [open]" in rendered_chain
+
+
+def test_p13_runtime_semantic_tree_marks_branch_resolved_after_descendants_close():
+    parent_gap = make_gap("inspect canonical action", resolved=True, vocab="hash_resolve_needed")
+    step1 = make_step("inspect structure", gaps=[parent_gap])
+    step2 = make_step("author test flow", step_refs=[step1.hash], gaps=[])
+
+    tree = manifest_engine_module.build_runtime_semantic_tree(
+        [step1.to_dict(), step2.to_dict()],
+        source_type="realized_chain",
+        source_ref="chain_state_resolved",
+        summary_desc="authoring chain",
+        resolved=True,
+    )
+    rendered_tree = manifest_engine_module.render_semantic_tree(tree)
+
+    assert rendered_tree.count("step.state: resolved") == 2
+
+    traj = Trajectory()
+    traj.append(step1)
+    traj.append(step2)
+    chain = Chain.create(parent_gap.hash, step1.hash)
+    traj.add_chain(chain)
+    chain.add_step(step2.hash)
+    chain.resolved = True
+    traj.add_chain(chain)
+    rendered_chain = traj.render_chain(chain.hash, registry())
+
+    assert f"step:{step1.hash} \"inspect structure\" [resolved]" in rendered_chain
+    assert f"step:{step2.hash} \"author test flow\" [resolved]" in rendered_chain
 
 
 def test_p12_reason_injects_tool_foundations_for_action_authoring():
