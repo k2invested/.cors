@@ -11,6 +11,12 @@ Input JSON:
 
 Operates on the project git repository (auto-detected from script location).
 """
+TOOL_DESC = 'version control operations on the project repository.'
+TOOL_MODE = 'mutate'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'artifacts'
+TOOL_RUNTIME_ARTIFACTS = True
+
 import json
 import subprocess
 import sys

@@ -9,6 +9,12 @@ Input JSON:
 
 Env: WORKSPACE — sandbox root.
 """
+TOOL_DESC = "CRUD for the admin dev agent's architectural knowledge store."
+TOOL_MODE = 'mutate'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'artifacts'
+TOOL_DEFAULT_ARTIFACTS = ['principles.json']
+
 import json
 import os
 import re

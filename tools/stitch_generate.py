@@ -18,6 +18,12 @@ Requires:
   npm install @google/stitch-sdk
   STITCH_API_KEY env var (from stitch.withgoogle.com settings)
 """
+TOOL_DESC = 'Generate UI designs via Google Stitch SDK.'
+TOOL_MODE = 'mutate'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'artifacts'
+TOOL_DEFAULT_ARTIFACTS = ['ui_output/']
+
 
 import json
 import os

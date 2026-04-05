@@ -14,6 +14,11 @@ Input JSON:
 Env:
   YOUTUBE_API_KEY — YouTube Data API v3 key (required for search).
 """
+TOOL_DESC = 'search YouTube Shorts and extract transcripts.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'none'
+
 import json
 import os
 import re as _re

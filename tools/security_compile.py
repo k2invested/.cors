@@ -15,8 +15,11 @@ security checks, projects recursive execution shape, recursively composes
 embedded package profiles where possible, and emits a security_compile.v1
 result.
 """
-
 from __future__ import annotations
+TOOL_DESC = 'unified structural security compiler for step-shaped artifacts.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'none'
 
 import json
 import sys

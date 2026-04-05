@@ -16,6 +16,12 @@ Config:
 Env:
   YOUTUBE_API_KEY — required
 """
+TOOL_DESC = 'runs independently of the kernel.'
+TOOL_MODE = 'mutate'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'artifacts'
+TOOL_DEFAULT_ARTIFACTS = ['data/research/queries.json', 'data/research/transcripts.json']
+
 import argparse
 import json
 import os

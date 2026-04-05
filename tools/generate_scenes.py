@@ -21,6 +21,12 @@ If no anchor_prompt is provided, falls back to independent scene_direct generati
 
 Env: RUNWAYML_API_SECRET or RUNWAY_API_KEY
 """
+TOOL_DESC = 'batch generate video clips via Runway Gen-4/4.5.'
+TOOL_MODE = 'mutate'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'artifacts'
+TOOL_RUNTIME_ARTIFACTS = True
+
 import json
 import os
 import subprocess

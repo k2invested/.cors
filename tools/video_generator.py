@@ -44,8 +44,12 @@ Job schema example:
   }
 }
 """
-
 from __future__ import annotations
+TOOL_DESC = 'YouTube Shorts video generator with narration, captions, and simple editing.'
+TOOL_MODE = 'mutate'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'artifacts'
+TOOL_RUNTIME_ARTIFACTS = True
 
 import argparse
 import json

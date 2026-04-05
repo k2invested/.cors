@@ -11,6 +11,12 @@ Input JSON:
 
 Env: OPENAI_API_KEY
 """
+TOOL_DESC = 'generate TTS narration audio via OpenAI.'
+TOOL_MODE = 'mutate'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'artifacts'
+TOOL_RUNTIME_ARTIFACTS = True
+
 import json
 import os
 import sys

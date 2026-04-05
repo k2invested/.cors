@@ -33,6 +33,12 @@ Input JSON:
 
 Output: the generated .st file content (JSON)
 """
+TOOL_DESC = 'deterministic extraction of a resolved chain into a .st file.'
+TOOL_MODE = 'mutate'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'artifacts'
+TOOL_RUNTIME_ARTIFACTS = True
+
 
 import json
 import sys

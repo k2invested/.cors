@@ -3,6 +3,12 @@
 
 from __future__ import annotations
 
+TOOL_DESC = "write validated tool script scaffolds for tool_needed."
+TOOL_MODE = "mutate"
+TOOL_SCOPE = "workspace"
+TOOL_POST_OBSERVE = "artifacts"
+TOOL_RUNTIME_ARTIFACTS = True
+
 import json
 import os
 import sys

@@ -16,6 +16,12 @@ Input (stdin JSON):
 
 Output: file content, diff, or confirmation.
 """
+TOOL_DESC = 'universal file I/O by hash reference.'
+TOOL_MODE = 'mutate'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'artifacts'
+TOOL_RUNTIME_ARTIFACTS = True
+
 
 import json
 import os

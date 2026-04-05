@@ -9,6 +9,11 @@ Output: JSON with crime counts by category and monthly trend.
 
 Uses the data.police.uk API (free, no API key needed).
 """
+TOOL_DESC = 'fetch UK crime data from data.police.uk.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'none'
+
 import json
 import sys
 import urllib.request

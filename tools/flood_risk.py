@@ -9,6 +9,11 @@ Output: JSON with flood zone, risk level, and nearby flood areas.
 
 Uses Environment Agency Flood API (free, no API key needed).
 """
+TOOL_DESC = 'UK Environment Agency flood risk assessment.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'none'
+
 import json
 import sys
 import urllib.request

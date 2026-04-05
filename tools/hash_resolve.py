@@ -10,6 +10,11 @@ Input (stdin JSON):
 Output (stdout):
   Resolved steps with their content, refs, and metadata.
 """
+TOOL_DESC = 'resolve blob hashes from trajectory.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'none'
+
 
 import json
 import os

@@ -10,6 +10,11 @@ Stops on first non-zero exit code. Output from all steps is accumulated.
 
 Env: WORKSPACE — sandbox root.
 """
+TOOL_DESC = 'execute shell commands sandboxed to workspace.'
+TOOL_MODE = 'mutate'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'log'
+
 import json, os, subprocess, sys, tempfile, re
 
 MAX_RESULT_CHARS = 32000

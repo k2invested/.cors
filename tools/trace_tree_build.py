@@ -12,8 +12,11 @@ It does not simulate. It derives a canonical unfolding trace from:
 The result is trace_tree.v1: a replay-oriented structure that captures
 gap expression, manifestation, topology, and local outcome.
 """
-
 from __future__ import annotations
+TOOL_DESC = 'derive trace_tree.v1 from step-shaped sources.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'none'
 
 import json
 import sys

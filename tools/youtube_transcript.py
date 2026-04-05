@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """youtube_transcript — fetch a YouTube transcript through the imported helper."""
-
 from __future__ import annotations
+TOOL_DESC = 'fetch a YouTube transcript through the imported helper.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'none'
 
 import json
 import subprocess

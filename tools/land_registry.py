@@ -10,6 +10,11 @@ Output: JSON array of sale records with price, date, property type, address.
 
 Uses the Land Registry SPARQL endpoint (free, no API key needed).
 """
+TOOL_DESC = 'fetch UK Land Registry Price Paid data.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'none'
+
 import json
 import sys
 import urllib.request

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """validate_tool_contract — validate required tool contract fields."""
-
 from __future__ import annotations
+TOOL_DESC = 'validate required tool contract fields.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'none'
 
 import json
 import os

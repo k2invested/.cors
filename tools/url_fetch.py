@@ -6,6 +6,11 @@ Env: WORKSPACE — sandbox root (not used for fetching, but respected for contex
 
 Fetches the URL, strips HTML tags to plain text, truncates to max_chars, prints to stdout.
 """
+TOOL_DESC = 'fetch and read the full content of a specific URL.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'none'
+
 import json, os, re, sys
 import urllib.request
 import urllib.error

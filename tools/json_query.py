@@ -4,6 +4,11 @@
 Input JSON: {"query": "<JSONPath or text search>", "filter": "<optional text filter>"}
 Env: SELF_JSON_PATH — path to the self.json memory store.
 """
+TOOL_DESC = 'JSONPath query against agent memory stores.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'none'
+
 import json, os, sys
 
 MAX_RESULTS = 50

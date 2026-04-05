@@ -4,6 +4,11 @@
 Input JSON: {"pattern": "<regex>", "path": "<relative scope, default '.'>"}
 Env: WORKSPACE — sandbox root.
 """
+TOOL_DESC = 'regex grep across files.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'none'
+
 import json, os, re, sys
 
 sys.path.insert(0, os.path.dirname(__file__))

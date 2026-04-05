@@ -6,6 +6,11 @@ Env: WORKSPACE — sandbox root.
 
 Returns whether the PDF has fillable form fields.
 """
+TOOL_DESC = 'Check if a PDF has fillable form fields.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'none'
+
 import json, os, sys
 
 sys.path.insert(0, os.path.dirname(__file__))

@@ -11,6 +11,11 @@ Output: JSON with deprivation indices, population, housing data.
 Uses ONS Open Geography API and IoD (Indices of Deprivation) datasets.
 Free, no API key needed.
 """
+TOOL_DESC = 'UK ONS area demographics and deprivation data.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'none'
+
 import json
 import sys
 import urllib.request

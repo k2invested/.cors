@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from tools.tool_contract import load_tool_contract
+from tools.tool_registry import public_tool_paths
 from vocab_registry import is_bridge, is_mutate, is_observe
 
 
@@ -137,11 +138,8 @@ def _tool_specs(*, cors_root: Path, tool_map: dict[str, dict], git: Any) -> list
             inverse_tool_map[tool] = vocab
 
     specs: list[FoundationSpec] = []
-    tool_root = cors_root / "tools"
-    if not tool_root.exists():
-        return specs
-    for path in sorted(tool_root.glob("*.py")):
-        rel = str(path.resolve().relative_to(cors_root))
+    for rel in public_tool_paths(cors_root):
+        path = cors_root / rel
         blob = _tool_blob_ref(path, git=git, cors_root=cors_root)
         if not blob:
             continue

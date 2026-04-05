@@ -4,6 +4,11 @@
 Input JSON: {"action": "status"}
 Env: WORKSPACE, EMAIL_SENDER, EMAIL_RECIPIENT.
 """
+TOOL_DESC = 'read-only email observation: outbox status, SMTP config.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'none'
+
 import json, os, sys
 
 def main():

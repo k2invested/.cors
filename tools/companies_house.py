@@ -13,6 +13,11 @@ Output: JSON with company details, officers, filings.
 Uses Companies House API (free, requires API key from developer.company-information.service.gov.uk).
 Env: COMPANIES_HOUSE_API_KEY
 """
+TOOL_DESC = 'UK Companies House company search and filings.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'none'
+
 import json
 import os
 import sys

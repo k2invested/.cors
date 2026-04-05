@@ -29,6 +29,8 @@ from skills.loader import compute_skill_hash
 from step import Epistemic, Gap, Step
 import manifest_engine as me
 from tools import st_builder as st_builder_module
+from tools.tool_contract import load_tool_contract
+from tools.tool_registry import public_tool_paths
 
 
 @dataclass
@@ -115,6 +117,28 @@ def _post_observe_resolution(
     if commit_sha:
         return [commit_sha], f"observe commit:{commit_sha}"
     return None, None
+
+
+def _render_public_tool_registry(cors_root: Path) -> str:
+    lines = ["## Public Tool Registry"]
+    for rel in public_tool_paths(cors_root):
+        contract = load_tool_contract(cors_root / rel)
+        if contract is None:
+            lines.append(f"- {rel} | contract=missing")
+            continue
+        artifact_mode = (
+            "runtime_artifacts"
+            if contract.runtime_artifacts else
+            ",".join(contract.default_artifacts) if contract.default_artifacts else
+            "none"
+        )
+        lines.append(
+            f"- {rel} | {contract.mode}/{contract.scope} "
+            f"| post_observe={contract.post_observe} "
+            f"| artifacts={artifact_mode} "
+            f"| {contract.desc}"
+        )
+    return "\n".join(lines)
 
 
 def _reason_next_layer_gap(intent: dict | None, *, step_hash: str, authored_refs: list[str], current_turn: int) -> Gap | None:
@@ -1313,6 +1337,7 @@ def execute_iteration(
                 f"Use the EXACT current file content for the 'old' field. Do not guess."
             )
         elif vocab == "tool_needed":
+            session.inject(_render_public_tool_registry(config.cors_root))
             compose_prompt = (
                 f"Compose a tool scaffold to resolve this gap:\n"
                 f"  gap:{gap.hash} \"{gap.desc}\"\n\n"

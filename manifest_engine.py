@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import action_foundations as foundations
-from step import Step, Gap, Epistemic, Trajectory, vocab_class
+from step import Step, Gap, Epistemic, Trajectory, absolute_time, vocab_class
 from skills.loader import Skill, SkillRegistry
 from tools import st_builder as st_builder_module
 
@@ -116,6 +116,23 @@ def _node_kind_code(node: dict) -> str:
     return NODE_KIND_CODES.get(node.get("kind"), "_")
 
 
+def _compact_frontier_code(node: dict) -> str:
+    kind = _node_kind_code(node)
+    gaps = list(node.get("gaps", []) or [])
+    if not gaps and isinstance(node.get("gap"), dict) and node.get("gap"):
+        gap = dict(node.get("gap", {}) or {})
+        if gap.get("status") in {"active", "dormant", "resolved"}:
+            gaps = [gap]
+
+    active = sum(1 for gap in gaps if gap.get("status") == "active")
+    dormant = sum(1 for gap in gaps if gap.get("status") == "dormant")
+    if active:
+        return f"{kind}+{active}"
+    if dormant:
+        return f"{kind}~{dormant}"
+    return f"{kind}="
+
+
 def _spawn_code(node: dict) -> str:
     generation = node.get("generation", {})
     return SPAWN_CODES.get(generation.get("spawn_mode"), "_")
@@ -155,8 +172,52 @@ def _render_ref_list(refs: list[str]) -> str:
     return ", ".join(refs) if refs else "(none)"
 
 
+def _merged_refs(*groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    for group in groups:
+        for ref in group or []:
+            if isinstance(ref, str) and ref not in merged:
+                merged.append(ref)
+    return merged
+
+
 def _semantic_fields(doc: dict) -> dict:
     return {field: doc.get(field) for field in ENTITY_SEMANTIC_FIELDS if field in doc}
+
+
+def _tree_latest_timestamp(nodes: list[dict]) -> float:
+    values: list[float] = []
+    for node in nodes:
+        timestamp = dict(node.get("meta", {}) or {}).get("timestamp")
+        if isinstance(timestamp, (int, float)) and timestamp > 0:
+            values.append(float(timestamp))
+    return max(values) if values else 0.0
+
+
+def _tree_compact_status(tree: dict) -> str:
+    if tree.get("resolved") is True:
+        return "resolved"
+    return "active"
+
+
+def _flat_ref_surface(node: dict) -> str:
+    refs = dict(node.get("refs", {}) or {})
+    own_refs = _merged_refs(refs.get("step_refs", []) or [], refs.get("content_refs", []) or [])
+    return _render_ref_list(own_refs)
+
+
+def _grouped_gap_refs(gap: dict) -> str:
+    return (
+        f"step:{_render_ref_list(gap.get('step_refs', []) or [])}, "
+        f"content:{_render_ref_list(gap.get('content_refs', []) or [])}"
+    )
+
+
+def _render_gap_status(gap: dict, *, package_preview: bool) -> str:
+    status = gap.get("status")
+    if isinstance(status, str) and status not in {"", "(n/a)"}:
+        return status
+    return "planned" if package_preview else "active"
 
 
 def _format_semantic_value(value, *, max_inline: int = 3) -> str:
@@ -584,172 +645,84 @@ def render_semantic_tree(tree: dict) -> str:
     source_type = tree.get("source_type", "unknown")
     source_ref = tree.get("source_ref", tree.get("root_id", ""))
     lines = [f"semantic_tree:{source_type}:{source_ref}"]
-    if tree.get("desc"):
-        lines.append(f"  desc: {tree.get('desc')}")
-    if tree.get("root_id"):
-        lines.append(f"  root: {tree.get('root_id')}")
-    if tree.get("origin_gap"):
-        lines.append(f"  origin_gap: {tree.get('origin_gap')}")
-    if tree.get("resolved") is not None:
-        lines.append(f"  resolved: {tree.get('resolved')}")
-
-    summary = dict(tree.get("summary", {}) or {})
-    if summary:
-        lines.append(
-            "  summary: "
-            f"nodes={summary.get('node_count', 0)} "
-            f"post_diff_nodes={summary.get('post_diff_nodes', 0)} "
-            f"runtime_vocab_nodes={summary.get('runtime_vocab_nodes', 0)} "
-            f"bridge_nodes={summary.get('bridge_nodes', 0)} "
-            f"mutation_nodes={summary.get('mutation_nodes', 0)} "
-            f"max_depth={summary.get('max_depth', 0)}"
-        )
+    nodes = list(tree.get("nodes", []) or [])
+    if not nodes:
+        lines.append("nodes: (none)")
+        return "\n".join(lines)
 
     package = dict(tree.get("package", {}) or {})
     foundation = dict(tree.get("foundation", {}) or {})
+    latest_ts = _tree_latest_timestamp(nodes)
+    latest_suffix = f" [{absolute_time(latest_ts)}]" if latest_ts else ""
+
     if package:
-        lines.append(f"  name: {package.get('name', '(none)')}")
-        lines.append(f"  trigger: {package.get('trigger', '(none)')}")
-        if package.get("desc"):
-            lines.append(f"  package_desc: {package.get('desc')}")
-        lines.append(
-            "  package: "
-            f"name={package.get('name', '(none)')} "
-            f"trigger={package.get('trigger', '(none)')}"
-        )
-        artifact = dict(package.get("artifact", {}) or {})
-        if artifact:
-            lines.append(
-                "  artifact: "
-                f"kind={artifact.get('kind', '(none)')} "
-                f"protected_kind={artifact.get('protected_kind', '(none)')} "
-                f"lineage={artifact.get('lineage', '(none)')}"
-            )
-        refs = dict(package.get("refs", {}) or {})
-        lines.append(f"  refs: {', '.join(sorted(refs.keys())) if refs else '(none)'}")
-        closure = dict(package.get("closure", {}) or {})
-        if closure:
-            success = dict(closure.get("success", {}) or {})
-            failure = dict(closure.get("failure", {}) or {})
-            limits = dict(closure.get("limits", {}) or {})
-            lines.append(
-                "  closure: "
-                f"success_terminal={success.get('requires_terminal', '(none)')} "
-                f"no_active_gaps={success.get('requires_no_active_gaps', False)} "
-                f"allow_clarify_terminal={failure.get('allow_clarify_terminal', False)} "
-                f"max_chain_depth={limits.get('max_chain_depth', '(none)')}"
-            )
-        semantics = dict(package.get("semantics", {}) or {})
-        if semantics:
-            lines.append("  semantics")
-            for key in sorted(semantics):
-                lines.append(f"    {key}: {_format_semantic_value(semantics[key])}")
+        package_name = package.get("name", source_ref or "(none)")
+        package_desc = package.get("desc") or package_name
+        lines.append(f'package:{package_name} "{package_desc}" ({len(nodes)} steps){latest_suffix}')
+        if package.get("trigger"):
+            lines.append(f"trigger: {package.get('trigger')}")
+    else:
+        chain_desc = tree.get("desc") or source_ref or "semantic chain"
+        lines.append(f'chain:{source_ref} "{chain_desc}" ({_tree_compact_status(tree)}, {len(nodes)} steps){latest_suffix}')
+        if tree.get("origin_gap"):
+            lines.append(f"origin: {tree.get('origin_gap')}")
+    lines.append("legend: step{o/m/b/c + frontier}; gap{status + surface + ref-counts}")
+
     if foundation:
         lines.append(
-            "  foundation: "
+            "foundation: "
             f"ref={foundation.get('ref', '(none)')} "
             f"kind={foundation.get('kind', '(none)')} "
             f"surface={foundation.get('surface', '(none)')} "
             f"activation={foundation.get('activation', '(none)')} "
-            f"default_gap={foundation.get('default_gap', '(none)')} "
             f"omo={foundation.get('omo_role', '(none)')}"
         )
 
-    nodes = list(tree.get("nodes", []) or [])
-    if not nodes:
-        lines.append("  nodes: (none)")
-        return "\n".join(lines)
-
-    lines.append("  nodes")
     for index, node in enumerate(nodes):
         branch = "└" if index == len(nodes) - 1 else "├"
         cont = " " if index == len(nodes) - 1 else "│"
-        manifestation = dict(node.get("manifestation", {}) or {})
-        generation = dict(node.get("generation", {}) or {})
         gap = dict(node.get("gap", {}) or {})
-        refs = dict(node.get("refs", {}) or {})
         transitions = dict(node.get("transitions", {}) or {})
         meta = dict(node.get("meta", {}) or {})
         contract = dict(node.get("contract", {}) or {})
         effective_contract = dict(node.get("effective_contract", {}) or {})
+        step_ts = meta.get("timestamp")
+        step_ts_suffix = f" [{absolute_time(step_ts)}]" if isinstance(step_ts, (int, float)) and step_ts > 0 else ""
+        step_label = f'"{node.get("action", "?")}"'
         lines.append(
-            f"  {branch}─ {node.get('signature', '(sig)')} {node.get('id')} "
-            f"[{node.get('kind', 'unknown')}] action:{node.get('action', '?')}"
+            f'{branch}─ {{{_compact_frontier_code(node)}}} step:{node.get("id")} '
+            f'{step_label} -> refs:[{_flat_ref_surface(node)}]{step_ts_suffix}'
         )
-        lines.append(f"  {cont}  goal: {node.get('goal', '(none)')}")
-        if meta.get("state"):
-            lines.append(f"  {cont}  step.state: {meta.get('state')}")
-        lines.append(f"  {cont}  gap.desc: {gap.get('desc', node.get('goal', '(none)'))}")
-        lines.append(
-            f"  {cont}  gap.state: status={gap.get('status', '(n/a)')} "
-            f"runtime_vocab={gap.get('runtime_vocab', '(none)')} "
-            f"allowed_vocab={', '.join(gap.get('allowed_vocab', []) or []) or '(none)'}"
-        )
-        lines.append(
-            f"  {cont}  gap.refs: step_refs={_render_ref_list(gap.get('step_refs', []) or [])} "
-            f"| content_refs={_render_ref_list(gap.get('content_refs', []) or [])}"
-        )
-        lines.append(
-            f"  {cont}  gap.scores: rel={gap.get('relevance', '(none)')} "
-            f"conf={gap.get('confidence', '(none)')} "
-            f"gr={gap.get('grounded', '(none)')} "
-            f"post_diff={gap.get('post_diff', False)}"
-        )
-        lines.append(
-            f"  {cont}  manifestation: kernel_class={manifestation.get('kernel_class', '(none)')} "
-            f"dispersal={manifestation.get('dispersal', '(none)')} "
-            f"execution_mode={manifestation.get('execution_mode', '(none)')}"
-        )
-        lines.append(
-            f"  {cont}  generation: spawn_mode={generation.get('spawn_mode', '(none)')} "
-            f"spawn_trigger={generation.get('spawn_trigger', '(none)')} "
-            f"branch_policy={generation.get('branch_policy', '(none)')} "
-            f"return_policy={generation.get('return_policy', '(none)')}"
-        )
-        if refs:
+        if effective_contract or gap:
+            gap_id = gap.get("hash", f"{node.get('id')}.gap")
+            gap_surface = gap.get("runtime_vocab") or effective_contract.get("effective_gap") or effective_contract.get("default_gap")
+            gap_role = (effective_contract.get("omo_role") if effective_contract else None) or vocab_class(gap_surface)
+            if gap_role in {None, "", "_"}:
+                gap_role = _node_kind_code(node)
+            gap_status = _render_gap_status(gap, package_preview=bool(package))
             lines.append(
-                f"  {cont}  refs: step_refs={_render_ref_list(refs.get('step_refs', []) or [])} "
-                f"| content_refs={_render_ref_list(refs.get('content_refs', []) or [])}"
+                f"{cont}  └─ {{{gap_status}:{gap_role}}} gap:{gap_id}"
+                f"{f' [{gap_surface}]' if gap_surface else ''} -> refs:[{_grouped_gap_refs(gap)}]"
             )
         if transitions:
-            lines.append(
-                f"  {cont}  transitions: "
-                f"{', '.join(f'{k}->{v}' for k, v in transitions.items()) or '(none)'}"
-            )
+            lines.append(f"{cont}  next: {', '.join(f'{k}->{v}' for k, v in transitions.items())}")
         if contract:
-            lines.append(
-                f"  {cont}  contract: block_ref={contract.get('block_ref', '(none)')} "
-                f"activation_mode={contract.get('activation_mode', '(none)')}"
-            )
+            lines.append(f"{cont}  @embed:{contract.get('block_ref', '(none)')} [{contract.get('activation_mode', '(none)')}]")
             if contract.get("gap_override"):
-                lines.append(f"  {cont}  contract.gap_override: {json.dumps(contract.get('gap_override'), sort_keys=True)}")
-        if effective_contract:
-            lines.append(
-                f"  {cont}  effective_contract: ref={effective_contract.get('ref', '(none)')} "
-                f"surface={effective_contract.get('surface', '(none)')} "
-                f"default_gap={effective_contract.get('default_gap', '(none)')} "
-                f"effective_gap={effective_contract.get('effective_gap', '(none)')} "
-                f"activation_mode={effective_contract.get('activation_mode', '(none)')} "
-                f"omo={effective_contract.get('omo_role', '(none)')}"
-            )
-        if meta:
-            lines.append(
-                f"  {cont}  meta: timestamp={meta.get('timestamp', '(none)')} "
-                f"commit={meta.get('commit', '(none)')} "
-                f"rogue={meta.get('rogue', False)}"
-            )
-            for assessment_line in meta.get("assessment", []) or []:
-                lines.append(f"  {cont}  assessment: {assessment_line}")
+                lines.append(f"{cont}  embed_override: {json.dumps(contract.get('gap_override'), sort_keys=True)}")
         all_gaps = list(node.get("gaps", []) or [])
-        if all_gaps:
-            lines.append(f"  {cont}  gaps")
-            for gap_index, item in enumerate(all_gaps):
+        if len(all_gaps) > 1:
+            for gap_index, item in enumerate(all_gaps[1:], start=1):
                 gbranch = "└" if gap_index == len(all_gaps) - 1 else "├"
+                gap_surface = item.get("runtime_vocab")
+                gap_role = vocab_class(gap_surface)
+                if gap_role in {None, "", "_"}:
+                    gap_role = _node_kind_code(node)
+                gap_status = _render_gap_status(item, package_preview=bool(package))
                 lines.append(
-                    f"  {cont}  {gbranch}─ gap:{item.get('hash', '(none)')} "
-                    f"status={item.get('status', '(n/a)')} "
-                    f"vocab={item.get('runtime_vocab', '(none)')} "
-                    f"desc:{item.get('desc', '(none)')}"
+                    f"{cont}  {gbranch}─ {{{gap_status}:{gap_role}}} "
+                    f"gap:{item.get('hash', '(none)')}{f' [{gap_surface}]' if gap_surface else ''} "
+                    f"-> refs:[{_grouped_gap_refs(item)}]"
                 )
     return "\n".join(lines)
 

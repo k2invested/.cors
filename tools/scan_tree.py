@@ -7,6 +7,11 @@ Env: WORKSPACE — sandbox root.
 Directory path → recursive listing (no file contents).
 File path → full file read (chunked if large).
 """
+TOOL_DESC = 'scan directory tree (listing only) or read a single file.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'none'
+
 import json, os, sys
 
 MAX_RESULT_CHARS = 32000

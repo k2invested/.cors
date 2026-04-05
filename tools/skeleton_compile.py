@@ -11,8 +11,11 @@ Design rules:
   - top-level symbolic refs (@name) are resolved deterministically
   - runtime placeholders ($prev, $origin, $commit, $phase:...) remain symbolic
 """
-
 from __future__ import annotations
+TOOL_DESC = 'deterministic skeleton.v1 -> stepchain.v1 compiler.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'none'
 
 import json
 import sys

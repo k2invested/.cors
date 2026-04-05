@@ -5,6 +5,12 @@ Input JSON: {"to": "<email>", "subject": "<subject>", "body": "<body>",
              "attachment": "<optional: relative file path>"}
 Env: WORKSPACE, EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECIPIENT (default to).
 """
+TOOL_DESC = 'compose email draft AND send via SMTP.'
+TOOL_MODE = 'mutate'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'artifacts'
+TOOL_RUNTIME_ARTIFACTS = True
+
 import json, os, smtplib, sys, time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText

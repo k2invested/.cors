@@ -30,6 +30,11 @@ Exit codes:
   1 — violations found (ORPHAN or MISORDERED)
   2 — parse / IO error
 """
+TOOL_DESC = 'Law 9 compliance validator for semantic tree compositions.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'none'
+
 
 import argparse
 import json

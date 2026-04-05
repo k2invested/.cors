@@ -4,6 +4,11 @@
 Input JSON: {"query": "<search query>"}
 Env: SERPAPI — API key (optional, falls back to DDG).
 """
+TOOL_DESC = 'search via SerpAPI or DuckDuckGo fallback.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'none'
+
 import json, os, subprocess, sys, urllib.parse
 
 def main():

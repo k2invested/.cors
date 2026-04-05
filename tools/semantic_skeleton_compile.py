@@ -5,8 +5,11 @@ Entity, action, and hybrid artifacts share one semantic envelope here.
 Action structure is lowered through the deterministic skeleton compiler.
 Entity semantics are preserved as package metadata.
 """
-
 from __future__ import annotations
+TOOL_DESC = 'unified semantic_skeleton.v1 compiler.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'none'
 
 import json
 import sys

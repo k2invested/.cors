@@ -11,6 +11,11 @@ Uses web_search tool internally for data, then structures results.
 Note: This is a web-search-based approach, not a direct API scraper.
 For more structured data, use dedicated rental APIs when available.
 """
+TOOL_DESC = 'search rental listings via web search.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'none'
+
 import json
 import os
 import sys

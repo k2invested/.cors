@@ -26,6 +26,7 @@ if str(ROOT) not in sys.path:
 
 from compile import OBSERVE_VOCAB, MUTATE_VOCAB, BRIDGE_VOCAB
 from skills.loader import compute_skill_hash
+from tools.tool_registry import internal_tool_blob_refs, is_public_tool_path, public_tool_blob_refs
 
 SKILLS_DIR = str(ROOT / "skills")
 ENTITY_SKILLS_DIR = str(ROOT / "skills" / "entities")
@@ -221,10 +222,15 @@ def _embedded_ref_exists(ref: str, output_dir: str | None) -> bool:
     if not isinstance(ref, str) or not ref:
         return False
     if ref.startswith("tools/"):
-        return (ROOT / ref).exists()
+        return is_public_tool_path(ref, cors_root=ROOT)
     if ref.startswith("skills/"):
         return (ROOT / ref).exists()
     if OBJECT_REF_RE.fullmatch(ref):
+        short_ref = ref[:12]
+        if ref in internal_tool_blob_refs(ROOT) or short_ref in internal_tool_blob_refs(ROOT):
+            return False
+        if ref in public_tool_blob_refs(ROOT) or short_ref in public_tool_blob_refs(ROOT):
+            return True
         if output_dir and find_existing_skill_path(ref, output_dir):
             return True
         return _git_object_exists(ref)

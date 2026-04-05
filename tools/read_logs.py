@@ -8,6 +8,11 @@ Input JSON:
 
 Env: SSH key at ~/.ssh/hetzner, VPS at root@89.167.61.222
 """
+TOOL_DESC = 'read runtime logs from system instances.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'none'
+
 import json
 import os
 import subprocess

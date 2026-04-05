@@ -11,6 +11,11 @@ Output: JSON array of EPC records with rating, floor area, property type.
 Uses the Open EPC API (free, requires API key from opendatacommunities.org).
 Env: EPC_API_KEY
 """
+TOOL_DESC = 'fetch UK Energy Performance Certificate data.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'none'
+
 import json
 import os
 import sys

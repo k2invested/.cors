@@ -11,8 +11,11 @@ JSON stdin:
   "pages": "0-4"
 }
 """
-
 from __future__ import annotations
+TOOL_DESC = 'rich PDF extraction via the imported pymupdf helper.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'workspace'
+TOOL_POST_OBSERVE = 'none'
 
 import json
 import os

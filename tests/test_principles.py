@@ -65,6 +65,7 @@ from tools import office_manifest as office_manifest_module
 from tools import st_builder as st_builder_module
 from tools import tool_builder as tool_builder_module
 from tools import tool_contract as tool_contract_module
+from tools import tool_registry as tool_registry_module
 
 SKILLS_DIR = ROOT / "skills"
 TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
@@ -539,7 +540,7 @@ P5_CASES = [
     ("validate_st_rejects_unknown_runtime_vocab", lambda: any("invalid runtime vocab" in e for e in st_builder_module.validate_st({"name": "x", "desc": "d", "steps": [{"action": "inspect", "desc": "inspect file", "vocab": "research_needed"}]}))),
     ("slugify_trims_to_four_words", lambda: st_builder_module.slugify("Update the very important config file") == "update_the_very_important"),
     ("resolve_entity_renders_known_skill", lambda: skill("admin").hash in loop._resolve_entity([skill("admin").hash], registry(), Trajectory())),
-    ("resolve_entity_reads_action_package_when_not_entity", lambda: "semantic_tree:skill_package:" in loop._resolve_entity([skill("hash_edit").hash], registry(), Trajectory()) and "name: hash_edit" in loop._resolve_entity([skill("hash_edit").hash], registry(), Trajectory())),
+    ("resolve_entity_reads_action_package_when_not_entity", lambda: "semantic_tree:skill_package:" in loop._resolve_entity([skill("hash_edit").hash], registry(), Trajectory()) and "package:hash_edit " in loop._resolve_entity([skill("hash_edit").hash], registry(), Trajectory())),
     ("render_entity_has_identity_block", lambda: "identity:" in loop._render_entity(skill("admin"))),
     ("render_entity_has_steps_summary", lambda: "steps:" in loop._render_entity(skill("admin"))),
     ("find_identity_skill_returns_admin", lambda: loop._find_identity_skill("discord:784778107013431296", registry()) == skill("admin")),
@@ -620,8 +621,8 @@ P6_CASES += [
     ("entity_source_detects_entity_tree", lambda: loop._is_entity_source("skills/entities/clinton.st")),
     ("entity_source_detects_chain_spec", lambda: loop._is_entity_source("skills/codons/commitment_chain_construction_spec.st")),
     ("entity_source_excludes_action_tree", lambda: loop._is_entity_source("skills/actions/hash_edit.st") is False),
-    ("resolve_hash_admin_renders_entity_surface", lambda: (lambda reg: (setattr(loop, "_skill_registry", reg), "semantic_tree:skill_package:" in loop.resolve_hash(skill("admin").hash, Trajectory()) and "package: name=admin" in loop.resolve_hash(skill("admin").hash, Trajectory()))[1])(registry())),
-    ("resolve_hash_action_renders_package_tree", lambda: (lambda reg: (setattr(loop, "_skill_registry", reg), "semantic_tree:skill_package:" in loop.resolve_hash(skill("hash_edit").hash, Trajectory()) and "package: name=hash_edit" in loop.resolve_hash(skill("hash_edit").hash, Trajectory()))[1])(registry())),
+    ("resolve_hash_admin_renders_entity_surface", lambda: (lambda reg: (setattr(loop, "_skill_registry", reg), "semantic_tree:skill_package:" in loop.resolve_hash(skill("admin").hash, Trajectory()) and "package:admin " in loop.resolve_hash(skill("admin").hash, Trajectory()))[1])(registry())),
+    ("resolve_hash_action_renders_package_tree", lambda: (lambda reg: (setattr(loop, "_skill_registry", reg), "semantic_tree:skill_package:" in loop.resolve_hash(skill("hash_edit").hash, Trajectory()) and "package:hash_edit " in loop.resolve_hash(skill("hash_edit").hash, Trajectory()))[1])(registry())),
     ("resolve_hash_chain_spec_renders_entity_surface", lambda: (lambda reg: (setattr(loop, "_skill_registry", reg), "commitment_chain_construction_spec" in loop.resolve_hash(skill("commitment_chain_construction_spec").hash, Trajectory()))[1])(registry())),
     ("resolve_entity_top_rate_injects_business_context", lambda: "Top Rate Estates LTD" in loop._resolve_entity([skill("Top Rate Estates LTD").hash], registry(), Trajectory())),
     ("resolve_entity_clinton_injects_identity", lambda: "Cyber security developer" in loop._resolve_entity([skill("clinton").hash], registry(), Trajectory())),
@@ -3796,6 +3797,74 @@ def test_p12_validate_st_accepts_existing_tool_blob_hash_ref():
     assert not any("must point to an existing tool path, committed skill hash, or committed blob hash" in e for e in errors)
 
 
+def test_p12_validate_st_rejects_internal_hash_handler_tool_path():
+    st = {
+        "name": "inspect_doc_handler",
+        "desc": "workflow",
+        "trigger": "manual",
+        "refs": {"doc_handler": "tools/doc_read.py"},
+        "artifact": {"kind": "action", "protected_kind": "action"},
+        "root": "phase_root",
+        "phases": [
+            {
+                "id": "phase_root",
+                "kind": "observe",
+                "goal": "inspect handler",
+                "action": "inspect_handler",
+                "gap_template": {"desc": "inspect", "content_refs": ["@doc_handler"], "step_refs": []},
+                "manifestation": {"kernel_class": "observe", "dispersal": "context", "execution_mode": "runtime_vocab", "runtime_vocab": "hash_resolve_needed"},
+                "generation": {"spawn_mode": "none", "spawn_trigger": "none", "branch_policy": "depth_first_to_parent", "sibling_policy": "after_descendants", "return_policy": "resume_transition"},
+                "allowed_vocab": ["hash_resolve_needed"],
+                "post_diff": False,
+                "transitions": {"on_close": "phase_done"},
+            },
+            {"id": "phase_done", "kind": "terminal", "goal": "done", "action": "close_loop", "terminal": True},
+        ],
+        "steps": [{"action": "inspect_handler", "desc": "inspect", "vocab": "hash_resolve_needed", "post_diff": False}],
+        "closure": {"success": {"requires_terminal": "phase_done", "requires_no_active_gaps": True}},
+    }
+
+    errors = st_builder_module.validate_st(st, artifact_kind="action", output_dir=str(ROOT / "skills"))
+    assert any("must already exist before embedding" in e for e in errors)
+
+
+def test_p12_validate_st_rejects_internal_hash_handler_blob_hash():
+    tool_blob = subprocess.check_output(
+        ["git", "rev-parse", "HEAD:tools/doc_read.py"],
+        cwd=ROOT,
+        text=True,
+    ).strip()
+
+    st = {
+        "name": "inspect_doc_handler_blob",
+        "desc": "workflow",
+        "trigger": "manual",
+        "refs": {"doc_handler_blob": tool_blob},
+        "artifact": {"kind": "action", "protected_kind": "action"},
+        "root": "phase_root",
+        "phases": [
+            {
+                "id": "phase_root",
+                "kind": "observe",
+                "goal": "inspect handler blob",
+                "action": "inspect_handler",
+                "gap_template": {"desc": "inspect", "content_refs": ["@doc_handler_blob"], "step_refs": []},
+                "manifestation": {"kernel_class": "observe", "dispersal": "context", "execution_mode": "runtime_vocab", "runtime_vocab": "hash_resolve_needed"},
+                "generation": {"spawn_mode": "none", "spawn_trigger": "none", "branch_policy": "depth_first_to_parent", "sibling_policy": "after_descendants", "return_policy": "resume_transition"},
+                "allowed_vocab": ["hash_resolve_needed"],
+                "post_diff": False,
+                "transitions": {"on_close": "phase_done"},
+            },
+            {"id": "phase_done", "kind": "terminal", "goal": "done", "action": "close_loop", "terminal": True},
+        ],
+        "steps": [{"action": "inspect_handler", "desc": "inspect", "vocab": "hash_resolve_needed", "post_diff": False}],
+        "closure": {"success": {"requires_terminal": "phase_done", "requires_no_active_gaps": True}},
+    }
+
+    errors = st_builder_module.validate_st(st, artifact_kind="action", output_dir=str(ROOT / "skills"))
+    assert any("must already exist before embedding" in e for e in errors)
+
+
 def test_p12_validate_st_rejects_named_default_embedding_with_gap_override():
     st = {
         "name": "research",
@@ -3910,9 +3979,12 @@ def test_p12_semantic_tree_render_shows_foundation_and_embedding_contract():
     rendered = manifest_engine_module.render_semantic_tree(tree)
 
     assert "foundation: ref=" in rendered
-    assert "default_gap=hash_edit_needed" in rendered
-    assert f"contract: block_ref={skill('hash_edit').hash} activation_mode=hash_embedded" in rendered
-    assert "contract.gap_override:" in rendered
+    assert "default_gap=" not in rendered
+    assert f"@embed:{skill('hash_edit').hash} [hash_embedded]" in rendered
+    assert "embed_override:" in rendered
+    assert "allowed_vocab=" not in rendered
+    assert "manifestation:" not in rendered
+    assert "generation:" not in rendered
 
 
 def test_p13_runtime_semantic_tree_marks_parent_open_while_descendants_unresolved():
@@ -3929,7 +4001,11 @@ def test_p13_runtime_semantic_tree_marks_parent_open_while_descendants_unresolve
     )
     rendered_tree = manifest_engine_module.render_semantic_tree(tree)
 
-    assert rendered_tree.count("step.state: open") == 2
+    assert 'chain:chain_state_demo "authoring chain" (active, 2 steps)' in rendered_tree
+    assert f'{{o=}} step:{step1.hash} "inspect structure"' in rendered_tree
+    assert f'{{resolved:o}} gap:{parent_gap.hash} [hash_resolve_needed]' in rendered_tree
+    assert f'{{m+1}} step:{step2.hash} "author test flow"' in rendered_tree
+    assert f'{{active:m}} gap:{child_gap.hash} [content_needed]' in rendered_tree
 
     traj = Trajectory()
     traj.append(step1)
@@ -3958,7 +4034,11 @@ def test_p13_runtime_semantic_tree_marks_branch_resolved_after_descendants_close
     )
     rendered_tree = manifest_engine_module.render_semantic_tree(tree)
 
-    assert rendered_tree.count("step.state: resolved") == 2
+    assert 'chain:chain_state_resolved "authoring chain" (resolved, 2 steps)' in rendered_tree
+    assert f'{{o=}} step:{step1.hash} "inspect structure"' in rendered_tree
+    assert f'{{resolved:o}} gap:{parent_gap.hash} [hash_resolve_needed]' in rendered_tree
+    assert f'{{o=}} step:{step2.hash} "author test flow"' in rendered_tree
+    assert f"gap:{step2.hash}.gap -> refs:[step:(none), content:(none)]" in rendered_tree
 
     traj = Trajectory()
     traj.append(step1)
@@ -4024,12 +4104,30 @@ def test_p12_render_skill_package_surfaces_action_tree_details():
     rendered = loop._render_skill_package(debug_skill)
 
     assert rendered.startswith(f"semantic_tree:skill_package:{debug_skill.hash}")
-    assert "name: debug" in rendered
+    assert 'package:debug "Self-debug loop. Resolves source, trajectory, and logs — then diagnoses and fixes." (4 steps)' in rendered
     assert "trigger: command:debug" in rendered
-    assert "nodes" in rendered
-    assert "manifestation: kernel_class=observe" in rendered
-    assert "generation: spawn_mode=none" in rendered
-    assert "allowed_vocab=hash_resolve_needed" in rendered
+    assert "legend: step{o/m/b/c + frontier}; gap{status + surface + ref-counts}" in rendered
+    assert "[hash_resolve_needed]" in rendered
+    assert "manifestation:" not in rendered
+    assert "generation:" not in rendered
+    assert "allowed_vocab=" not in rendered
+
+
+def test_p12_render_skill_package_uses_refined_semantic_tree_surface():
+    debug_skill = registry().resolve_command("debug")
+    assert debug_skill is not None
+
+    rendered = loop._render_skill_package(debug_skill)
+
+    assert "{o" in rendered
+    assert "step:" in rendered
+    assert "gap:" in rendered
+    assert "-> refs:[" in rendered
+    assert "[hash_resolve_needed]" in rendered
+    assert "allowed_vocab=" not in rendered
+    assert "post_diff=" not in rendered
+    assert "manifestation:" not in rendered
+    assert "generation:" not in rendered
 
 
 def test_p12_build_semantic_tree_from_action_skill_exposes_gap_configuration():
@@ -4104,9 +4202,9 @@ def test_p12_resolve_hash_renders_action_packages_as_semantic_tree(monkeypatch):
 
     assert rendered is not None
     assert rendered.startswith(f"semantic_tree:skill_package:{architect_skill.hash}")
-    assert "name: architect" in rendered
-    assert "action:resolve_source_and_docs" in rendered
-    assert "transitions: on_close->" in rendered
+    assert 'package:architect "' in rendered
+    assert 'step:phase_resolve_source_and_docs_1 "resolve_source_and_docs"' in rendered
+    assert "next: on_close->" in rendered
 
 
 def test_p12_resolve_hash_renders_log_tail_for_local_log(monkeypatch, tmp_path):
@@ -4177,6 +4275,47 @@ def test_p12_hash_registry_captures_core_routes():
     assert hash_registry_module.HASH_MANIFEST_ROUTES[".pptx"] == "tools/office_manifest.py"
     assert hash_registry_module.HASH_RESOLVE_ROUTES[".pdf"] == "tools/pdf_read.py"
     assert hash_registry_module.HASH_RESOLVE_ROUTES[".png"] == "tools/document_extract_marker.py"
+
+
+def test_p12_tool_registry_exposes_only_public_hash_tools():
+    assert "tools/hash_resolve.py" in tool_registry_module.PUBLIC_TOOL_PATHS
+    assert "tools/hash_manifest.py" in tool_registry_module.PUBLIC_TOOL_PATHS
+    assert "tools/doc_read.py" not in tool_registry_module.PUBLIC_TOOL_PATHS
+    assert "tools/document_extract_marker.py" not in tool_registry_module.PUBLIC_TOOL_PATHS
+
+
+def test_p12_all_public_tools_express_valid_contract_metadata():
+    missing_or_invalid = []
+    for rel in tool_registry_module.PUBLIC_TOOL_PATHS:
+        path = ROOT / rel
+        if tool_contract_module.load_tool_contract(path) is None:
+            missing_or_invalid.append((rel, tool_contract_module.validate_tool_file(path)))
+    assert missing_or_invalid == []
+
+
+def test_p12_render_public_tool_registry_lists_public_tools_and_contracts():
+    rendered = execution_engine_module._render_public_tool_registry(ROOT)
+
+    assert rendered.startswith("## Public Tool Registry")
+    assert "tools/hash_resolve.py | observe/workspace | post_observe=none" in rendered
+    assert "tools/hash_manifest.py | mutate/workspace | post_observe=artifacts" in rendered
+    assert "tools/doc_read.py" not in rendered
+    assert "tools/document_extract_marker.py" not in rendered
+
+
+def test_p12_action_foundations_hide_internal_hash_handlers():
+    rendered = action_foundations_module.render_action_foundations(
+        registry=registry(),
+        chains_dir=ROOT / "chains",
+        cors_root=ROOT,
+        tool_map=loop.TOOL_MAP,
+        git=lambda args, _stdin=None: subprocess.check_output(["git", *args], cwd=ROOT, text=True),
+    )
+
+    assert "source=tools/hash_resolve.py" in rendered
+    assert "source=tools/hash_manifest.py" in rendered
+    assert "source=tools/doc_read.py" not in rendered
+    assert "source=tools/document_extract_marker.py" not in rendered
 
 
 def test_p12_office_manifest_patches_minimal_pptx_package(tmp_path):
@@ -4261,6 +4400,79 @@ def test_p12_tool_builder_writes_validated_stub(tmp_path, monkeypatch):
     assert tool_contract_module.validate_tool_file(target) == []
 
 
+def test_p12_tool_needed_injects_public_tool_registry_before_compose():
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+            self.calls = 0
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            self.calls += 1
+            return json.dumps(
+                {
+                    "path": "tools/demo_registry_tool.py",
+                    "desc": "inspect registry-aware tool composition",
+                    "mode": "observe",
+                    "scope": "workspace",
+                    "post_observe": "none",
+                }
+            )
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("create a registry-aware tool", vocab="tool_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("ok: wrote tools/demo_registry_tool.py", 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: "tools/demo_registry_tool.py",
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert any(content.startswith("## Public Tool Registry") for content in session.injected)
+    assert any("tools/hash_resolve.py | observe/workspace | post_observe=none" in content for content in session.injected)
+    assert session.calls == 1
+
+
 def test_p12_render_log_resolution_caps_chars():
     rendered = loop._render_log_resolution("x" * (loop.LOG_RESOLVE_MAX_CHARS + 500), source_ref="bot.log")
 
@@ -4333,7 +4545,7 @@ def test_p12_resolve_hash_supports_skill_source_path(monkeypatch):
     rendered = loop.resolve_hash("skills/admin.st", Trajectory())
     assert rendered is not None
     assert rendered.startswith("semantic_tree:skill_package:")
-    assert "name: admin" in rendered
+    assert 'package:admin "' in rendered
 
 
 def test_p12_pattern_tool_params_include_path_when_pattern_is_quoted():

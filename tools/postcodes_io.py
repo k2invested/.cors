@@ -12,6 +12,11 @@ Output: JSON with lat/lng, ward, district, council, region, constituency,
 
 Uses postcodes.io (free, no API key needed, no rate limits).
 """
+TOOL_DESC = 'UK postcode geocoding and area metadata.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'none'
+
 import json
 import sys
 import urllib.request

@@ -9,6 +9,11 @@ deep: web search + fetch top 3 URLs per query for full content extraction
 
 Output: JSON with structured findings per query.
 """
+TOOL_DESC = 'structured web research for qualitative data collection.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'none'
+
 import json
 import os
 import sys

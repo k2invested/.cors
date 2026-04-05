@@ -11,6 +11,11 @@ Output: JSON with interest over time data and related queries.
 Uses pytrends library (unofficial Google Trends API). Free, no API key.
 pip install pytrends
 """
+TOOL_DESC = 'search interest over time via Google Trends.'
+TOOL_MODE = 'observe'
+TOOL_SCOPE = 'external'
+TOOL_POST_OBSERVE = 'none'
+
 import json
 import sys
 
