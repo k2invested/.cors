@@ -1,8 +1,6 @@
 # skills and `.st` files
 
-This repo now uses a real `.st` tree split. The format is shared, but runtime meaning is determined by tree location, loader projection, and tree policy.
-
-## Current Skill Tree
+The skill tree is now split by meaning, not just by file format.
 
 ```text
 skills/
@@ -12,85 +10,54 @@ skills/
 └─ codons/
 ```
 
-The operative distinction is:
+## Tree Roles
 
-- root: only [admin.st](/Users/k2invested/Desktop/cors/skills/admin.st)
-- `skills/actions/`: executable action and workflow packages
-- `skills/entities/`: semantic state packages
-- `skills/codons/`: immutable codons and immutable planning spec
+- [admin.st](/Users/k2invested/Desktop/cors/skills/admin.st) is the canonical local operator entity.
+- `skills/entities/` holds semantic state packages.
+- `skills/actions/` holds executable workflow packages.
+- `skills/codons/` holds protected system primitives and immutable specs.
+
+## Current Ownership
+
+- `reason_needed`
+  - judgment
+  - activation
+  - deciding when a tool, chain, clarification, or persistence step is needed
+- `tool_needed`
+  - creating new public tools under [tools/](/Users/k2invested/Desktop/cors/tools)
+  - every tool script must express its own runtime contract metadata
+- `reprogramme_needed`
+  - semantic persistence for entity/admin state
+  - not workflow origination
+
+Action-tree work under `skills/actions/*.st` still routes to `reason_needed` first.
 
 ## Loader Contract
 
-[skills/loader.py](/Users/k2invested/Desktop/cors/skills/loader.py) is no longer the narrow projection older docs described.
+[skills/loader.py](/Users/k2invested/Desktop/cors/skills/loader.py) preserves the authored package payload and projects it into runtime-friendly skill objects. It keeps:
 
-It now preserves:
+- package metadata
+- refs
+- semantic sections
+- authored step fields
+- artifact kind inferred from tree location
 
-- package payload
-- package refs
-- package semantics
-- `artifact_kind`
-- authored step fields including:
-  - `relevance`
-  - `resolve`
-  - `condition`
-  - `inject`
-  - `content_refs`
-  - `step_refs`
-  - `kind`
-  - `goal`
-  - `allowed_vocab`
-  - `manifestation`
-  - `generation`
-  - `transitions`
-  - `terminal`
-  - `requires_postcondition`
-  - `activation_key`
+That means the runtime can treat entity packages, action packages, and codons differently even though they share the same `.st` storage format.
 
-It still exposes a normalized runtime projection, but it no longer throws away most authored manifestation structure.
+## Artifact Kinds
 
-## Artifact Kind
+Current deterministic rules:
 
-Artifact kind is now inferred deterministically from payload and tree membership.
-
-The current rules are:
-
-- `admin.st` => `entity`
-- `commitment_chain_construction_spec.st` => `entity`
-- `skills/codons/*` => `codon`
+- [admin.st](/Users/k2invested/Desktop/cors/skills/admin.st) => `entity`
 - `skills/entities/*` => `entity`
 - `skills/actions/*` => `action`
-- semantic payload + steps outside the tree rules => `hybrid`
-
-That means tree organization is now part of the ontology rather than just file hygiene.
-
-## Admin Primitive
-
-[admin.st](/Users/k2invested/Desktop/cors/skills/admin.st) is special.
-
-It is:
-
-- the canonical operator entity
-- the only root skill
-- the preferred identity resolution target for the local operator
-
-It is not just “another entity in `skills/entities/`”.
-
-## Chain Construction Spec
-
-[commitment_chain_construction_spec.st](/Users/k2invested/Desktop/cors/skills/codons/commitment_chain_construction_spec.st) has a special role.
-
-It lives in `skills/codons/` so the agent cannot mutate it casually, but the loader and resolver treat it as an entity-like spec package:
-
-- immutable by tree policy
-- resolved as context injection
-- selectively injected into `reason_needed`
-- used as the executable authoring contract for staged `semantic_skeleton.v1` action layers
+- `skills/codons/*` => `codon`
 
 ## Entity Packages
 
-Entity packages are context-injection packages, not freeform notes.
+Entity packages are semantic state surfaces. They are resolved for context injection and persisted through [tools/st_builder.py](/Users/k2invested/Desktop/cors/tools/st_builder.py) after `reprogramme_needed` has already made the judgment.
 
-They must carry deterministic context-injection steps derived from semantic sections such as:
+Typical sections:
 
 - `identity`
 - `preferences`
@@ -98,58 +65,38 @@ They must carry deterministic context-injection steps derived from semantic sect
 - `sources`
 - `scope`
 
-Examples:
-
-- `load_identity`
-- `load_preferences`
-- `load_constraints`
-
-[tools/st_builder.py](/Users/k2invested/Desktop/cors/tools/st_builder.py) now restores or requires those steps when semantic entity payload exists.
-
 ## Action Packages
 
-Action packages live in [skills/actions](/Users/k2invested/Desktop/cors/skills/actions) and represent executable workflow structure.
+Action packages are executable workflow packages. They are not ordinary file content. They are rendered as semantic trees and only become live execution when explicitly activated.
 
-Important current law:
+Current law:
 
-- anything involving `skills/actions/*.st` belongs to `reason_needed`
-- action layers should be built inside-out / back-to-front
-- lower layers usually stay `manual` until the highest-order completed workflow owns the public `on_vocab:*` trigger
-
-So action `.st` persistence is no longer treated as just another file write.
+- creation or repair of `skills/actions/*.st` belongs to `reason_needed`
+- public activation stays with the final completed workflow
+- lower layers usually remain `manual` until promoted later
 
 ## Codons
 
-The codon tree currently contains:
+Current codons:
 
 - [await.st](/Users/k2invested/Desktop/cors/skills/codons/await.st)
 - [commit.st](/Users/k2invested/Desktop/cors/skills/codons/commit.st)
-- [reason.st](/Users/k2invested/Desktop/cors/skills/codons/reason.st)
 - [reprogramme.st](/Users/k2invested/Desktop/cors/skills/codons/reprogramme.st)
 - [commitment_chain_construction_spec.st](/Users/k2invested/Desktop/cors/skills/codons/commitment_chain_construction_spec.st)
 
-True codons are identified by `artifact_kind == "codon"`, not merely by directory print tags.
+`reason_needed` is a runtime vocab, not a mutable authored codon package.
 
-## Runtime Resolution
+## Chain Construction Spec
 
-The current resolution law is:
-
-- entity-like package hash in `content_refs` => semantic injection
-- action package hash in `content_refs` => package render / read
-- activation of action structure => explicit reason/package activation path
-
-So the runtime no longer treats “all `.st` hashes” as the same kind of thing.
+[commitment_chain_construction_spec.st](/Users/k2invested/Desktop/cors/skills/codons/commitment_chain_construction_spec.st) is now just a protected planning spec. It is not part of the live `reason_needed` path anymore. It exists as a future reference point for `chain_needed`.
 
 ## Builder Reality
 
-[tools/st_builder.py](/Users/k2invested/Desktop/cors/tools/st_builder.py) is now the semantic persistence curator.
+[tools/st_builder.py](/Users/k2invested/Desktop/cors/tools/st_builder.py) is the `.st` persistence validator/actualizer. It can:
 
-It can:
+- create or update entity packages
+- create or update action packages when explicitly asked
+- validate semantic/tree structure before write
+- route writes into the correct skill subtree
 
-- create entities
-- update entities
-- update existing action packages when explicitly targeted
-- route new entity writes into `skills/entities/`
-- route new action writes into `skills/actions/`
-
-It does not own workflow ownership. New and existing action-tree structure belong to the `reason_needed -> semantic_skeleton` side first; `st_builder.py` is the validator/actualizer beneath that path.
+It does not own activation or workflow judgment.

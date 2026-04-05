@@ -628,9 +628,9 @@ P6_CASES += [
     ("resolve_entity_clinton_injects_identity", lambda: "Cyber security developer" in loop._resolve_entity([skill("clinton").hash], registry(), Trajectory())),
     ("render_entity_includes_trigger", lambda: "trigger:" in loop._render_entity(skill("clinton"))),
     ("render_chain_spec_exposes_field_semantics", lambda: "## Field Semantics" in loop._render_identity(skill("commitment_chain_construction_spec"))),
-    ("render_chain_spec_mentions_action_tree_ownership", lambda: "skills/actions/*.st belongs to reason_needed" in loop._render_identity(skill("commitment_chain_construction_spec"))),
-    ("render_chain_spec_mentions_tool_foundations", lambda: "Foundational Python tools under tools/*.py" in loop._render_identity(skill("commitment_chain_construction_spec"))),
-    ("render_chain_spec_mentions_public_trigger_rule", lambda: "public trigger is a deterministic activation field attached to the highest-order completed workflow" in loop._render_identity(skill("commitment_chain_construction_spec")).lower()),
+    ("render_chain_spec_mentions_reason_activation", lambda: "activation_owned_by_reason" in loop._render_identity(skill("commitment_chain_construction_spec"))),
+    ("render_chain_spec_mentions_tool_writer_split", lambda: "tool_creation_owned_by_tool_needed" in loop._render_identity(skill("commitment_chain_construction_spec"))),
+    ("render_chain_spec_mentions_public_trigger_rule", lambda: "final public trigger assignment belongs to the completed top-level workflow" in loop._render_identity(skill("commitment_chain_construction_spec")).lower()),
     ("render_session_context_includes_header", lambda: "## Session Context" in loop._render_session_context(Trajectory(), registry(), "hello")),
     ("pre_diff_prompt_says_tools_are_real_lower_order_blocks", lambda: "foundational python tools under tools/*.py are real lower-order action blocks" in loop.PRE_DIFF_SYSTEM.lower()),
     ("pre_diff_prompt_says_action_environment_is_hash_native", lambda: "treat action/codon packages and tools as one hash-native action environment" in loop.PRE_DIFF_SYSTEM.lower()),
@@ -927,13 +927,7 @@ P10_CASES += [
         route_mode=None,
         target_entity=None,
     ) is False),
-    ("reason_requires_workflow_authoring_for_new_actions", lambda: execution_engine_module._reason_requires_workflow_authoring(make_gap("Create a new research workflow in skills/actions/"), registry())),
-    ("reason_skips_workflow_authoring_for_existing_target", lambda: execution_engine_module._reason_requires_workflow_authoring(make_gap("Update existing hash_edit workflow", content_refs=[skill("hash_edit").hash]), registry()) is False),
     ("reason_target_path_prefers_desc_action_path_over_tool_ref", lambda: execution_engine_module._target_path_from_gap(make_gap("Create a new research workflow in skills/actions/research.st", content_refs=["tools/research_web.py"])) == "skills/actions/research.st"),
-    ("reason_collects_foundations_first_for_new_origination_without_refs", lambda: execution_engine_module._reason_should_collect_foundations_first(make_gap("Create a new research workflow in skills/actions/research.st", vocab="reason_needed"), registry()) is True),
-    ("reason_does_not_collect_foundations_first_when_foundations_are_explicit", lambda: execution_engine_module._reason_should_collect_foundations_first(make_gap("Create a new research workflow in skills/actions/research.st", vocab="reason_needed", content_refs=[skill("hash_edit").hash]), registry()) is False),
-    ("chain_spec_injection_detects_research", lambda: execution_engine_module._should_inject_chain_spec_for_reason(make_gap("build a research workflow"))),
-    ("chain_spec_injection_skips_simple_preference", lambda: execution_engine_module._should_inject_chain_spec_for_reason(make_gap("remember my favourite colour")) is False),
     ("entity_editor_coercion_strips_flow_fields", lambda: (lambda frame: ("root" not in frame and "phases" not in frame and "closure" not in frame and frame["artifact"]["kind"] == "entity"))(
         execution_engine_module._coerce_semantic_frame_for_mode(
             {"artifact": {"kind": "hybrid"}, "root": "r", "phases": [], "closure": {}},
@@ -2770,24 +2764,8 @@ def test_p12_turn_outcome_facts_forbid_ready_claims_after_failed_authoring():
         "successful_mutations": [],
         "attempted_mutations": ["reason_needed: create skills/actions/research.st"],
         "rogue_failures": ["reason actualization failed: create skills/actions/research.st | source=st_builder | kind=validation_error"],
-        "exhausted_reason_loops": [],
     })
 
-    assert "attempted but not validated or persisted" in rendered
-    assert "ready, live, built, or complete" in rendered
-
-
-def test_p12_turn_outcome_facts_treat_exhausted_reason_loop_as_unconfirmed():
-    rendered = loop._render_turn_outcome_facts({
-        "commits": [],
-        "successful_mutations": [],
-        "attempted_mutations": ["reason_needed: create skills/actions/research.st"],
-        "rogue_failures": [],
-        "exhausted_reason_loops": ["reason loop: exhausted after 10 attempts: create skills/actions/research.st"],
-        "persisted_frontiers": [],
-    })
-
-    assert "Exhausted controller loops:" in rendered
     assert "attempted but not validated or persisted" in rendered
     assert "ready, live, built, or complete" in rendered
 
@@ -2798,7 +2776,6 @@ def test_p12_turn_outcome_facts_treat_persisted_frontier_as_unresolved():
         "successful_mutations": [],
         "attempted_mutations": ["reason_needed: create skills/actions/research.st"],
         "rogue_failures": [],
-        "exhausted_reason_loops": [],
         "persisted_frontiers": ["forced frontier: create skills/actions/research.st"],
     })
 
@@ -2918,81 +2895,6 @@ def test_p12_reason_needed_does_not_actualize_new_action_skeleton_directly():
     assert outcome.step_result is not None
     assert outcome.step_result.commit is None
     assert compiler.ledger.is_empty()
-    assert not any(content.startswith("## Tool Descriptions") for content in session.injected)
-    assert not any(content.startswith("## Action Semantic Trees") for content in session.injected)
-
-
-def test_p12_reason_next_layer_gap_helper_remains_available():
-    gap = execution_engine_module._reason_next_layer_gap(
-        {
-            "next_layer_desc": "Build the higher-order orchestration layer embedding the committed research leaf.",
-            "next_layer_content_refs": ["abc123"],
-        },
-        step_hash="step123",
-        authored_refs=["blob123"],
-        current_turn=4,
-    )
-
-    assert gap is not None
-    assert gap.vocab == "reason_needed"
-    assert "higher-order orchestration layer" in gap.desc
-    assert gap.content_refs == ["blob123", "abc123"]
-
-
-def test_p12_reason_loop_failure_classification_helper_remains_available():
-    assert execution_engine_module._classify_reason_loop_failure("Validation errors:\n- foo") == "retryable_structural"
-    assert execution_engine_module._classify_reason_loop_failure("Validation errors:\n- missing embedded foundation") == "blocked_missing_foundation"
-    assert execution_engine_module._classify_reason_loop_failure("network failure") == "terminal_infra"
-
-
-def test_p12_reason_loop_retry_desc_repairs_next_step_append_when_working_chain_exists():
-    gap = make_gap(
-        "Create skills/actions/test.st with test_needed.",
-        vocab="reason_needed",
-    )
-    chain = Chain(hash="chain1", origin_gap=gap.hash, steps=[])
-    chain.chain_kind = "reason_loop"
-    chain.loop_state = {
-        "working_step_chain": {
-            "version": "step_chain.v1",
-            "name": "test",
-            "trigger": "on_vocab:test_needed",
-            "artifact": {"kind": "action", "protected_kind": "action"},
-            "steps": [{"id": "run_tests", "gap_template": {"desc": "Compose a test command"}}],
-        }
-    }
-
-    desc = execution_engine_module._reason_loop_retry_desc(
-        controller_chain=chain,
-        gap=gap,
-        inferred_name="test",
-        attempt=1,
-        failure_output="Validation errors:\n- duplicate step id",
-    )
-
-    assert "Repair the next step append" in desc
-    assert "(1/10)" in desc
-
-
-def test_p12_chain_log_label_prefers_reason_loop_stable_id():
-    chain = Chain(hash="abcdef123456", origin_gap="gap1", steps=[])
-    chain.chain_kind = "reason_loop"
-    chain.stable_id = "stable123456"
-
-    assert execution_engine_module._chain_log_label(chain) == "stable12"
-
-
-def test_p12_reason_normalizes_trigger_to_manual_when_next_layer_remains():
-    intent = {
-        "version": "semantic_skeleton.v1",
-        "name": "research",
-        "trigger": "on_vocab:research_needed",
-        "next_layer_desc": "Build the higher-order orchestration layer.",
-    }
-
-    execution_engine_module._normalize_reason_action_trigger(intent)
-
-    assert intent["trigger"] == "manual"
 
 
 def test_p12_validate_semantic_skeleton_intent_rejects_public_trigger_before_top_layer():
@@ -3189,10 +3091,9 @@ def test_p12_reason_needed_handles_authoring_like_gap_as_plain_judgment():
     assert outcome.step_result.gaps[0].vocab == "content_needed"
     assert "Use reason_needed for open specifications" in "\n".join(session.prompts)
     assert not any(prompt.startswith("## Chain Construction Spec") for prompt in session.prompts)
-    assert chain.chain_kind == "normal"
 
 
-def test_p12_reason_needed_authoring_like_gap_does_not_open_reason_loop():
+def test_p12_reason_needed_authoring_like_gap_keeps_plain_chain_state():
     class FakeSession:
         def inject(self, content: str, role: str = "user"):
             pass
@@ -3269,56 +3170,6 @@ def test_p12_reason_needed_authoring_like_gap_does_not_open_reason_loop():
 
     assert outcome.step_result is not None
     assert outcome.step_result.gaps[0].vocab == "hash_resolve_needed"
-    assert chain.chain_kind == "normal"
-    assert not chain.loop_state
-
-
-def test_p12_reason_detects_same_target_authoring_restatement_as_nonprogress():
-    parent_gap = make_gap(
-        "Create skills/actions/test.st with test_needed.",
-        vocab="reason_needed",
-        content_refs=["skills/actions/test.st"],
-    )
-    child_gap = make_gap(
-        "Compose skills/actions/test.st as a valid step_chain.v1 action package ready for actualization.",
-        vocab="content_needed",
-        content_refs=["skills/actions/test.st"],
-    )
-
-    assert execution_engine_module._reason_child_gaps_are_authoring_nonprogress([child_gap], parent_gap)
-
-
-def test_p12_reason_detects_low_confidence_same_target_build_gap_as_nonprogress():
-    parent_gap = make_gap(
-        "Need to create a new skills/actions/test.st flow with a single command exec gap.",
-        vocab="reason_needed",
-        content_refs=["skills/actions/test.st"],
-    )
-    child_gap = make_gap(
-        "Inspect whether skills/actions/test.st should continue with the next build step.",
-        vocab="reason_needed",
-        content_refs=["skills/actions/test.st"],
-        confidence=0.4,
-    )
-
-    assert execution_engine_module._reason_child_gaps_are_low_confidence_build_nonprogress([child_gap], parent_gap)
-
-
-def test_p12_reason_nonprogress_helpers_remain_available_for_future_build_controller():
-    parent_gap = make_gap(
-        "Need to create a new skills/actions/test.st flow with a single command exec gap.",
-        vocab="reason_needed",
-        content_refs=["skills/actions/test.st"],
-    )
-    child_gap = make_gap(
-        "Compose skills/actions/test.st as a valid step_chain.v1 action package ready for actualization.",
-        vocab="content_needed",
-        content_refs=["skills/actions/test.st"],
-        confidence=0.4,
-    )
-
-    assert execution_engine_module._reason_child_gaps_are_authoring_nonprogress([child_gap], parent_gap)
-    assert execution_engine_module._reason_child_gaps_are_low_confidence_build_nonprogress([child_gap], parent_gap)
 
 
 def test_p12_action_foundations_render_skills_tools_and_default_contracts():
@@ -3579,21 +3430,6 @@ def test_p12_new_action_gap_ignores_example_action_refs_for_target_resolution():
     target = execution_engine_module._entity_target_for_reprogramme(gap, registry())
 
     assert target is None
-
-
-def test_p12_reason_action_trigger_normalizer_strips_public_trigger_before_next_layer():
-    intent = {
-        "version": "semantic_skeleton.v1",
-        "name": "research",
-        "trigger": "on_vocab:research_needed",
-        "existing_ref": skill("hash_edit").hash,
-        "next_layer_desc": "Build higher layer",
-    }
-
-    execution_engine_module._normalize_reason_action_trigger(intent)
-
-    assert intent["trigger"] == "manual"
-    assert intent["existing_ref"] == skill("hash_edit").hash
 
 
 def test_p12_st_builder_normalizes_phases_missing_generation():
@@ -4052,50 +3888,6 @@ def test_p13_runtime_semantic_tree_marks_branch_resolved_after_descendants_close
 
     assert f"step:{step1.hash} \"inspect structure\" [resolved]" in rendered_chain
     assert f"step:{step2.hash} \"author test flow\" [resolved]" in rendered_chain
-
-
-def test_p12_reason_authoring_context_injector_remains_available():
-    class FakeSession:
-        def __init__(self):
-            self.injected = []
-
-        def inject(self, content: str, role: str = "user"):
-            self.injected.append(content)
-
-    session = FakeSession()
-    execution_engine_module._inject_reason_authoring_context(
-        session=session,
-        registry=registry(),
-        trajectory=Trajectory(),
-        hooks=execution_engine_module.ExecutionHooks(
-            resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
-            execute_tool=lambda tool, params: ("", 0),
-            auto_commit=lambda *args, **kwargs: (None, None),
-            parse_step_output=loop._parse_step_output,
-            extract_json=lambda raw: None,
-            extract_command=lambda raw: None,
-            extract_written_path=lambda raw: None,
-            is_reprogramme_intent=lambda intent: False,
-            load_tree_policy=lambda: {},
-            match_policy=lambda path, policy: None,
-            resolve_entity=lambda content_refs, registry_obj, trajectory: f"semantic_tree:skill_package:{skill('hash_edit').hash}\nname: hash_edit" if content_refs else None,
-            render_step_network=lambda registry_obj: "step_network",
-            emit_reason_skill=lambda *args, **kwargs: make_step("reason"),
-            git=lambda cmd, cwd=None: "0123456789abcdef0123456789abcdef01234567",
-            commit_assessment=lambda commit_sha: [],
-            step_assessment=lambda before, after, path=None: [],
-        ),
-        config=execution_engine_module.ExecutionConfig(
-            cors_root=ROOT,
-            chains_dir=ROOT / "chains",
-            tool_map=loop.TOOL_MAP,
-            deterministic_vocab=loop.DETERMINISTIC_VOCAB,
-            observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
-        ),
-    )
-
-    assert any(content.startswith("## Tool Descriptions") for content in session.injected)
-    assert any(content.startswith("## Action Semantic Trees") for content in session.injected)
 
 
 def test_p12_render_skill_package_surfaces_action_tree_details():

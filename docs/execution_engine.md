@@ -1,222 +1,124 @@
 # execution_engine.py
 
-[execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py) is the per-gap execution core. It sits between the compiler’s lawful frontier and the turn loop’s orchestration.
+[execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py) is the per-gap runtime executor.
 
 ## What It Owns
 
-`execute_iteration(...)` owns one admitted ledger entry:
+`execute_iteration(...)` takes one admitted gap and does:
 
 ```text
-gap
-  -> resolve refs
-  -> enforce tree policy
+resolve refs
+  -> apply tree policy
   -> route by vocab
-  -> observe / mutate / codon handling
-  -> commit if needed
-  -> inject postcondition
-  -> record resulting step
+  -> execute observation or mutation
+  -> emit resulting step
+  -> attach commit/post-observe consequences
 ```
 
-The loop does not inline this routing anymore.
-
-## Main Runtime Objects
-
-The module exports:
+## Main Objects
 
 - `ExecutionHooks`
 - `ExecutionConfig`
 - `ExecutionOutcome`
 - `execute_iteration(...)`
 
-This keeps the execution core narrow. The module receives concrete hooks for git, tool execution, parsing, tree policy, and commit assessment rather than owning those subsystems itself.
+The module receives git, tool execution, parsing, and policy hooks instead of owning those systems directly.
 
-## Clarify Frontier
+## Clarify
 
-Clarification now halts through one merged frontier step rather than a series of single-gap stops.
+Clarification is merged into one bounded frontier step:
 
-Implemented helpers:
-
-- `_collect_clarify_frontier(...)`
-- `_merged_clarify_desc(...)`
-- `_build_clarify_frontier_step(...)`
-
-Current law:
-
-- only current-turn clarify gaps are merged
-- duplicates are removed by hash
-- one canonical clarification step is appended
-- iteration halts immediately after that step
+- collect current-turn clarify gaps
+- dedupe them
+- emit one clarify step
+- stop iteration for the turn
 
 ## Observation Paths
 
-Observation splits into three forms:
+Three observation modes remain:
 
-- `observation_only_vocab`
-  - inject resolved data
-  - create a blob-like observation step
-  - no child-gap articulation pass
+- observation-only
+  - inject result, no child-gap articulation
 - deterministic observation
-  - resolve / tool run
-  - ask the model what it observed
+  - kernel resolves directly, then the model interprets
 - normal observation
-  - resolve / tool run
-  - parse a new step and any emitted gaps
+  - resolve, then parse a step plus any child gaps
 
-`pattern_needed` has a special deterministic helper:
+## Mutation Paths
 
-- `_pattern_tool_params(...)`
+Mutation first passes through tree policy and target-path inference.
 
-It infers `file_grep.py` arguments from the gap description when the model gives a concrete quoted pattern.
+Current important reroutes:
 
-## Mutation Routing
+- `tools/*` mutation -> `tool_needed`
+- `skills/actions/*` mutation -> `reason_needed`
+- entity/admin `.st` mutation -> `reprogramme_needed`
 
-Mutation is not direct file editing anymore when `.st` surfaces are involved.
+## reason_needed
 
-The current flow is:
+`reason_needed` is now back to a plain judgment/decision branch.
 
-```text
-mutate gap
-  -> tree policy lookup
-  -> .st auto-reroute if relevant
-  -> determine route_mode
-  -> maybe reroute to reason_needed
-  -> execute mutation branch
-```
+Its job is to:
 
-Key helpers:
+- reduce ambiguity
+- choose the next concrete move
+- surface the next executable gap
+- decide whether the work belongs to:
+  - a normal tool/mutation step
+  - `tool_needed`
+  - `reprogramme_needed`
+  - later, `chain_needed`
 
-- `_entity_target_for_reprogramme(...)`
-- `_reprogramme_mode_for_source(...)`
-- `_determine_reprogramme_mode(...)`
-- `_new_action_origination_requires_reason(...)`
+It is no longer the workflow-authoring controller.
 
-Deterministic route modes are:
+## tool_needed
 
-- `entity_editor`
-- `action_editor`
+`tool_needed` is the tool-tree mutation branch.
 
-The important law is:
+It receives:
 
-- entity writes can go straight to `reprogramme_needed`
-- action-tree creation, repair, and update stay under `reason_needed`
-- `reason_needed` may surface `reprogramme_needed` only for entity-tree persistence
-- lower workflow layers should remain `manual` while higher layers are still needed
+- the current request
+- the public tool registry
+- the tool builder scaffold path
 
-## Reason Path
+It writes tools that already contain the registry-derived contract metadata.
 
-`reason_needed` is now a selective structural branch rather than a generic fallback.
+## reprogramme_needed
 
-It can:
+`reprogramme_needed` remains the semantic persistence branch.
 
-- emit the native [reason.st](/Users/k2invested/Desktop/cors/skills/codons/reason.st) codon
-- submit `skeleton.v1` for deterministic compilation
-- activate an existing `.st` or compiled chain package by hash
-- author foundational `tools/*.py` blocks before composing higher-order `.st` layers
-- build one layer per iteration and surface `next_layer_desc` when a higher layer should follow a successful commit
+It injects:
 
-When the gap smells like workflow planning, it also injects the immutable chain construction spec:
+- existing entity data
+- [PRINCIPLES.md](/Users/k2invested/Desktop/cors/docs/PRINCIPLES.md)
+- step network
+- an editable semantic frame
 
-- `_should_inject_chain_spec_for_reason(...)`
-- `_inject_chain_spec(...)`
+Then it persists entity/admin state through [tools/st_builder.py](/Users/k2invested/Desktop/cors/tools/st_builder.py).
 
-This spec is not injected into every reasoning turn. It is scoped to planning, chain, workflow, manifest, skeleton, and research-like gaps.
-
-When action authoring is active, `reason_needed` also sees a unified Action Foundations inventory:
-
-- action/codon packages by committed skill hash
-- extracted chains by committed chain hash
-- tool scripts by committed blob hash
-
-Public/classified activation uses the block's canonical default gap contract. Hash embedding may specialize manifestation only through explicit `embedding.gap_override`.
-
-## Reprogramme Path
-
-`reprogramme_needed` now operates with explicit route guidance.
-
-Implemented behaviors:
-
-- inject existing entity data when present
-- inject [PRINCIPLES.md](/Users/k2invested/Desktop/cors/docs/PRINCIPLES.md)
-- inject step network
-- surface an editable semantic frame
-- coerce returned frames to the route mode
-
-The frame coercion helper is:
-
-- `_coerce_semantic_frame_for_mode(...)`
-
-For `entity_editor`, it hardens the returned frame to:
-
-- `artifact.kind = entity`
-- `artifact.protected_kind = entity`
-- no `root`
-- no `phases`
-- no `closure`
-
-That is the mechanism that prevents entity packages from drifting into accidental hybrid scaffolding. `reprogramme_needed` is not the owner of action workflow origination.
+It is not the owner of workflow origination.
 
 ## Rogue Handling
 
-Persistence and execution failure no longer disappear into terminal output.
+Failures that matter become explicit rogue steps with diagnostic metadata instead of disappearing into raw tool output.
 
-Implemented helpers:
-
-- `_make_rogue_step(...)`
-- `_emit_rogue_with_diagnosis(...)`
-- `_extract_invalid_generated_json(...)`
-
-A rogue step can carry:
+That includes:
 
 - `rogue_kind`
 - `failure_source`
 - `failure_detail`
 - `assessment`
-- one follow-up `reason_needed` diagnosis gap
 
-That diagnosis gap is one of the few places where `carry_forward=True` is still intentionally used.
+## Post-Observe Rhythm
 
-## Commit And Postcondition
-
-Mutation success now follows one standard rhythm:
+The mutation rhythm is:
 
 ```text
 execute
   -> auto_commit()
-  -> assessment lines
-  -> postcondition step
-  -> hash_resolve_needed observe gap
-  -> compiler sees the consequence before synthesis
+  -> attach assessment
+  -> create post-observe gap
+  -> continue iteration
 ```
 
-This matters most for `reprogramme_needed`, because semantic `.st` persistence is now visible on trajectory in time for the final answer.
-
-## Assessment Vocabulary
-
-The execution engine now depends on commit/step assessment hooks rather than freeform summaries.
-
-These assessments are attached to:
-
-- successful `.st` postconditions
-- rogue persistence failures
-- protected-surface rejections
-
-The emitted family includes:
-
-- `validator.status`
-- `structure.*`
-- `continuity.*`
-- `projection.*`
-- `grounding.*`
-- `policy.*`
-- `semantic.drift`
-- `surface.*`
-- `step_delta`
-
-## Relationship To Other Modules
-
-- [compile.py](/Users/k2invested/Desktop/cors/compile.py): chooses the active frontier
-- [step.py](/Users/k2invested/Desktop/cors/step.py): defines the emitted runtime objects
-- [manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py): activates saved packages
-- [loop.py](/Users/k2invested/Desktop/cors/loop.py): injects context, runs the outer turn, and persists state
-
-The module’s job is narrower and sharper than older docs suggested: it is the lawful branch executor, not the planner and not the orchestrator.
+That is the main mechanism that keeps mutation from directly exploding the ledger.

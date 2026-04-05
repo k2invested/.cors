@@ -1,106 +1,67 @@
 # tools
 
-The [tools/](/Users/k2invested/Desktop/cors/tools) directory is the subprocess operator bench. The kernel reasons over their outputs, but the tools themselves remain outside the core runtime graph.
+The tool layer is now split between:
 
-## Contract
+- public first-class tools in [tools/tool_registry.py](/Users/k2invested/Desktop/cors/tools/tool_registry.py)
+- internal hash handlers in [tools/hash_registry.py](/Users/k2invested/Desktop/cors/tools/hash_registry.py)
 
-The common operator pattern is still:
+## Public Tool Surface
 
-- JSON in on stdin
-- structured result on stdout
-- exit code signals success or failure
+The public tool registry is derived from the tool tree itself. Each public tool script must declare:
 
-That boundary matters because the runtime can inspect tool effects without turning every operator into an in-process kernel primitive.
+- `TOOL_DESC`
+- `TOOL_MODE`
+- `TOOL_SCOPE`
+- `TOOL_POST_OBSERVE`
 
-## Directly Routed Tools
+Optional:
 
-The current `TOOL_MAP` in [loop.py](/Users/k2invested/Desktop/cors/loop.py) routes directly to:
+- `TOOL_DEFAULT_ARTIFACTS`
+- `TOOL_RUNTIME_ARTIFACTS`
 
-- `tools/file_grep.py`
-- `tools/email_check.py`
-- `tools/hash_manifest.py`
-- `tools/stitch_generate.py`
-- `tools/code_exec.py`
-- `tools/email_send.py`
-- `tools/json_patch.py`
-- `tools/git_ops.py`
+The registry reads those fields directly from the script file.
 
-Observation-only hash resolution remains inline in the kernel.
+## Hash Primitives
 
-## Architecturally Important Tools
+The two core file primitives are:
 
-[tools/st_builder.py](/Users/k2invested/Desktop/cors/tools/st_builder.py)
+- [tools/hash_resolve.py](/Users/k2invested/Desktop/cors/tools/hash_resolve.py)
+- [tools/hash_manifest.py](/Users/k2invested/Desktop/cors/tools/hash_manifest.py)
 
-- semantic `.st` persistence curator
-- restores or requires deterministic entity context-injection steps
-- writes new entities into `skills/entities/`
-- writes new actions into `skills/actions/`
-- validates staged `semantic_skeleton.v1` action layers
-- enforces public-trigger ownership and explicit embedding contracts
-- rejects decorative tool/blob refs that are not linked by runtime-effective fields
-- does not own new workflow origination; it is the validator/actualizer behind reason-owned action authoring
+These are the system eyes and hands for workspace-backed files.
 
-[tools/skeleton_compile.py](/Users/k2invested/Desktop/cors/tools/skeleton_compile.py)
+Specialized readers and mutators behind them are implementation detail, not first-class public tools.
 
-- deterministic workflow compiler
-- validates `skeleton.v1`
-- produces `stepchain.v1`
-- enforces structural coherence
+## Public Routing
 
-[tools/semantic_skeleton_compile.py](/Users/k2invested/Desktop/cors/tools/semantic_skeleton_compile.py)
+The main routed public tools are now:
 
-- semantic envelope compiler
-- lowers action-bearing structure through `skeleton_compile.py`
+- `hash_resolve_needed` -> [tools/hash_resolve.py](/Users/k2invested/Desktop/cors/tools/hash_resolve.py)
+- `hash_edit_needed` -> [tools/hash_manifest.py](/Users/k2invested/Desktop/cors/tools/hash_manifest.py)
+- `content_needed` -> [tools/hash_manifest.py](/Users/k2invested/Desktop/cors/tools/hash_manifest.py)
+- `script_edit_needed` -> [tools/hash_manifest.py](/Users/k2invested/Desktop/cors/tools/hash_manifest.py)
+- `tool_needed` -> [tools/tool_builder.py](/Users/k2invested/Desktop/cors/tools/tool_builder.py)
 
-[tools/trace_tree_build.py](/Users/k2invested/Desktop/cors/tools/trace_tree_build.py)
+Other external or domain-specific tools remain separate public tools.
 
-- derives `trace_tree.v1`
-- lowers realized chains, stepchains, and skeleton-based inputs into one replay grammar
+## Tool Writer
 
-[tools/validate_chain.py](/Users/k2invested/Desktop/cors/tools/validate_chain.py)
+`tool_needed` now owns tool-tree authoring.
 
-- validator surface used by the broader chain/workflow discipline
-- part of the structure-checking bench around the principles
+Current behavior:
 
-## Routing Law
+- any mutation under `tools/` is rerouted by tree policy to `tool_needed`
+- `tool_needed` sees the public tool registry before it writes
+- [tools/tool_builder.py](/Users/k2invested/Desktop/cors/tools/tool_builder.py) scaffolds the script
+- [tools/validate_tool_contract.py](/Users/k2invested/Desktop/cors/tools/validate_tool_contract.py) validates the required metadata
 
-The important routing rules are now:
+## Registry Split
 
-```text
-ordinary file mutation          -> normal mutate vocab/tool path
-.st entity/admin mutation       -> reprogramme_needed (entity_editor)
-.st action tree work            -> reason_needed
-new tool layer for workflow     -> normal mutate vocab/tool path, then reason composes upward
-codon mutation                  -> reject / auto-revert / reason_needed
-```
+Use the registries like this:
 
-So the tool layer is subordinate to architectural law. The presence of a file-edit tool does not mean every tree is editable the same way.
+- [tools/tool_registry.py](/Users/k2invested/Desktop/cors/tools/tool_registry.py)
+  - public selectable tools
+- [tools/hash_registry.py](/Users/k2invested/Desktop/cors/tools/hash_registry.py)
+  - internal file-type routing behind the hash primitives
 
-## Chain Construction Spec
-
-[commitment_chain_construction_spec.st](/Users/k2invested/Desktop/cors/skills/codons/commitment_chain_construction_spec.st) is now part of the effective tooling story even though it is not a Python script.
-
-It is:
-
-- immutable by tree location
-- resolved as a spec/context package
-- selectively injected into `reason_needed`
-- used as the executable contract for staged action authoring and hash embedding
-
-That makes it part of the authoring/tool bench for chain construction.
-
-## Practical Split
-
-The clean split is now:
-
-- `reason_needed`
-  - structural authoring
-  - chain design
-  - staged action/workflow authoring
-  - hash-native composition over packages, chains, and tool blobs
-- `reprogramme_needed`
-  - semantic persistence
-  - entity calibration
-  - entity/admin state updates
-
-The tool layer serves both sides, but it no longer erases the distinction between them.
+Chain composition should reference the public tool surface, not the hidden handlers behind the hash primitives.

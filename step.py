@@ -32,15 +32,14 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 from vocab_registry import BRIDGE_VOCAB, MUTATE_VOCAB, OBSERVE_VOCAB
 
 
 TREE_LANGUAGE_KEY = (
-    "tree_sig: step{kindflowN}=kind:o observe,m mutate,r rogue; flow:+ open,~ dormant,= closed. "
-    "gap{statusclassrcg/s:c}=status:? active,= resolved,~ dormant; "
-    "class:o observe,m mutate,b bridge,c clarify,_ unknown; "
-    "rcg are rel/conf/gr bands 0-9; s:c are step_refs:content_refs counts. "
+    "legend: step{o/m/b/c + frontier}; gap{status + surface + ref-counts}. "
+    "step kind: o observe, m mutate, b bridge, c clarify. "
+    "frontier: +N active child gaps, ~N dormant child gaps, = locally closed. "
+    "gap status: active, resolved, dormant, planned. "
     "step refs are execution provenance; gap refs are gap-surfacing provenance."
 )
 
@@ -393,19 +392,12 @@ class Chain:
     desc:       str = ""          # semantic summary (set when chain completes)
     resolved:   bool = False
     extracted:  bool = False      # True if saved to chains/*.json
-    stable_id:  str | None = None
-    chain_kind: str = "normal"    # normal | reason_loop
-    controller_vocab: Optional[str] = None
-    target_desc: str = ""
-    target_refs: list[str] = field(default_factory=list)
-    loop_state: dict = field(default_factory=dict)
 
     @staticmethod
     def create(origin_gap: str, first_step: str) -> "Chain":
         h = chain_hash([origin_gap, first_step])
         return Chain(
             hash=h,
-            stable_id=h,
             origin_gap=origin_gap,
             steps=[first_step],
         )
@@ -427,18 +419,6 @@ class Chain:
             "resolved": self.resolved,
             "extracted": self.extracted,
         }
-        if self.chain_kind != "normal":
-            data["chain_kind"] = self.chain_kind
-        if self.stable_id:
-            data["stable_id"] = self.stable_id
-        if self.controller_vocab:
-            data["controller_vocab"] = self.controller_vocab
-        if self.target_desc:
-            data["target_desc"] = self.target_desc
-        if self.target_refs:
-            data["target_refs"] = self.target_refs
-        if self.loop_state:
-            data["loop_state"] = self.loop_state
         return data
 
     @staticmethod
@@ -450,12 +430,6 @@ class Chain:
             desc=d.get("desc", ""),
             resolved=d.get("resolved", False),
             extracted=d.get("extracted", False),
-            stable_id=d.get("stable_id"),
-            chain_kind=d.get("chain_kind", "normal"),
-            controller_vocab=d.get("controller_vocab"),
-            target_desc=d.get("target_desc", ""),
-            target_refs=d.get("target_refs", []),
-            loop_state=d.get("loop_state", {}) or {},
         )
 
 
@@ -874,22 +848,7 @@ class Trajectory:
                 last_meta = dict(nodes[-1].get("meta", {}) or {})
                 if last_meta.get("timestamp", 0) > 0:
                     time_str = f" [{absolute_time(last_meta['timestamp'])}]"
-            chain_meta = self.chains.get(tree.get("source_ref"))
-            controller_suffix = ""
-            chain_ref = tree.get("source_ref")
-            if chain_meta and chain_meta.chain_kind == "reason_loop":
-                loop_state = dict(chain_meta.loop_state or {})
-                attempts = loop_state.get("attempt_count", 0)
-                max_attempts = loop_state.get("max_attempts", 0)
-                loop_status = loop_state.get("status", "active")
-                target = loop_state.get("target_path") or chain_meta.target_desc or desc
-                if chain_meta.stable_id:
-                    chain_ref = chain_meta.stable_id
-                controller_suffix = (
-                    f" [reason_loop {loop_status} attempts={attempts}/{max_attempts} "
-                    f"target={target}]"
-                )
-            lines = [f"chain:{chain_ref}  \"{desc}\" ({status}){time_str}{controller_suffix}"]
+            lines = [f"chain:{tree.get('source_ref')}  \"{desc}\" ({status}){time_str}"]
             origin_marker = " [focus]" if highlight_gap and tree.get("origin_gap") == highlight_gap else ""
             lines.append(f"  origin: {tree.get('origin_gap')}{origin_marker}")
             lines.append(f"  {self._runtime_tree_legend()}")

@@ -1,90 +1,52 @@
 # manifest_engine.py
 
-[manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py) is the package manifestation layer. It renders and activates saved package structure without replacing the step-gap runtime primitive.
+[manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py) is the package manifestation and rendering layer.
 
 ## What It Owns
 
 - stable hashing for persisted chain packages
-- persistence/loading of compiled `stepchain.v1`
-- readable package rendering
+- semantic-tree rendering for packages and realized chains
+- package activation back into runtime gaps
 - step-network rendering
-- activation of `.st` packages and saved chain packages back into first-generation runtime gaps
 
-## Stable Package Identity
+## Semantic Tree Render
 
-The main identity helpers are:
+The standardized compact render now looks like:
 
-- `stable_doc_hash(doc)`
-- `chain_package_path(...)`
-- `persist_chain_package(...)`
+```text
+semantic_tree:realized_chain:<hash>
+chain:<hash> "<desc>" (active, N steps) [timestamp]
+origin: <gap>
+legend: step{o/m/b/c + frontier}; gap{status + surface + ref-counts}
+├─ {o=} step:<id> "<desc>" -> refs:[...]
+│  └─ {resolved:o} gap:<id> [hash_resolve_needed] -> refs:[...]
+└─ {m+1} step:<id> "<desc>" -> refs:[...]
+   └─ {active:m} gap:<id> [hash_edit_needed] -> refs:[...]
+```
 
-Compiled chain packages are persisted under `chains/<hash>.json`.
+Embedded packages or chains render as:
 
-## Package Rendering
-
-The package renderer is not raw JSON dump by default. It renders structural shape:
-
-- package name
-- root
-- trigger
-- phase order
-- compact node signatures
-
-That keeps package context legible to the model in the same general visual language family as trajectory trees.
-
-## Step Network
-
-`render_step_network(...)` is now more important than older docs suggested because the skill tree is explicitly split.
-
-The step network includes:
-
-- [admin.st](/Users/k2invested/Desktop/cors/skills/admin.st)
-- entity packages from `skills/entities/`
-- action packages from `skills/actions/`
-- codons from `skills/codons/`
-- saved compiled `stepchain.v1` packages
-- `/command` entrypoints
-
-This is the package ecology injected into `reason_needed` and `reprogramme_needed`.
-
-For action authoring, the manifest layer now also supports a hash-native Action Foundations view:
-
-- action/codon packages by committed skill hash
-- extracted chains by committed chain hash
-- tool scripts by committed blob hash
-
-Each foundation carries:
-
-- `activation`
-- `default_gap`
-- `surface`
-- `omo_role`
+```text
+@embed:<ref> [activation_mode]
+```
 
 ## Activation
 
-The current activation surfaces are:
+Activation remains explicit:
 
-- `activate_skill_package(...)`
-- `activate_stepchain_package(...)`
-- `activate_chain_reference(...)`
+- package hashes can be rendered or resolved as structure
+- package execution only starts when an activation path turns them back into runtime gaps
 
-Activation is now contract-aware rather than just package-shape-aware:
+That keeps package storage separate from live execution.
 
-- public/name activation uses a block's canonical default gap contract
-- hash embedding may specialize manifestation only through explicit override
-- runtime nodes render `effective_contract` so the active chain shows what will actually execute
+## Step Network
 
-The important boundary is unchanged:
+The step network render still shows the live package ecology:
 
-- activation turns packages into runtime gaps and activation steps
-- activation does not introduce a separate scheduler or ontology
+- admin/entity packages
+- action packages
+- codons
+- extracted chains
+- public command entrypoints
 
-## Entity Versus Action Packages
-
-The manifest layer sits beside a now-explicit runtime law:
-
-- entity packages are usually resolved for semantic injection
-- action packages are package/read surfaces unless explicitly activated
-- workflow activation is explicit, not the default meaning of hash resolution
-
-That makes the manifest engine the package bridge, not a generic “everything resolves into execution” layer.
+This is the readable package inventory the runtime injects into the model.

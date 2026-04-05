@@ -213,19 +213,21 @@ They are not separate systems. They are two views of the same manifestation engi
 - one for executable structure
 - one for persistent semantic state
 
-### Two sides of the same coin
+### Current ownership split
 
-`reason_needed` and `reprogramme_needed` are complementary manifestations of the same OS-level mechanism.
+The runtime is simpler than the earlier structural-authoring design.
 
-- **`reason_needed`** is the more stateful, conscious, structural side. It reasons over step flows, chains, entity space, and executable packages. It constructs or refines structures the system can deterministically derive, execute, inspect, or crystallize.
-- **`reprogramme_needed`** is the more stateless, subconscious, persistence side. It updates the system's long-horizon internal state model: entities, preferences, domain structures, and tracked background concerns. It keeps the operating context alive over long periods without forcing every update through explicit structural planning.
+- **`reason_needed`** is the stateful judgment and activation primitive. It decides what kind of work should happen next: direct observation, direct mutation, `tool_needed`, `reprogramme_needed`, clarification, or later `chain_needed`.
+- **`tool_needed`** is the tool-authoring primitive. It owns `tools/*.py` creation under tree policy and writes scripts that already express their own runtime contract metadata.
+- **`reprogramme_needed`** is the semantic persistence primitive. It updates entity/admin state after judgment has already established that persistence is warranted.
 
-Together they form the operating system for the LLM:
+So the live split is:
 
-- `reason_needed` manages structural execution intelligence
-- `reprogramme_needed` manages persistent semantic calibration
+- `reason_needed` manages activation and structural judgment
+- `tool_needed` manages new tool creation
+- `reprogramme_needed` manages semantic state persistence
 
-One is conscious flow architecture. The other is subconscious state continuity. Both are step manifestation.
+Executable chain construction is intentionally not the live job of `reason_needed` anymore. That is a future dedicated layer.
 
 ### Tier 1: Observe (external &, priority 20)
 
@@ -241,31 +243,32 @@ The kernel resolves data. The LLM receives it. No mutation. These are the system
 
 ### Tier 2: Mutate (external &mut, priority 40)
 
-The LLM composes. The kernel executes. Auto-commit. Postcondition fires. These are the system's effectors — they change the world and immediately verify the change.
+The LLM composes. The kernel executes. Auto-commit. Post-observation fires. These are the system's effectors — they change the world and then immediately verify the result.
 
 | Vocab | Manifestation | Compose mode | Post-observe |
 |-------|--------------|-------------|--------------|
-| `hash_edit_needed` | hash_manifest.py — read/write/patch/diff by path. Routes by file type (.st→st_builder, .json→json_patch, .docx→doc_edit) | LLM composes JSON params | Per tree_policy.json |
+| `hash_edit_needed` | hash_manifest.py — unified file mutation through the hash primitive. Routes by file type internally. | LLM composes JSON params | Derived from commit/artifact/tool contract |
 | `stitch_needed` | stitch_generate.py — prompt → HTML + Tailwind CSS | LLM composes UI prompt | `ui_output/` (screenshot blob) |
 | `content_needed` | hash_manifest.py — write new file through hash primitive | LLM composes content | Commit tree |
-| `script_edit_needed` | hash_manifest.py — edit existing file through hash primitive | LLM composes shell command | Commit tree |
-| `command_needed` | code_exec.py — execute shell command. Output blob-hashed into git. | LLM composes command | `logs/` (output blob) |
+| `script_edit_needed` | hash_manifest.py — edit existing file through hash primitive | LLM composes edit intent | Commit tree |
+| `tool_needed` | tool_builder.py — scaffold a validated public tool script with explicit runtime contract metadata | LLM composes tool spec | Commit tree |
+| `command_needed` | code_exec.py — execute shell command. Output and logs become post-observe surface. | LLM composes command | `bot.log` or returned artifacts |
 | `message_needed` | email_send.py — send email/message | LLM composes message | Commit tree |
 | `json_patch_needed` | json_patch.py — surgical JSON mutation | LLM composes patch | Commit tree |
 | `git_revert_needed` | git_ops.py — revert/checkout | LLM composes git command | Commit tree |
 
-All mutations follow the same rhythm: **compose → execute → auto-commit → postcondition** (hash_resolve_needed targeting post_observe path). No exceptions. The postcondition is the system verifying its own mutation — the same way a cell checks its DNA after replication.
+All mutations follow the same rhythm: **compose → execute → auto-commit → post-observe**. Mutations do not directly explode the ledger. The follow-on observation is where the system verifies the change and decides what new gaps, if any, deserve admission.
 
-### Tier 3: Bridge codons (internal &mut, priority 90-99)
+### Tier 3: Bridge primitives (internal, priority 90-99)
 
-Four codons govern the reasoning lifecycle. The biological analogy is precise: a codon is a nucleotide sequence that signals a specific instruction to the cellular machinery. These four vocab terms signal specific instructions to the kernel machinery. They live in `skills/codons/` — immutable, protected by tree_policy with `on_reject: reason_needed`. Any attempt to mutate a codon file auto-reverts and falls back to reason_needed for recalibration.
+Four bridge primitives govern the reasoning lifecycle. Three are backed by protected codon packages in `skills/codons/`. `reason_needed` is the live bridge primitive for judgment and activation, not a mutable authored workflow package.
 
 | Vocab | Codon | Priority | Manifestation |
 |-------|-------|----------|--------------|
-| `reason_needed` | **START** | 90 | Stateful structural abstraction. Planning primitive + reorientation checkpoint + heartbeat trigger. Reasons over semantic trees, entity space, executable skeletons, and step-chain structure. |
+| `reason_needed` | **START** | 90 | Stateful judgment and activation. Uses semantic trees, entity space, recent trajectory, and workspace context to decide the next concrete move. |
 | `await_needed` | **PAUSE** | 95 | Synchronization checkpoint. Suspends parent chain until referenced sub-agent completes. Renders sub-agent's full semantic tree → parent inspects → accept/correct/reactivate. If turn ends before sub-agent finishes, persists as dangling gap — heartbeat picks up next turn. |
-| `commit_needed` | **END** | 98 | Reintegration. Renders full commitment tree into main context. Closes or continues chain. NOT directly classifiable — injected by reason.st at lowest relevance behind commitment gaps. |
-| `reprogramme_needed` | **PERSIST** | 99 | Stateless semantic state update. World-building and long-horizon calibration. Persists entity and semantic-state changes so the system stays informed across turns and time horizons. |
+| `commit_needed` | **END** | 98 | Reintegration and closure for commitment-like branches. |
+| `reprogramme_needed` | **PERSIST** | 99 | Semantic state update for entity/admin packages once judgment has already decided to persist. |
 
 **Codon priority ordering:** reason (90) → await (95) → commit (98) → reprogramme (99). Within the bridge tier, planning fires first, checkpoints fire after inline work, reintegration fires after commitment gaps resolve, and persistence fires last.
 
@@ -295,16 +298,22 @@ Mutations targeting protected paths are intercepted before execution — the tre
 |---------------|-------------|-----------|
 | `skills/admin.st` | `reprogramme_needed` (`entity_editor`) | Canonical admin primitive — semantic persistence only |
 | `skills/entities/*` or entity hash | `reprogramme_needed` (`entity_editor`) | Entity packages persist through semantic entity editor |
-| `skills/actions/*` or existing action hash | `reason_needed` | Action-tree creation, repair, and update belong to structural reasoning |
-| New tool/blob layer for a workflow | normal mutate vocab/tool path | Foundational block is authored first, then reason composes upward |
+| `skills/actions/*` or existing action hash | `reason_needed` | Action/workflow activation and structural judgment stay under reason first |
+| `tools/*` | `tool_needed` | Tool-tree mutation is diverted into the tool writer path |
 | `ui_output/` or screenshots | `stitch_needed` | Generated assets regenerated, not manually edited |
 | Immutable paths (codons, system code, stores, logs) | Auto-revert + warning | Protected path violation |
 
 All driven by `tree_policy.json` — configurable, no hardcoded paths.
 
-### Universal postcondition
+### Universal post-observation
 
-Every `auto_commit()` injects a `hash_resolve_needed` gap targeting the commit. What gets resolved depends on `post_observe` in the TOOL_MAP config — either the commit tree (default) or a specific directory. This is the system verifying its own work. Every mutation produces an observation. No blind mutations.
+Every successful mutation produces follow-on observation. The exact surface is derived from the runtime contract:
+
+- explicit `post_observe` on the public vocab/tool when needed
+- returned or declared artifact paths when the tool produces artifacts
+- otherwise the realized commit or changed workspace surface
+
+This is the system verifying its own work. No blind mutations.
 
 ### Code mechanisms
 
@@ -312,15 +321,31 @@ Every `auto_commit()` injects a `hash_resolve_needed` gap targeting the commit. 
 vocab_registry.py
 ├─ VOCABS
 │   ├─ observe  → {hash_resolve_needed, pattern_needed, email_needed, external_context, clarify_needed}
-│   ├─ mutate   → {hash_edit_needed, stitch_needed, content_needed, script_edit_needed, command_needed, message_needed, json_patch_needed, git_revert_needed}
+│   ├─ mutate   → {hash_edit_needed, stitch_needed, content_needed, script_edit_needed, tool_needed, command_needed, message_needed, json_patch_needed, git_revert_needed}
 │   └─ bridge   → {reason_needed, await_needed, commit_needed, reprogramme_needed}
 ├─ DETERMINISTIC_VOCAB = {hash_resolve_needed}
 ├─ OBSERVATION_ONLY_VOCAB = {external_context}
-├─ TOOL_MAP
-│   ├─ pattern_needed → tools/file_grep.py
-│   ├─ hash_edit_needed → tools/hash_manifest.py
-│   ├─ stitch_needed → tools/stitch_generate.py (+ post_observe ui_output/)
-│   └─ ... (full routing lives in canonical vocab registry)
+└─ tool bindings and post_observe overrides live on the public vocab surface
+
+tools/tool_registry.py
+├─ public tool inventory only
+├─ includes the two hash primitives as public tools
+└─ excludes the internal handlers behind them
+
+tools/hash_registry.py
+├─ internal file-type routing for hash_resolve/hash_manifest
+├─ resolve handlers
+└─ manifest handlers
+
+tools/tool_contract.py
+├─ reads tool metadata directly from each public script
+├─ TOOL_DESC
+├─ TOOL_MODE
+├─ TOOL_SCOPE
+├─ TOOL_POST_OBSERVE
+└─ optional artifact declarations
+
+vocab_registry.py
 └─ validate_tree_policy_targets(policy)
     └─ prevents stale or unknown reroute targets
 
@@ -353,13 +378,14 @@ loop.py
 ├─ tree policy
 │   ├─ skills/admin.st → reprogramme_needed + entity_editor
 │   ├─ skills/entities/* → reprogramme_needed + entity_editor
-│   ├─ skills/actions/* → reason_needed + action-tree ownership
+│   ├─ skills/actions/* → reason_needed
 │   ├─ skills/codons/* → immutable + on_reject: reason_needed
+│   ├─ tools/* → tool_needed
 │   └─ ui_output/* / immutable code / logs / stores → policy enforcement
 ├─ auto_commit(message)
 │   ├─ git add -A → commit
 │   ├─ protected-surface check
-│   └─ inject hash_resolve_needed postcondition targeting the realized commit
+│   └─ hand back the realized commit/artifact surface for post-observation
 ├─ _find_dangling_gaps(trajectory)
 │   └─ only explicit carry_forward gaps resume; clarify never auto-carries
 └─ _persist_forced_synth_frontier(...)
@@ -369,17 +395,16 @@ execution_engine.py
 ├─ execute_iteration(...)
 │   ├─ merges current-turn clarify gaps into one frontier step
 │   ├─ applies deterministic route_mode hints before execution
-│   ├─ keeps action-tree creation, repair, and update under reason_needed
-│   ├─ sanitizes reason output so reprogramme_needed is only emitted for entity-tree persistence
-│   ├─ iterates one action layer at a time via next_layer_desc
+│   ├─ keeps action-tree creation and repair under reason_needed
+│   ├─ diverts tool-tree writes to tool_needed
+│   ├─ limits reprogramme_needed to entity/admin persistence
 │   └─ emits rogue steps with reason_needed diagnosis when execution fails
 ├─ _collect_clarify_frontier(...)
 │   └─ current-turn bounded, deduped clarify frontier
-├─ reason authoring prompt
-│   ├─ injects Step Network
-│   ├─ injects Action Foundations
-│   ├─ teaches semantic_tree vs described_blob distinction
-│   └─ teaches named_default vs hash_embedded contract law
+├─ tool_needed branch
+│   ├─ injects Public Tool Registry
+│   ├─ uses tool_builder scaffold
+│   └─ validates script contract metadata
 └─ _reprogramme_mode_for_source(path)
     └─ derives deterministic semantic persistence frame for entity-like targets
 
@@ -388,22 +413,15 @@ tree_policy.json
 ├─ "skills/entities/" → {on_mutate: "reprogramme_needed", reprogramme_mode: "entity_editor"}
 ├─ "skills/actions/"  → {on_mutate: "reason_needed", reprogramme_mode: "action_editor"}
 ├─ "skills/codons/"   → {immutable: true, on_reject: "reason_needed"}
+├─ "tools/"           → {on_mutate: "tool_needed"}
 ├─ "ui_output/"       → {on_mutate: "stitch_needed"}
 ├─ "logs/"            → {immutable: true}
 └─ core runtime files → {immutable: true}
 
-action_foundations.py
-├─ FoundationSpec(ref, kind, surface, source, desc, activation, default_gap, omo_role)
-├─ resolve_default_contract(ref)
-├─ resolve_trigger_owner(term)
-└─ render_action_foundations(...)
-
 tools/st_builder.py
-├─ effective_phase_contract(...)
-├─ validates named_default vs hash_embedded
-├─ rejects decorative tool/blob refs with no runtime-effective linkage
-├─ rejects lower layers that claim final public on_vocab trigger
-└─ actualizes lawful semantic_skeleton.v1 action/entity writes
+├─ validates `.st` structure before persistence
+├─ creates or updates entity/action packages when explicitly asked
+└─ actualizes lawful semantic action/entity writes
 ```
 
 ---
@@ -605,10 +623,10 @@ tools/st_builder.py
 │   ├─ preserves pure entity shape
 │   ├─ strips root/phases/closure
 │   └─ writes to skills/entities/ (or skills/admin.st when editing admin)
-├─ semantic_skeleton action validation
-│   ├─ staged L0/L1/L2/L3 authoring checks
+├─ action/entity structure validation
+│   ├─ persistence frame checks
 │   ├─ public-trigger ownership checks
-│   └─ explicit embedding contract checks
+│   └─ explicit structural contract checks
 └─ Forwards semantic fields (identity, constraints, scope, refs, preferences, etc.)
 ```
 
@@ -723,67 +741,41 @@ loop.py
 
 ---
 
-## §7. Post-Diff: The Re-Entry Primitive
+## §7. Post-Observation and Re-Entry
 
-`post_diff` is not just a fluidity dial. It is a workflow-management primitive of the manifestation engine.
+The live kernel is simpler than the earlier `post_diff`-centric design.
 
-The codons handle lifecycle boundaries:
+The dominant runtime rule is:
 
-- `reason_needed` → start / structural activation
-- `await_needed` → wait / synchronization
-- `commit_needed` → stop / reintegration
+- observations may surface next gaps
+- mutations do not directly expand the ledger
+- successful mutations trigger post-observation
 
-`post_diff` governs something different: whether execution **re-enters semantic measurement** after a step has manifested.
+So the primary re-entry primitive is no longer “any step with `post_diff: true`”. It is the observe/mutate rhythm itself.
 
-- **post_diff: false** → manifest → continue linearly. The step is treated as a closed expression unit.
-- **post_diff: true** → manifest → re-enter measurement. The result is opened back up to reasoning, verification, branching, or further dispersal.
+### Current law
 
-So `post_diff` is not a codon. It is the branch/re-entry primitive. In the biological analogy, it behaves more like a splice or translation-control site than a start or stop codon. It determines whether the manifestation engine continues as a straight sequence or re-opens the chain to semantic branching.
+- **observe**
+  - inspect context
+  - resolve data
+  - surface relevant next gaps
+- **mutate**
+  - act on the world
+  - auto-commit when applicable
+  - produce a post-observation surface
+  - let later observation decide whether any next work is warranted
 
-This matters because LIFO and OMO are not enough on their own to validate a workflow skeleton. A skeleton can satisfy start/wait/stop boundaries and still be incoherent if re-entry points are wrong. `post_diff` is what tells the system where reflection, branch emission, verification, or recursive manifestation are even allowed.
+This keeps mutation from directly exploding the ledger while still allowing iterative multi-step progress.
 
-### What `post_diff` means structurally
+### Where `post_diff` still matters
 
-When a workflow is compiled, every manifested step must declare one of two states:
+`post_diff` still exists in authored package structure and validators, but it is no longer the dominant kernel law. It remains package metadata about where a designed workflow intends to reopen or stay linear. The live runtime, however, is governed primarily by:
 
-- **closed expression** (`post_diff: false`)
-  The step completes and the sequencer proceeds. Use for deterministic injection, fixed observation, fixed mutation, and non-branching persistence.
+- observe vs mutate
+- automatic post-observation after mutation
+- compiler sequencing laws
 
-- **open expression** (`post_diff: true`)
-  The step completes and the sequencer re-enters semantic measurement. Use for decision points, diagnosis, verification, reasoning, recursive embedding, and any step whose result may lawfully emit child gaps.
-
-The important point is that this is a structural permission, not just a runtime mood. If a step is not marked open, the workflow should not branch there.
-
-### What this means for workflow design
-
-When designing a workflow skeleton or `.st` package:
-
-- **Deterministic pipeline**: mostly `post_diff: false`
-- **Guided branching**: `post_diff: true` only at explicit decision or verification points
-- **Recursive structural reasoning**: `post_diff: true` at the points where the system is allowed to reopen the chain and emit new structure
-
-So `post_diff` should be treated as a first-class workflow primitive alongside the codons, not as a minor step option.
-
-### Code mechanisms
-
-```
-skills/admin.st / skills/entities/* / skills/actions/* / skills/codons/*
-├─ Each authored step can carry "post_diff": true|false
-└─ This expresses whether the step is structurally open or closed after manifestation
-
-skills/loader.py
-└─ SkillStep.post_diff → preserved on loaded step packages
-
-schemas/semantic_skeleton.v1.json
-├─ Semantic step structure preserves post_diff
-└─ post_diff remains part of the structural contract submitted for persistence / compilation
-
-tools/semantic_skeleton_compile.py
-└─ Preserves post_diff into compiled semantic structure
-
-loop.py / execution_engine.py
-└─ Runtime uses post_diff to distinguish deterministic observation/persistence from branch-opening steps
-```
+So `post_diff` is now secondary to the simpler O-M-O rhythm.
 
 ---
 
@@ -833,13 +825,13 @@ So the compiler laws are not merely runtime safety checks. They are part of the 
 
 **7. Immutability** — Gaps are immutable after creation. Scores set at emission, never modified. This ensures the trajectory is a faithful record of what the LLM actually perceived, not a retroactive revision.
 
-**8. Postcondition** — Every mutation auto-commits and injects hash_resolve_needed. No mutation without verification. This is Law 3 (OMO) enforced structurally — even if the .st author forgets to add an observation step, the postcondition ensures one fires.
+**8. Post-observation** — Every successful mutation auto-commits and yields a follow-on observation surface. No mutation without verification. This is Law 3 (OMO) enforced structurally — even if an authored package omits an explicit verification step, the runtime still produces one.
 
 **9. Loop always closes** — Every background trigger must eventually reintegrate with the parent trajectory. Either the flow-builder agent sets a manual `await_needed` checkpoint (synchronous — parent chain suspends, resumes when sub-agent finishes) or the kernel inserts an automatic `reason_needed` heartbeat after synthesis (asynchronous — next turn, agent inspects sub-agent's semantic tree). The heartbeat is recursive: if inspection triggers further background work, another heartbeat persists. The loop closes when all background chains are resolved. This is not a constraint on the flow-builder — it is a guarantee by the kernel.
 
 ### Workflow validation
 
-Because the compiler is part of the manifestation engine, every workflow skeleton submitted by `reason_needed` should be statically checkable before execution.
+Because the compiler is part of the manifestation engine, every authored workflow/package structure should be statically checkable before execution or activation.
 
 A valid workflow skeleton must answer:
 
@@ -876,7 +868,7 @@ debug.st:
   step 4: command_needed (mutate, rel=0.7, post_diff=true)         ← verification
 ```
 
-The compiler sees: observe gap (priority 20), then unknown gap (50), then two mutate gaps (40). After priority sorting, the observe fires first. The null-vocab gap lets the LLM reason freely. Then mutations fire with automatic postconditions between them (OMO preserved).
+The compiler sees: observe gap (priority 20), then unknown gap (50), then two mutate gaps (40). After priority sorting, the observe fires first. The null-vocab gap lets the LLM reason freely. Then mutations fire with automatic post-observation between them (OMO preserved).
 
 ### Recursive .st embedding
 
@@ -919,7 +911,7 @@ compile.py
 │   ├─ .validate_omo(vocab) → rejects consecutive mutations (Law 3)
 │   ├─ .last_was_mutation → tracks OMO state
 │   ├─ .record_execution(vocab, produced_commit) → updates OMO tracking
-│   ├─ .needs_postcondition() → True if last was mutation (Law 8)
+│   ├─ mutation tracking → successful mutation requires follow-on observation (Law 8)
 │   ├─ .force_close_chain(chain_id) → removes all entries, marks closed (Law 6)
 │   ├─ .skip_chain(chain_id) → moves entries to bottom (stagnation)
 │   ├─ .resolve_current_gap(gap_hash) → marks resolved, checks chain completion
@@ -952,8 +944,8 @@ compile.py
     └─ CONFIDENCE_THRESHOLD = 0.8
 
 loop.py
-├─ Universal postcondition (Law 8)
-│   └─ after auto_commit: Gap.create("hash_resolve_needed", content_refs=[commit_sha])
+├─ Universal post-observation (Law 8)
+│   └─ after auto_commit: observe the realized commit or declared artifact surface
 │
 └─ .st gap dispersal → emit_origin_gaps(step) — .st steps become ledger entries
     └─ follows all 8 laws without exception
@@ -1030,75 +1022,37 @@ compile.py
 
 The old commitment system tracked promises as registry entries. In cors, reasoning chains replace commitments entirely. No separate mechanism — the same trajectory, same compiler, same .st files. A commitment is an unresolved chain. A task is an active chain. A memory is a resolved chain compressed to a hash. One primitive, multiple scales.
 
-### The start codon: reason.st — three roles
+### `reason_needed`: activation and judgment
 
-`reason.st` is the system's most versatile codon. It serves three distinct roles through the same mechanism:
+`reason_needed` is now the activation primitive, not the live workflow-authoring controller.
 
-**Role 1: Planning primitive** — For complex tasks, the main agent emits `reason_needed` to decompose and structure work as executable manifestation. The reason agent has semantic tree visibility and can build lawful step flow bottom-up: leaf chains first, then composed parents, then top-level orchestration. Its natural authoring surface is the workflow skeleton: a structural description the system can deterministically derive, compile, inspect, and execute. In the current runtime, `reason_needed` can either emit the native `reason.st` codon, submit a `skeleton.v1` for deterministic compilation, or activate an existing `.st` / compiled `.json` chain package by hash.
+Its roles are:
 
-**Role 2: Reorientation checkpoint** — When the compiler rejects a chain (missing await, OMO violation, codon immutability), the fallback is `reason_needed`. The agent re-renders its semantic trees, sees what went wrong, and reconstructs its approach. This is the same role `reclassify` played in v4.5 but through an existing primitive rather than a separate mechanism. Any rejection resolves to reason.
+**Role 1: Planning and judgment** — For complex tasks, the main agent emits `reason_needed` to reduce ambiguity and decide the next concrete move. It reasons over semantic trees, entity space, workspace state, and recent trajectory, then chooses whether the next step should be observation, mutation, `tool_needed`, `reprogramme_needed`, clarification, or later `chain_needed`.
 
-**Role 3: Heartbeat trigger** — When background work is in progress without a manual await, the kernel persists an automatic `reason_needed` after synthesis. Next turn, this heartbeat fires — the agent renders the sub-agent's semantic tree, the active chain it is re-entering, and the package/entity network it depends on, then routes: close, revisit, or refine+reactivate. The heartbeat recurs until all background chains resolve.
+**Role 2: Reorientation checkpoint** — When tree policy, compiler law, or protected-surface rules reject the current move, the fallback is still `reason_needed`. The agent re-renders current context and chooses a safer next path.
 
-### Six outcomes
-
-The LLM's post-diff after viewing the rendered trees determines the path:
-
-**1. Observe (clarity)** — the rendered trees are sufficient. The LLM gains understanding from studying the semantic structure. May surface `clarify_needed` if something is ambiguous. No mutation. Pure observation bridge.
-
-**2. Refine (update)** — a reasoning commitment needs correction or extension. Routes to `hash_edit_needed` to update the mutable reasoning chain. The chain evolves — new hash, old hash still resolvable on the trajectory.
-
-**3. Manifest (agency)** — the LLM references a reasoning commitment hash AND composes a prompt. This is the agency trigger — the system manifests an agent from the commitment's context. `commit_needed` is injected as the LAST step at LOWEST relevance, behind all commitment gaps — it fires only after the entire commitment resolves.
-
-**4. Plan (decompose)** — for complex tasks, the agent writes executable structure as a workflow skeleton. Build layers back-to-front: leaf chains first, then parents that adopt them. The system can deterministically derive execution packages from that structure.
-
-**5. Heartbeat (inspect)** — inspect background sub-agent's semantic tree. Three sub-paths: accept (close the loop, report), revisit (adjust the chain), refine+reactivate (trigger more work with its own heartbeat).
-
-**6. Reorient (recalibrate)** — after compiler rejection or immutability violation, reconstruct the rejected chain with corrections.
+**Role 3: Heartbeat trigger** — Background work can still reintegrate through persisted `reason_needed` frontiers after synthesis when no explicit await has closed the loop.
 
 ### The activation cycle
 
 ```
 reason_needed surfaces
-  → step 1: render reasoning trees (observe, rel=1.0, post_diff=false)
-      salient prior trajectory window rendered as semantic trees
-      current ledger chain rendered as Active Chain Tree
-      step network rendered as current package ecology
-  → step 2: assess and route (flex, rel=0.9, post_diff=true)
-      LLM studies trees, picks one of six outcomes:
-        - no gaps → observe only, done
-        - correction gap → routes to refine
-        - commitment + prompt → routes to manifest
-        - complex task → routes to plan (bottom-up chain construction)
-        - background work done → routes to heartbeat (inspect sub-agent)
-        - compiler rejection → routes to reorient (recalibrate)
-        - confusion → clarify_needed
-  → step 3: construct or act (flex, rel=0.8, post_diff=true)
-      if planning: write executable structure as workflow skeleton
-        - structural law lives in the skeleton
-        - activation identity may point at exact curated step packages by hash
-        - entity/action distinction is derivable from manifestation structure
-        - embed await_needed after any background trigger
-        - build back-to-front: leaf chains first, parents adopt them
-        - resulting structure is deterministically compilable by the system
-        - lawful compiled action packages crystallize into hash-addressable `.st` or `.json` artifacts
-      if refining: hash_edit updates the reasoning chain
-      if manifesting: compose agent trigger + inject commitment gaps + trailing commit_needed
-      if heartbeat: render sub-agent tree → accept/revisit/refine
-      if reorienting: reconstruct rejected chain with corrections
-  → step 4: post-reason check (observe, rel=0.7, post_diff=true)
-      verify coherence of constructed/modified trees:
-        - await codons present after background triggers
-        - leaf chains exist before parents reference them
-        - relevance descending within each chain
-        - post_diff correct (false for deterministic, true for decisions)
-        - all 7 gap axes present on constructed steps
-        - existing .st embeddings referenced by valid hash
+  → observe current trajectory, active chain, semantic trees, and workspace context
+  → assess what kind of move is actually needed
+  → choose one of:
+      - direct observation gap
+      - direct mutation gap
+      - tool_needed
+      - reprogramme_needed
+      - clarify_needed
+      - no gap
+  → later runtime branches handle the chosen path
 ```
 
 ### The end codon: commit.st
 
-`commit_needed` is the reintegration mechanism. It is NOT directly classifiable — the LLM should never emit it as a gap. It is injected by `reason.st` when a commitment is manifested, sitting at lowest relevance behind all commitment gaps. It fires last, reintegrates the full commitment tree into the main agent's context, and closes or continues the chain.
+`commit_needed` is the reintegration mechanism. It is NOT directly classifiable — the LLM should never emit it as a gap. It sits behind commitment-like child work and fires last, reintegrating the full commitment tree into the main agent's context before closure or continuation.
 
 ```
 commit_needed fires (after all commitment gaps resolve)
@@ -1148,62 +1102,33 @@ Turn N+3: (if refined) → heartbeat fires → check refinement → close
 
 Each heartbeat is a full reason cycle: render active branch + sub-agent/package context → assess → act. The agent is autonomously managing long-running workflows across turns. The heartbeat IS the autonomy mechanism — the system monitors its own background work, course-corrects, and reports when done.
 
-### Deterministic package derivation from semantic trees
+### Deterministic package derivation
 
-A fully resolved commitment chain already contains enough structure to crystallize into a reusable package. The important distinction is:
+The system still supports crystallizing reusable packages, but the live ownership is now cleaner:
 
-- executable flow should derive through the workflow skeleton and deterministic compilation
-- semantic persistence should derive through the semantic skeleton and persistence tooling
-
-```
-Commitment chain / semantic tree on trajectory  ← runtime representation
-  ↓ structural derivation
-workflow skeleton / semantic skeleton          ← author-time crystallization
-  ↓ deterministic compilation / persistence
-action package / entity package                ← reusable manifestation
-  ↓ future activation
-same structural laws re-enter the ledger       ← re-instantiated manifestation
-```
-
-This is the discovery → crystallization pipeline. Reason owns executable structural derivation. Reprogramme owns semantic persistence and state continuity. They are different manifestations of the same OS-level machinery, not competing systems. New executable action structure should originate through reason → skeleton → compile. Reprogramme may update existing executable packages, but those updates must re-pass compilation before the package is treated as lawful action structure again.
+- tool authoring belongs to `tool_needed`
+- entity/admin persistence belongs to `reprogramme_needed`
+- action/workflow activation and judgment belong to `reason_needed`
+- dedicated chain construction is future-facing, not the live `reason_needed` loop
 
 ### What this replaces
 
 | Old system | cors equivalent |
 |------------|----------------|
 | Commitments | Passive chains — accumulate evidence across turns |
-| Task delegation | reason.st activation — compose goal, chain plays out |
+| Task delegation | `reason_needed` activation — choose the correct runtime branch |
 | Background agents | Heartbeat mechanism — automatic reason_needed monitors sub-agents |
-| Judgment resolution | reason.st assess step — LLM reasons over existing chain |
-| Reclassify | reason.st reorientation — compiler rejection falls back to reason |
+| Judgment resolution | `reason_needed` — LLM reasons over existing runtime state |
+| Reclassify | `reason_needed` reorientation — compiler rejection falls back to reason |
 | Reminders | Scheduled .st trigger (future — trigger: "scheduled:Xh") |
 
 ### The key principle
 
-No extra mechanism. The trajectory IS the agent's memory. Chains ARE the reasoning units. The compiler sequences them. The governor monitors convergence. Cross-turn thresholds handle resumption. The heartbeat guarantees reintegration. reason.st is just the start codon — it activates what's already there.
+No extra mechanism. The trajectory is still the memory substrate. Chains are still the runtime grouping unit. The compiler sequences them. The governor monitors convergence. Cross-turn thresholds handle resumption. The heartbeat guarantees reintegration. `reason_needed` activates what should happen next; it no longer tries to own every lower-level construction mechanism itself.
 
 ### Code mechanisms
 
 ```
-skills/codons/reason.st
-├─ trigger: "on_vocab:reason_needed"
-├─ step 1: render_reasoning_trees
-│   ├─ vocab: hash_resolve_needed (observe)
-│   ├─ relevance: 1.0 (fires first)
-│   └─ post_diff: false (deterministic — no branching)
-├─ step 2: assess_and_route
-│   ├─ relevance: 0.9
-│   └─ post_diff: true (LLM chooses: observe / refine / manifest / plan / heartbeat / reorient)
-├─ step 3: construct_or_act
-│   ├─ vocab: hash_edit_needed (if refine)
-│   ├─ vocab: content_needed / skeleton submission / package activation (if plan/manifest)
-│   ├─ relevance: 0.8
-│   └─ post_diff: true (chain construction writes full gap config per step)
-└─ step 4: post_reason_check
-    ├─ vocab: hash_resolve_needed (verify coherence)
-    ├─ relevance: 0.7
-    └─ post_diff: true (validates await presence, layer ordering, gap axes)
-
 skills/codons/await.st
 ├─ trigger: "on_vocab:await_needed"
 ├─ step 1: suspend_and_wait (observe, rel=1.0, post_diff=false)
@@ -1241,15 +1166,16 @@ compile.py
 
 execution_engine.py
 ├─ reason_needed execution
-│   ├─ can emit native `reason.st`
-│   ├─ can submit skeleton / semantic_skeleton for deterministic compilation
-│   ├─ can activate existing hash-addressed packages
-│   ├─ injects commitment_chain_construction_spec selectively for planning/workflow/research
-│   ├─ injects Action Foundations inventory
-│   └─ stages one layer at a time, surfacing next_layer_desc after successful commits
+│   ├─ injects live runtime context
+│   ├─ performs plain judgment and routing
+│   └─ chooses the next concrete step type
+├─ tool_needed execution
+│   ├─ injects Public Tool Registry
+│   ├─ uses tool_builder scaffold
+│   └─ validates per-script runtime contract metadata
 ├─ reprogramme_needed execution
 │   ├─ entity_editor → semantic entity persistence
-│   ├─ action origination/update is not the public owner path
+│   ├─ action origination/update is not the owner path
 │   └─ successful write → assessment-bearing post-observation step before synth
 └─ clarify frontier
     └─ current-turn clarify gaps merge into one canonical clarification step hash
@@ -1364,9 +1290,9 @@ loop.py
 │   │   │   ├─ DETERMINISTIC → kernel resolves directly
 │   │   │   ├─ OBSERVATION_ONLY → resolve + inject (blob step)
 │   │   │   ├─ is_observe → tool executes, LLM reasons
-│   │   │   ├─ is_mutate → compose → execute → auto_commit → postcondition
+│   │   │   ├─ is_mutate → compose → execute → auto_commit → post-observe
 │   │   │   ├─ clarify_needed → merge current-turn clarify frontier → halt
-│   │   │   ├─ reason_needed → reason.st OR skeleton submission OR existing package activation
+│   │   │   ├─ reason_needed → judgment / activation / reroute
 │   │   │   ├─ reprogramme_needed → route_mode frame + registry + Step Network → compose
 │   │   │   └─ bridge codons → .st activation / package manifestation
 │   │   └─ Policy auto-route check before each execution
@@ -1590,22 +1516,22 @@ cors/
 ├─ loop.py          ← Layer 2b: turn loop, persistent LLM, hash resolution, git, policy
 ├─ manifest_engine.py ← manifestation helpers for `.st` package inspection / activation
 ├─ skills/          ← structured semantic trees
-│   ├─ codons/      ← immutable primitive codons (protected by tree_policy)
-│   │   ├─ reason.st      ← START codon: planning + reorientation + heartbeat
+│   ├─ codons/      ← protected codons and immutable specs
 │   │   ├─ await.st       ← PAUSE codon: synchronization checkpoint
 │   │   ├─ commit.st      ← END codon: semantic tree injection + reintegration
-│   │   ├─ reprogramme.st ← PERSIST codon: semantic persistence (no post_diff)
-│   │   └─ commitment_chain_construction_spec.st ← immutable planning/spec context
+│   │   ├─ reprogramme.st ← PERSIST codon: semantic persistence
+│   │   └─ commitment_chain_construction_spec.st ← dormant future chain-building spec
 │   ├─ actions/     ← executable workflows / mutable action packages
 │   ├─ entities/    ← semantic entities and passive spec packages
 │   ├─ loader.py    ← skill registry: load (walks subdirs), resolve, display names
 │   └─ admin.st     ← only root skill, preserved as canonical operator entity
 ├─ tools/           ← tool scripts
-│   ├─ hash_manifest.py  ← universal file I/O
-│   ├─ st_builder.py     ← `.st` constructor from semantic intent
-│   ├─ semantic_skeleton_compile.py / security_compile.py / trace_tree_build.py
-│   │   └─ validator and post-observation assessment pipeline
-│   └─ ...               ← file_grep, stitch, code_exec, etc.
+│   ├─ hash_resolve.py   ← file observation primitive
+│   ├─ hash_manifest.py  ← file mutation primitive
+│   ├─ tool_registry.py  ← public tool registry
+│   ├─ hash_registry.py  ← internal hash handler routing
+│   ├─ tool_builder.py   ← tool_needed scaffold writer
+│   └─ ...               ← external/data/media/domain tools
 ├─ tree_policy.json ← per-path mutation policy (codons/ immutable + on_reject)
 ├─ trajectory.json  ← persisted trajectory (step dicts in chronological order)
 ├─ chains.json      ← persisted chain index

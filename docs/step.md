@@ -1,10 +1,8 @@
 # step.py
 
-[step.py](/Users/k2invested/Desktop/cors/step.py) is the runtime object model. Everything else in the kernel assumes its hash graph.
+[step.py](/Users/k2invested/Desktop/cors/step.py) defines the runtime object model and the main readable tree renders.
 
 ## Core Objects
-
-The file defines:
 
 - `Epistemic`
 - `Gap`
@@ -12,78 +10,44 @@ The file defines:
 - `Chain`
 - `Trajectory`
 
-It also owns the main semantic renderers the loop injects into the model.
-
 ## Gap
 
-`Gap` is the unresolved frontier primitive.
+`Gap` is the unresolved frontier unit.
 
-Current operational fields:
+Important fields:
 
 - `hash`
 - `desc`
-- `content_refs`
 - `step_refs`
-- `origin`
+- `content_refs`
 - `scores`
 - `vocab`
-- `vocab_score`
 - `resolved`
 - `dormant`
 - `turn_id`
 - `carry_forward`
 - `route_mode`
 
-Two newer fields matter:
-
-- `carry_forward`
-  - explicit cross-turn persistence marker
-- `route_mode`
-  - deterministic execution hint such as `entity_editor`; low-level action-editor coercion still exists, but action-tree ownership now belongs to `reason_needed`
-
 ## Step
 
 `Step` is the persistent runtime event.
 
-Current fields include:
+Important fields:
 
 - `hash`
+- `desc`
 - `step_refs`
 - `content_refs`
-- `desc`
 - `gaps`
 - `commit`
 - `chain_id`
 - `parent`
 - `assessment`
-- rogue metadata such as:
-  - `rogue`
-  - `rogue_kind`
-  - `failure_source`
-  - `failure_detail`
-
-That means a step can now represent:
-
-- ordinary observation
-- mutation
-- clarify frontier
-- postcondition assessment
-- rogue failure with diagnosis handoff
-
-## Hash Layers
-
-The separation still holds:
-
-- `step_refs` = causal lineage
-- `content_refs` = resolved evidence or package/data refs
-
-The current architecture depends on that distinction more than ever because `.st` package hashes now live in `content_refs`, while prior runtime reasoning continues to live in `step_refs`.
+- rogue metadata when relevant
 
 ## Chain
 
-`Chain` groups steps under one origin gap.
-
-Current fields:
+`Chain` is just a grouped runtime branch:
 
 - `hash`
 - `origin_gap`
@@ -92,60 +56,34 @@ Current fields:
 - `resolved`
 - `extracted`
 
-Chains are still runtime units rather than a replacement ontology. They can also persist unresolved across turns as passive chains.
+There is no longer a special reason-loop controller chain model in the runtime object layer.
 
 ## Trajectory
 
 `Trajectory` owns:
 
-- `steps`
-- `order`
-- `chains`
-- `gap_index`
+- ordered runtime steps
+- chain lookup
+- gap index
+- hash resolution across steps and gaps
+- compact semantic-tree rendering for recent runtime state
 
-Important behaviors:
+## Render Language
 
-- `append(step)` indexes all gaps, including dormant ones
-- `resolve(...)` and `resolve_gap(...)` provide hash lookup
-- `find_passive_chains(...)` and `append_to_passive_chain(...)` support cross-turn structural continuation
-- `extract_chains(...)` writes long resolved chains out to disk
+The render language is now the compact standardized form:
 
-## Clarify And Carry
+- `o` observe
+- `m` mutate
+- `b` bridge
+- `c` clarify
+- `+N` active child gaps
+- `~N` dormant child gaps
+- `=` locally closed
 
-Clarify and carry-forward are now reflected directly in the runtime graph rather than only in loop logic.
+Gap rows show:
 
-Examples:
+- status
+- surface
+- refs
 
-- a merged clarification prompt is one explicit `Step`
-- a forced-synth carry-forward packet is one explicit `Step`
-
-## Contract Visibility
-
-The live chain render now exposes compact contract tags when a runtime step is backed by a canonical foundation contract.
-
-Examples:
-
-- `gap=hash_edit_needed`
-- `embed=named_default`
-- `omo=observe->mutate`
-
-The semantic-tree render also exposes a fuller `effective_contract` payload. This keeps default/public activation and hash-embedded specialization visible in the same runtime surface the model reasons from.
-- future turns can reason over those steps by hash
-
-## Rendering
-
-The render surface is still compact tree language rather than raw JSON.
-
-The main renderers are:
-
-- `Trajectory.render_recent(...)`
-- `Trajectory.render_chain(...)`
-
-Those renders now need to make newer step types legible:
-
-- ordinary steps
-- rogue steps
-- assessment-bearing postcondition steps
-- clarify frontier steps
-
-So `step.py` is no longer just the base object model. It is also the readability layer that lets the model inspect its own runtime structure.
+The tree itself carries the parent-child relation. Step refs and gap refs remain visible as grounding, not as a replacement for the branch shape.

@@ -1,175 +1,91 @@
 # Architecture
 
-[PRINCIPLES.md](/Users/k2invested/Desktop/cors/docs/PRINCIPLES.md) is the design source of truth. This file is narrower: it records the architecture that is implemented now and names the real module boundaries.
+[PRINCIPLES.md](/Users/k2invested/Desktop/cors/docs/PRINCIPLES.md) remains the design source of truth. This file describes the implemented boundaries now.
 
 ## Runtime Stack
 
-The kernel is still built on one primitive: `step -> gap -> ledger -> step`.
-
 ```text
-input / event
+input
   -> loop.py
-     -> step.py            runtime objects and renders
-     -> compile.py         lawful frontier sequencing
-     -> execution_engine.py per-gap execution
-     -> manifest_engine.py package rendering and activation
-     -> skills/loader.py   .st registry projection
-     -> tools/*            subprocess operators and compilers
+     -> step.py
+     -> compile.py
+     -> execution_engine.py
+     -> manifest_engine.py
+     -> skills/loader.py
+     -> tools/*
   -> trajectory.json / chains.json / git objects
 ```
 
-The implemented layers are:
+## Core Split
 
-- Layer 0: [step.py](/Users/k2invested/Desktop/cors/step.py)
-- Layer 1: [compile.py](/Users/k2invested/Desktop/cors/compile.py)
-- Layer 2: [manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py)
-- Layer 3: [execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py)
-- Layer 4: [loop.py](/Users/k2invested/Desktop/cors/loop.py)
-- Package projection: [skills/loader.py](/Users/k2invested/Desktop/cors/skills/loader.py)
-- Operator bench: [tools/](/Users/k2invested/Desktop/cors/tools)
+- [step.py](/Users/k2invested/Desktop/cors/step.py)
+  - runtime objects and tree renders
+- [compile.py](/Users/k2invested/Desktop/cors/compile.py)
+  - lawful frontier sequencing
+- [execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py)
+  - per-gap execution and routing
+- [manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py)
+  - package rendering and activation
+- [loop.py](/Users/k2invested/Desktop/cors/loop.py)
+  - outer turn orchestration
 
 ## Skill Tree
 
-The `.st` ecology is now explicitly split by tree location:
-
 ```text
 skills/
-├─ admin.st                     canonical admin primitive
+├─ admin.st
 ├─ actions/
-│  ├─ architect.st
-│  ├─ debug.st
-│  └─ hash_edit.st
 ├─ entities/
-│  ├─ clinton.st
-│  ├─ cors_ui.st
-│  └─ top_rate_estates_ltd.st
 └─ codons/
-   ├─ await.st
-   ├─ commit.st
-   ├─ commitment_chain_construction_spec.st
-   ├─ reason.st
-   └─ reprogramme.st
 ```
 
-The important laws are:
+Meaning:
 
-- [admin.st](/Users/k2invested/Desktop/cors/skills/admin.st) is the only root skill and the canonical operator primitive.
-- `skills/entities/` is the semantic entity tree.
-- `skills/actions/` is the executable workflow tree.
-- `skills/codons/` is immutable.
-- [commitment_chain_construction_spec.st](/Users/k2invested/Desktop/cors/skills/codons/commitment_chain_construction_spec.st) lives in the codon tree for immutability, but the loader and resolver treat it as an entity-like spec package.
+- `admin.st` is the canonical operator entity
+- `skills/entities/` stores semantic state
+- `skills/actions/` stores executable workflows
+- `skills/codons/` stores protected primitives and immutable specs
 
-## Turn Flow
-
-```text
-run_turn()
-  -> origin step
-  -> admin / identity injection
-  -> compiler creation
-  -> explicit dangling-gap readmission
-  -> ledger iteration
-     -> execute_iteration()
-     -> record step / emit child gaps / commit / postcondition
-  -> optional reprogramme pass
-  -> synthesis
-  -> optional heartbeat persistence
-  -> save trajectory and chains
-```
-
-Three runtime surfaces are injected repeatedly:
-
-- recent trajectory render from [step.py](/Users/k2invested/Desktop/cors/step.py)
-- active chain render from [step.py](/Users/k2invested/Desktop/cors/step.py)
-- step network render from [manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py)
-
-## Gap Lifecycle
-
-The implemented lifecycle is:
-
-```text
-LLM emits gaps
-  -> compile.py scores and admits them
-  -> execution_engine.py resolves one admitted gap
-  -> resulting step is appended to trajectory
-  -> child gaps re-enter compiler
-  -> successful mutations auto-commit and emit post-observe hash_resolve_needed
-```
-
-Cross-turn carry is now opt-in:
-
-- only gaps with `carry_forward=True` are re-admitted
-- `clarify_needed` does not carry across turns
-- forced-synthesis persistence clones the active frontier into one explicit carry-forward step
-
-## Clarify Frontier
-
-Clarification is now a bounded one-turn frontier, not an always-resume queue.
-
-```text
-active clarify gaps in current turn
-  -> merged by execution_engine.py
-  -> one clarification frontier step
-  -> one canonical step hash
-  -> user answers on next turn
-```
-
-Historical clarify leaves are not automatically replayed.
-
-## Deterministic Routing
-
-Tree policy and target-path inference now deterministically choose reprogramme mode.
-
-```text
-skills/admin.st    -> reprogramme_needed (entity_editor)
-skills/entities/*  -> reprogramme_needed (entity_editor)
-skills/actions/*   -> reason_needed (action tree ownership)
-skills/codons/*    -> immutable -> reason_needed on reject
-```
-
-Action origination is split from entity persistence:
-
-- entity creation and entity updates can go straight to `reprogramme_needed`
-- anything involving `skills/actions/*.st` now stays under `reason_needed`
-- lower action layers stay `manual` while higher layers are still being built
-- the final public `on_vocab:*` trigger belongs to the highest-order completed workflow
-
-## Reprogramme And Reason
-
-The implemented split is:
+## Current Runtime Ownership
 
 - `reason_needed`
-  - structural design
-  - chain planning
-  - iterative action/workflow authoring
-  - hash-native composition over existing foundations
-  - existing package activation
+  - judgment
+  - routing
+  - deciding which step type should handle the work
+- `tool_needed`
+  - tool-tree authoring under `tools/`
 - `reprogramme_needed`
-  - semantic persistence
-  - entity updates
-  - stateless entity/admin calibration only
+  - entity/admin persistence
 
-`reason_needed` now also receives the unified Action Foundations inventory: action/codon package hashes, extracted chain hashes, and tool blob hashes with canonical default contracts and OMO roles.
+Chain construction is intentionally not owned by `reason_needed` anymore. A dedicated `chain_needed` path is the next planned layer, but it is not the implemented runtime yet.
 
-## Commit Assessment
-
-Successful `.st` writes now materialize a real post-observation step before synthesis.
+## Deterministic Tree Policy
 
 ```text
-reprogramme write
-  -> auto_commit()
-  -> commit assessment
-  -> postcondition step with assessment
-  -> hash_resolve_needed observe gap
-  -> synthesis sees realized change
+skills/admin.st    -> reprogramme_needed
+skills/entities/*  -> reprogramme_needed
+skills/actions/*   -> reason_needed
+skills/codons/*    -> immutable -> reason_needed on reject
+tools/*            -> tool_needed
 ```
 
-The same assessment family is also attached to rogue diagnosis when persistence fails.
+## Tool Layer
 
-## Files And Stores
+The public tool surface is derived from [tools/tool_registry.py](/Users/k2invested/Desktop/cors/tools/tool_registry.py).
 
-- [trajectory.json](/Users/k2invested/Desktop/cors/trajectory.json): ordered runtime steps
-- [chains.json](/Users/k2invested/Desktop/cors/chains.json): chain index
-- `chains/<hash>.json`: extracted or compiled packages
-- git objects: external content store for blobs, trees, and commits
+The two core file primitives are:
 
-The architectural constant remains simple: packages, chains, entities, and commits all eventually re-enter the live system as steps and gaps.
+- [tools/hash_resolve.py](/Users/k2invested/Desktop/cors/tools/hash_resolve.py)
+- [tools/hash_manifest.py](/Users/k2invested/Desktop/cors/tools/hash_manifest.py)
+
+Specialized handlers behind those two primitives stay internal in [tools/hash_registry.py](/Users/k2invested/Desktop/cors/tools/hash_registry.py).
+
+## Observe / Mutate Rhythm
+
+The implemented execution model is:
+
+- observations surface relevant next gaps
+- mutations do not directly expand the ledger
+- successful mutations trigger post-observation
+
+That is the main simplification behind the current architecture.

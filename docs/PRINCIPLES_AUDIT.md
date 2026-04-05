@@ -20,7 +20,7 @@ Status terms:
 | `§7 Post-Diff` | `partial` | Deterministic/flexible package surfaces are real, but `post_diff` is still stronger on package/runtime-shape law than as a universal kernel branch dial. |
 | `§8 Compiler Laws` | `validated` | OMO, LIFO, governor signals, heartbeat bookkeeping, and carry-forward discipline are implemented. |
 | `§9 Chains And Trajectory` | `validated` | Chain lifecycle, passive chains, extraction, rogue steps, and assessment-bearing steps are implemented. |
-| `§10 Activation And Codons` | `validated` | Codon activation, package activation, trigger ownership, staged action authoring, and hash-native foundation contracts are materially implemented in source. |
+| `§10 Activation And Codons` | `validated` | Codon activation, package activation, trigger ownership, and the current reason/tool/reprogramme split are materially implemented in source. |
 | `§11 Temporal Signatures` | `validated` | Absolute timestamp rendering and relative time helpers are implemented in the live render surface. |
 | `§12 Supporting Infrastructure` | `validated` | Clarify frontier merge, turn-bounded clarify, forced-synth carry, Discord diff routing, and bootstrap identity are implemented. |
 | `§13 Curation` | `validated` | Tree organization, immutable codons, curated package split, and principle-anchored regression coverage are all materially present. |
@@ -85,18 +85,16 @@ The deterministic rule now is:
 
 That is the correct separation between semantic persistence and structural design.
 
-### 5. Composition now has one canonical hash-native foundation model
+### 5. Tool and package composition are cleaner than before
 
-`reason_needed` now sees:
+The runtime now cleanly separates:
 
-- action/codon packages by committed skill hash
-- extracted chains by committed chain hash
-- tool scripts by committed blob hash
+- public tool registry
+- internal hash handlers
+- package activation
+- semantic persistence
 
-And the runtime now distinguishes:
-
-- name/vocab activation => canonical default gap contract
-- hash embedding => explicit contextual specialization only
+That split reduces the old overload on `reason_needed`.
 
 ## Main Remaining Partial
 
