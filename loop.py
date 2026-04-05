@@ -48,7 +48,7 @@ import manifest_engine as me
 import action_foundations as action_foundations_module
 from execution_engine import ExecutionConfig, ExecutionHooks, execute_iteration
 from tools import st_builder as st_builder_module
-from tools.hash_registry import HASH_RESOLVE_ROUTES
+from tools.hash.registry import HASH_RESOLVE_ROUTES
 from vocab_registry import (
     BRIDGE_VOCAB,
     DETERMINISTIC_VOCAB,
@@ -1869,6 +1869,16 @@ def _extract_command(raw: str) -> str | None:
 
 
 def _extract_written_path(tool_output: str) -> str | None:
+    data = _extract_json(tool_output)
+    if isinstance(data, dict):
+        path = data.get("path")
+        if isinstance(path, str) and path.strip():
+            return path.strip()
+        artifacts = data.get("artifacts")
+        if isinstance(artifacts, list):
+            for item in artifacts:
+                if isinstance(item, str) and item.strip():
+                    return item.strip()
     for line in tool_output.splitlines():
         lowered = line.lower()
         if lowered.startswith("written: "):

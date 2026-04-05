@@ -332,7 +332,7 @@ tools/tool_registry.py
 ├─ includes the two hash primitives as public tools
 └─ excludes the internal handlers behind them
 
-tools/hash_registry.py
+tools/hash/registry.py
 ├─ internal file-type routing for hash_resolve/hash_manifest
 ├─ resolve handlers
 └─ manifest handlers
@@ -1529,7 +1529,7 @@ cors/
 │   ├─ hash_resolve.py   ← file observation primitive
 │   ├─ hash_manifest.py  ← file mutation primitive
 │   ├─ tool_registry.py  ← public tool registry
-│   ├─ hash_registry.py  ← internal hash handler routing
+│   ├─ hash/registry.py  ← internal hash handler routing
 │   ├─ tool_builder.py   ← tool_needed scaffold writer
 │   └─ ...               ← external/data/media/domain tools
 ├─ tree_policy.json ← per-path mutation policy (codons/ immutable + on_reject)

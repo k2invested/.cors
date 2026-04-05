@@ -9,7 +9,7 @@ TOOL_DESC = 'compose email draft AND send via SMTP.'
 TOOL_MODE = 'mutate'
 TOOL_SCOPE = 'external'
 TOOL_POST_OBSERVE = 'artifacts'
-TOOL_RUNTIME_ARTIFACTS = True
+TOOL_RUNTIME_ARTIFACT_KEY = 'path'
 
 import json, os, smtplib, sys, time
 from email.mime.multipart import MIMEMultipart
@@ -46,8 +46,15 @@ def main():
         json.dump(draft, f, indent=2)
 
     # Send via SMTP
+    draft_rel_path = f"outbox/{filename}"
+
     if not sender or not password:
-        print(f"Email draft saved to outbox/{filename} but SMTP not configured")
+        print(json.dumps({
+            "status": "draft_saved",
+            "path": draft_rel_path,
+            "to": to,
+            "subject": subject,
+        }))
         return
 
     msg = MIMEMultipart()
@@ -76,7 +83,12 @@ def main():
     with open(draft_path, "w") as f:
         json.dump(draft, f, indent=2)
 
-    print(f"Email sent to {to} (subject: {subject})")
+    print(json.dumps({
+        "status": "sent",
+        "path": draft_rel_path,
+        "to": to,
+        "subject": subject,
+    }))
 
 if __name__ == "__main__":
     main()

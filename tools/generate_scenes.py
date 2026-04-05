@@ -25,7 +25,7 @@ TOOL_DESC = 'batch generate video clips via Runway Gen-4/4.5.'
 TOOL_MODE = 'mutate'
 TOOL_SCOPE = 'external'
 TOOL_POST_OBSERVE = 'artifacts'
-TOOL_RUNTIME_ARTIFACTS = True
+TOOL_RUNTIME_ARTIFACT_KEY = 'artifacts'
 
 import json
 import os
@@ -253,6 +253,14 @@ def main():
         print(f"  ✓ {r['id']}: {r['path']} ({r['size']:,} bytes)")
     for r in failed:
         print(f"  ✗ {r['id']}: {r['error']}")
+
+    print(json.dumps({
+        "status": "ok" if success else "failed",
+        "artifacts": [r["path"] for r in success],
+        "success_count": len(success),
+        "failed_count": len(failed),
+        "results": results,
+    }, indent=2))
 
 
 if __name__ == "__main__":

@@ -33,11 +33,11 @@ Input JSON:
 
 Output: the generated .st file content (JSON)
 """
-TOOL_DESC = 'deterministic extraction of a resolved chain into a .st file.'
+TOOL_DESC = 'extract a resolved chain into a written .st file.'
 TOOL_MODE = 'mutate'
 TOOL_SCOPE = 'workspace'
 TOOL_POST_OBSERVE = 'artifacts'
-TOOL_RUNTIME_ARTIFACTS = True
+TOOL_RUNTIME_ARTIFACT_KEY = 'path'
 
 
 import json
@@ -217,15 +217,11 @@ def chain_to_st(chain_hash: str, name: str, desc: str = None,
 
     st["steps"] = st_steps
 
-    # Write if output path specified
-    if output_path:
-        out = Path(output_path)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        with open(out, "w") as f:
-            json.dump(st, f, indent=2)
-        return {"status": "ok", "path": str(out), "st": st}
-
-    return {"status": "ok", "st": st}
+    out = Path(output_path) if output_path else (CORS_ROOT / "skills" / f"{name}.st")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "w") as f:
+        json.dump(st, f, indent=2)
+    return {"status": "ok", "path": str(out), "st": st}
 
 
 def main():

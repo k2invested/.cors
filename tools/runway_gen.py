@@ -24,8 +24,7 @@ Env: RUNWAYML_API_SECRET or RUNWAY_API_KEY
 TOOL_DESC = 'generate video clips using Runway Gen-4/4.5.'
 TOOL_MODE = 'mutate'
 TOOL_SCOPE = 'external'
-TOOL_POST_OBSERVE = 'artifacts'
-TOOL_RUNTIME_ARTIFACTS = True
+TOOL_POST_OBSERVE = 'log'
 
 import json
 import os

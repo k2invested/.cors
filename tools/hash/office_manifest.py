@@ -23,8 +23,10 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(__file__))
-from scan_tree import sandbox_path
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from tools.scan_tree import sandbox_path
 
 TEXTUAL_SUFFIXES = {".xml", ".rels", ".txt", ".html", ".htm"}
 SUPPORTED_SUFFIXES = {".pptx", ".xlsx"}

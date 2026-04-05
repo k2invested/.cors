@@ -3,7 +3,7 @@
 The tool layer is now split between:
 
 - public first-class tools in [tools/tool_registry.py](/Users/k2invested/Desktop/cors/tools/tool_registry.py)
-- internal hash handlers in [tools/hash_registry.py](/Users/k2invested/Desktop/cors/tools/hash_registry.py)
+- internal hash handlers in [tools/hash/registry.py](/Users/k2invested/Desktop/cors/tools/hash/registry.py)
 
 ## Public Tool Surface
 
@@ -17,7 +17,8 @@ The public tool registry is derived from the tool tree itself. Each public tool 
 Optional:
 
 - `TOOL_DEFAULT_ARTIFACTS`
-- `TOOL_RUNTIME_ARTIFACTS`
+- `TOOL_ARTIFACT_PARAMS`
+- `TOOL_RUNTIME_ARTIFACT_KEY`
 
 The registry reads those fields directly from the script file.
 
@@ -61,7 +62,7 @@ Use the registries like this:
 
 - [tools/tool_registry.py](/Users/k2invested/Desktop/cors/tools/tool_registry.py)
   - public selectable tools
-- [tools/hash_registry.py](/Users/k2invested/Desktop/cors/tools/hash_registry.py)
+- [tools/hash/registry.py](/Users/k2invested/Desktop/cors/tools/hash/registry.py)
   - internal file-type routing behind the hash primitives
 
 Chain composition should reference the public tool surface, not the hidden handlers behind the hash primitives.

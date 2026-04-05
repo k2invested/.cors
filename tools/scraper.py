@@ -16,7 +16,7 @@ Config:
 Env:
   YOUTUBE_API_KEY — required
 """
-TOOL_DESC = 'runs independently of the kernel.'
+TOOL_DESC = 'scrape YouTube Shorts transcripts into local research JSON artifacts.'
 TOOL_MODE = 'mutate'
 TOOL_SCOPE = 'external'
 TOOL_POST_OBSERVE = 'artifacts'

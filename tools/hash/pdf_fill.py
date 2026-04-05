@@ -10,9 +10,12 @@ Reads the PDF, extracts field info, validates the provided values,
 and writes a new PDF with fields filled.
 """
 import json, os, sys
+from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(__file__))
-from scan_tree import sandbox_path
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from tools.scan_tree import sandbox_path
 
 
 def get_full_annotation_field_id(annotation):

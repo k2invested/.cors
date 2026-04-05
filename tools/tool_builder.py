@@ -7,7 +7,7 @@ TOOL_DESC = "write validated tool script scaffolds for tool_needed."
 TOOL_MODE = "mutate"
 TOOL_SCOPE = "workspace"
 TOOL_POST_OBSERVE = "artifacts"
-TOOL_RUNTIME_ARTIFACTS = True
+TOOL_ARTIFACT_PARAMS = ["path"]
 
 import json
 import os
@@ -28,13 +28,16 @@ def _render_stub(
     scope: str,
     post_observe: str,
     default_artifacts: list[str],
-    runtime_artifacts: bool,
+    artifact_params: list[str],
+    runtime_artifact_key: str | None,
 ) -> str:
     artifact_lines: list[str] = []
     if default_artifacts:
         artifact_lines.append(f"TOOL_DEFAULT_ARTIFACTS = {default_artifacts!r}")
-    if runtime_artifacts:
-        artifact_lines.append("TOOL_RUNTIME_ARTIFACTS = True")
+    if artifact_params:
+        artifact_lines.append(f"TOOL_ARTIFACT_PARAMS = {artifact_params!r}")
+    if runtime_artifact_key:
+        artifact_lines.append(f'TOOL_RUNTIME_ARTIFACT_KEY = "{runtime_artifact_key}"')
     artifact_block = "\n".join(artifact_lines)
     if artifact_block:
         artifact_block += "\n"
@@ -80,7 +83,10 @@ def main() -> None:
     scope = params.get("scope", "")
     post_observe = params.get("post_observe", "")
     default_artifacts = list(params.get("default_artifacts", []) or [])
-    runtime_artifacts = bool(params.get("runtime_artifacts", False))
+    artifact_params = list(params.get("artifact_params", []) or [])
+    runtime_artifact_key = params.get("runtime_artifact_key")
+    if not runtime_artifact_key and bool(params.get("runtime_artifacts", False)):
+        runtime_artifact_key = "artifacts"
     overwrite = bool(params.get("overwrite", False))
 
     if not file_path:
@@ -111,7 +117,8 @@ def main() -> None:
         scope=scope,
         post_observe=post_observe,
         default_artifacts=default_artifacts,
-        runtime_artifacts=runtime_artifacts,
+        artifact_params=artifact_params,
+        runtime_artifact_key=runtime_artifact_key,
     )
     resolved.write_text(content, encoding="utf-8")
     errors = validate_tool_file(resolved)

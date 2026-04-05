@@ -21,9 +21,11 @@ from pathlib import Path
 
 import defusedxml.minidom
 
-sys.path.insert(0, os.path.dirname(__file__))
-from office_helpers.merge_runs import merge_runs as do_merge_runs
-from office_helpers.simplify_redlines import simplify_redlines as do_simplify_redlines
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from tools.hash.office_helpers.merge_runs import merge_runs as do_merge_runs
+from tools.hash.office_helpers.simplify_redlines import simplify_redlines as do_simplify_redlines
 
 SMART_QUOTE_REPLACEMENTS = {
     "\u201c": "&#x201C;",
@@ -118,7 +120,7 @@ def main_stdin():
         sys.exit(1)
 
     # Resolve within workspace sandbox
-    from scan_tree import sandbox_path
+    from tools.scan_tree import sandbox_path
     try:
         resolved_input = sandbox_path(file_path, workspace)
         resolved_output = sandbox_path(output_dir, workspace)

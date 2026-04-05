@@ -59,9 +59,9 @@ from compile import (
 from skills.loader import Skill, SkillRegistry, SkillStep, load_all, load_skill
 from step import Chain, Epistemic, Gap, Step, Trajectory, absolute_time, blob_hash, chain_hash, relative_time
 from tools import chain_to_st as chain_to_st_module
-from tools import hash_registry as hash_registry_module
+from tools.hash import registry as hash_registry_module
 from tools import hash_manifest as hash_manifest_module
-from tools import office_manifest as office_manifest_module
+from tools.hash import office_manifest as office_manifest_module
 from tools import st_builder as st_builder_module
 from tools import tool_builder as tool_builder_module
 from tools import tool_contract as tool_contract_module
@@ -3638,7 +3638,7 @@ def test_p12_validate_st_rejects_internal_hash_handler_tool_path():
         "name": "inspect_doc_handler",
         "desc": "workflow",
         "trigger": "manual",
-        "refs": {"doc_handler": "tools/doc_read.py"},
+        "refs": {"doc_handler": "tools/hash/doc_read.py"},
         "artifact": {"kind": "action", "protected_kind": "action"},
         "root": "phase_root",
         "phases": [
@@ -3665,11 +3665,20 @@ def test_p12_validate_st_rejects_internal_hash_handler_tool_path():
 
 
 def test_p12_validate_st_rejects_internal_hash_handler_blob_hash():
-    tool_blob = subprocess.check_output(
-        ["git", "rev-parse", "HEAD:tools/doc_read.py"],
+    rev_parse = subprocess.run(
+        ["git", "rev-parse", "HEAD:tools/hash/doc_read.py"],
         cwd=ROOT,
         text=True,
-    ).strip()
+        capture_output=True,
+    )
+    if rev_parse.returncode == 0:
+        tool_blob = rev_parse.stdout.strip()
+    else:
+        tool_blob = subprocess.check_output(
+            ["git", "hash-object", "tools/hash/doc_read.py"],
+            cwd=ROOT,
+            text=True,
+        ).strip()
 
     st = {
         "name": "inspect_doc_handler_blob",
@@ -4031,7 +4040,7 @@ def test_p12_resolve_hash_routes_docx_through_specialized_reader(monkeypatch, tm
     rendered = loop.resolve_hash("sample.docx", Trajectory())
 
     assert rendered == "1: Hello from DOCX"
-    assert calls == [("tools/doc_read.py", {"path": "sample.docx"})]
+    assert calls == [("tools/hash/doc_read.py", {"path": "sample.docx"})]
 
 
 def test_p12_resolve_hash_routes_pptx_through_marker_reader(monkeypatch, tmp_path):
@@ -4050,12 +4059,12 @@ def test_p12_resolve_hash_routes_pptx_through_marker_reader(monkeypatch, tmp_pat
     rendered = loop.resolve_hash("slides.pptx", Trajectory())
 
     assert rendered == "1: Slide 1 title"
-    assert calls == [("tools/document_extract_marker.py", {"path": "slides.pptx"})]
+    assert calls == [("tools/hash/document_extract_marker.py", {"path": "slides.pptx"})]
 
 
 def test_p12_hash_manifest_routes_package_office_formats_through_office_manifest():
-    assert hash_manifest_module.TOOL_ROUTES[".pptx"] == "office_manifest.py"
-    assert hash_manifest_module.TOOL_ROUTES[".xlsx"] == "office_manifest.py"
+    assert hash_manifest_module.TOOL_ROUTES[".pptx"] == "tools/hash/office_manifest.py"
+    assert hash_manifest_module.TOOL_ROUTES[".xlsx"] == "tools/hash/office_manifest.py"
 
 
 def test_p12_hash_registry_captures_core_routes():
@@ -4063,17 +4072,17 @@ def test_p12_hash_registry_captures_core_routes():
         "tools/hash_resolve.py",
         "tools/hash_manifest.py",
     )
-    assert hash_registry_module.HASH_MANIFEST_ROUTES[".docx"] == "tools/doc_edit.py"
-    assert hash_registry_module.HASH_MANIFEST_ROUTES[".pptx"] == "tools/office_manifest.py"
-    assert hash_registry_module.HASH_RESOLVE_ROUTES[".pdf"] == "tools/pdf_read.py"
-    assert hash_registry_module.HASH_RESOLVE_ROUTES[".png"] == "tools/document_extract_marker.py"
+    assert hash_registry_module.HASH_MANIFEST_ROUTES[".docx"] == "tools/hash/doc_edit.py"
+    assert hash_registry_module.HASH_MANIFEST_ROUTES[".pptx"] == "tools/hash/office_manifest.py"
+    assert hash_registry_module.HASH_RESOLVE_ROUTES[".pdf"] == "tools/hash/pdf_read.py"
+    assert hash_registry_module.HASH_RESOLVE_ROUTES[".png"] == "tools/hash/document_extract_marker.py"
 
 
 def test_p12_tool_registry_exposes_only_public_hash_tools():
     assert "tools/hash_resolve.py" in tool_registry_module.PUBLIC_TOOL_PATHS
     assert "tools/hash_manifest.py" in tool_registry_module.PUBLIC_TOOL_PATHS
-    assert "tools/doc_read.py" not in tool_registry_module.PUBLIC_TOOL_PATHS
-    assert "tools/document_extract_marker.py" not in tool_registry_module.PUBLIC_TOOL_PATHS
+    assert "tools/hash/doc_read.py" not in tool_registry_module.PUBLIC_TOOL_PATHS
+    assert "tools/hash/document_extract_marker.py" not in tool_registry_module.PUBLIC_TOOL_PATHS
 
 
 def test_p12_all_public_tools_express_valid_contract_metadata():
@@ -4090,9 +4099,10 @@ def test_p12_render_public_tool_registry_lists_public_tools_and_contracts():
 
     assert rendered.startswith("## Public Tool Registry")
     assert "tools/hash_resolve.py | observe/workspace | post_observe=none" in rendered
-    assert "tools/hash_manifest.py | mutate/workspace | post_observe=artifacts" in rendered
-    assert "tools/doc_read.py" not in rendered
-    assert "tools/document_extract_marker.py" not in rendered
+    assert "tools/hash_manifest.py | mutate/workspace | post_observe=artifacts | artifacts=derived" in rendered
+    assert "tools/runway_gen.py | mutate/external | post_observe=log | artifacts=none" in rendered
+    assert "tools/hash/doc_read.py" not in rendered
+    assert "tools/hash/document_extract_marker.py" not in rendered
 
 
 def test_p12_action_foundations_hide_internal_hash_handlers():
@@ -4106,8 +4116,8 @@ def test_p12_action_foundations_hide_internal_hash_handlers():
 
     assert "source=tools/hash_resolve.py" in rendered
     assert "source=tools/hash_manifest.py" in rendered
-    assert "source=tools/doc_read.py" not in rendered
-    assert "source=tools/document_extract_marker.py" not in rendered
+    assert "source=tools/hash/doc_read.py" not in rendered
+    assert "source=tools/hash/document_extract_marker.py" not in rendered
 
 
 def test_p12_office_manifest_patches_minimal_pptx_package(tmp_path):
@@ -4144,6 +4154,36 @@ def test_p12_tool_contract_validates_workspace_mutate_artifact_tool(tmp_path):
     )
 
     assert tool_contract_module.validate_tool_file(tool_path) == []
+
+
+def test_p12_tool_contract_validates_runtime_artifact_key(tmp_path):
+    tool_path = tmp_path / "runtime_artifact_tool.py"
+    tool_path.write_text(
+        '"""runtime_artifact_tool — writes dynamic artifacts."""\n'
+        'TOOL_DESC = "writes dynamic artifacts"\n'
+        'TOOL_MODE = "mutate"\n'
+        'TOOL_SCOPE = "workspace"\n'
+        'TOOL_POST_OBSERVE = "artifacts"\n'
+        'TOOL_RUNTIME_ARTIFACT_KEY = "artifacts"\n',
+        encoding="utf-8",
+    )
+
+    assert tool_contract_module.validate_tool_file(tool_path) == []
+
+
+def test_p12_tool_contract_rejects_artifact_tool_without_source_fields(tmp_path):
+    tool_path = tmp_path / "missing_artifacts.py"
+    tool_path.write_text(
+        '"""missing_artifacts — claims artifacts but does not express them."""\n'
+        'TOOL_DESC = "claims artifacts but does not express them"\n'
+        'TOOL_MODE = "mutate"\n'
+        'TOOL_SCOPE = "external"\n'
+        'TOOL_POST_OBSERVE = "artifacts"\n',
+        encoding="utf-8",
+    )
+
+    errors = tool_contract_module.validate_tool_file(tool_path)
+    assert any("TOOL_DEFAULT_ARTIFACTS, TOOL_ARTIFACT_PARAMS, or TOOL_RUNTIME_ARTIFACT_KEY" in error for error in errors)
 
 
 def test_p12_tool_contract_rejects_workspace_mutate_log_only(tmp_path):
@@ -4189,6 +4229,37 @@ def test_p12_tool_builder_writes_validated_stub(tmp_path, monkeypatch):
     assert target.exists()
     content = target.read_text(encoding="utf-8")
     assert 'TOOL_DESC = "produce a local demo artifact"' in content
+    assert "TOOL_DEFAULT_ARTIFACTS = ['demo/output.txt']" in content
+    assert tool_contract_module.validate_tool_file(target) == []
+
+
+def test_p12_tool_builder_writes_param_based_artifact_stub(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKSPACE", str(tmp_path))
+    target = tmp_path / "tools" / "param_tool.py"
+    stdin = json.dumps(
+        {
+            "path": "tools/param_tool.py",
+            "desc": "write artifact paths through params",
+            "mode": "mutate",
+            "scope": "workspace",
+            "post_observe": "artifacts",
+            "artifact_params": ["output_path"],
+        }
+    )
+
+    old_stdin = sys.stdin
+    old_stdout = sys.stdout
+    try:
+        sys.stdin = SimpleNamespace(read=lambda: stdin)
+        buffer = []
+        sys.stdout = SimpleNamespace(write=lambda s: buffer.append(s), flush=lambda: None)
+        tool_builder_module.main()
+    finally:
+        sys.stdin = old_stdin
+        sys.stdout = old_stdout
+
+    content = target.read_text(encoding="utf-8")
+    assert 'TOOL_ARTIFACT_PARAMS = [\'output_path\']' in content
     assert tool_contract_module.validate_tool_file(target) == []
 
 
@@ -4262,6 +4333,7 @@ def test_p12_tool_needed_injects_public_tool_registry_before_compose():
     assert outcome.step_result is not None
     assert any(content.startswith("## Public Tool Registry") for content in session.injected)
     assert any("tools/hash_resolve.py | observe/workspace | post_observe=none" in content for content in session.injected)
+    assert any("tools/hash_manifest.py | mutate/workspace | post_observe=artifacts | artifacts=derived" in content for content in session.injected)
     assert session.calls == 1
 
 
@@ -4271,6 +4343,18 @@ def test_p12_render_log_resolution_caps_chars():
     assert rendered.startswith("log_tail:bot.log")
     assert len(rendered) < loop.LOG_RESOLVE_MAX_CHARS + 200
     assert "chars<=" in rendered
+
+
+def test_p12_extract_written_path_reads_json_path_field():
+    output = json.dumps({"status": "sent", "path": "outbox/email_123.json"})
+
+    assert loop._extract_written_path(output) == "outbox/email_123.json"
+
+
+def test_p12_extract_written_path_reads_first_json_artifact():
+    output = json.dumps({"status": "ok", "artifacts": ["assets/clip1.mp4", "assets/clip2.mp4"]})
+
+    assert loop._extract_written_path(output) == "assets/clip1.mp4"
 
 
 def test_p12_existing_action_update_does_not_require_reason():

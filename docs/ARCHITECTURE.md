@@ -78,7 +78,7 @@ The two core file primitives are:
 - [tools/hash_resolve.py](/Users/k2invested/Desktop/cors/tools/hash_resolve.py)
 - [tools/hash_manifest.py](/Users/k2invested/Desktop/cors/tools/hash_manifest.py)
 
-Specialized handlers behind those two primitives stay internal in [tools/hash_registry.py](/Users/k2invested/Desktop/cors/tools/hash_registry.py).
+Specialized handlers behind those two primitives stay internal in [tools/hash/registry.py](/Users/k2invested/Desktop/cors/tools/hash/registry.py).
 
 ## Observe / Mutate Rhythm
 

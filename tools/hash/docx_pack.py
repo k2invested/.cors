@@ -21,8 +21,10 @@ from pathlib import Path
 
 import defusedxml.minidom
 
-sys.path.insert(0, os.path.dirname(__file__))
-from office_validators import DOCXSchemaValidator, PPTXSchemaValidator, RedliningValidator
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from tools.hash.office_validators import DOCXSchemaValidator, PPTXSchemaValidator, RedliningValidator
 
 
 def pack(

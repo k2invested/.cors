@@ -15,7 +15,7 @@ TOOL_DESC = 'generate TTS narration audio via OpenAI.'
 TOOL_MODE = 'mutate'
 TOOL_SCOPE = 'external'
 TOOL_POST_OBSERVE = 'artifacts'
-TOOL_RUNTIME_ARTIFACTS = True
+TOOL_ARTIFACT_PARAMS = ['output']
 
 import json
 import os

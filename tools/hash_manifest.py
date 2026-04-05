@@ -20,7 +20,6 @@ TOOL_DESC = 'universal file I/O by hash reference.'
 TOOL_MODE = 'mutate'
 TOOL_SCOPE = 'workspace'
 TOOL_POST_OBSERVE = 'artifacts'
-TOOL_RUNTIME_ARTIFACTS = True
 
 
 import json
@@ -29,7 +28,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tools.hash_registry import HASH_MANIFEST_ROUTES
+from tools.hash.registry import HASH_MANIFEST_ROUTES
 
 CORS_ROOT = str(Path(__file__).resolve().parent.parent)
 
@@ -76,11 +75,11 @@ def diff_file(path: str, ref: str = "HEAD") -> str:
     return git(["diff", ref, "--", path])
 
 
-def delegate_to_tool(tool_name: str, params: dict) -> str:
+def delegate_to_tool(tool_rel_path: str, params: dict) -> str:
     """Delegate to a specialised tool script."""
-    tool_path = os.path.join(CORS_ROOT, "tools", tool_name)
+    tool_path = os.path.join(CORS_ROOT, tool_rel_path)
     if not os.path.exists(tool_path):
-        return f"(tool not found: {tool_name})"
+        return f"(tool not found: {tool_rel_path})"
     result = subprocess.run(
         ["python3", tool_path],
         input=json.dumps(params),
@@ -91,7 +90,7 @@ def delegate_to_tool(tool_name: str, params: dict) -> str:
 
 
 # File type → specialised tool for mutations
-TOOL_ROUTES = {suffix: Path(tool_path).name for suffix, tool_path in HASH_MANIFEST_ROUTES.items()}
+TOOL_ROUTES = dict(HASH_MANIFEST_ROUTES)
 
 
 def route_by_type(path: str, params: dict) -> str | None:
@@ -99,7 +98,7 @@ def route_by_type(path: str, params: dict) -> str | None:
     Returns tool output, or None to use default handler."""
     ext = os.path.splitext(path)[1].lower()
     tool = TOOL_ROUTES.get(ext)
-    if tool and os.path.exists(os.path.join(CORS_ROOT, "tools", tool)):
+    if tool and os.path.exists(os.path.join(CORS_ROOT, tool)):
         return delegate_to_tool(tool, params)
     return None
 

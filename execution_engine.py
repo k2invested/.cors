@@ -26,7 +26,7 @@ from typing import Any, Callable
 from compile import GovernorSignal, is_mutate, is_observe
 from step import Epistemic, Gap, Step
 from tools import st_builder as st_builder_module
-from tools.tool_contract import load_tool_contract
+from tools.tool_contract import load_tool_contract, render_artifact_contract
 from tools.tool_registry import public_tool_paths
 
 
@@ -121,16 +121,10 @@ def _render_public_tool_registry(cors_root: Path) -> str:
         if contract is None:
             lines.append(f"- {rel} | contract=missing")
             continue
-        artifact_mode = (
-            "runtime_artifacts"
-            if contract.runtime_artifacts else
-            ",".join(contract.default_artifacts) if contract.default_artifacts else
-            "none"
-        )
         lines.append(
             f"- {rel} | {contract.mode}/{contract.scope} "
             f"| post_observe={contract.post_observe} "
-            f"| artifacts={artifact_mode} "
+            f"| artifacts={render_artifact_contract(contract)} "
             f"| {contract.desc}"
         )
     return "\n".join(lines)
@@ -789,9 +783,12 @@ def execute_iteration(
                 f'{{"path": "tools/new_tool.py", "desc": "what the tool does", '
                 f'"mode": "observe|mutate", "scope": "workspace|external", '
                 f'"post_observe": "none|log|artifacts", '
-                f'"default_artifacts": ["optional/path"], "runtime_artifacts": false}}\n\n'
+                f'"default_artifacts": ["optional/path"], '
+                f'"artifact_params": ["output_path"], '
+                f'"runtime_artifact_key": "artifacts"}}\n\n'
                 f"Workspace mutate tools must use post_observe='artifacts'. "
-                f"Observe tools must use post_observe='none'."
+                f"Observe tools must use post_observe='none'. Artifact tools must "
+                f"declare fixed artifact paths, artifact-bearing params, or a runtime artifact key."
             )
         else:
             compose_prompt = (

@@ -1,21 +1,18 @@
 #!/usr/bin/env python3
-"""git_ops — version control operations on the project repository.
+"""git_ops — mutating version control operations on the project repository.
 
 Input JSON:
-  {"action": "log", "count": 15, "path": "<optional file filter>"}
-  {"action": "diff", "ref": "<commit hash or ref>", "path": "<optional>"}
-  {"action": "show", "ref": "<commit hash>"}
   {"action": "commit", "message": "<commit message>", "paths": ["<optional file paths>"]}
   {"action": "revert", "ref": "<commit hash>", "message": "<optional>"}
   {"action": "checkout", "ref": "<commit hash>", "path": "<required file path>"}
 
 Operates on the project git repository (auto-detected from script location).
 """
-TOOL_DESC = 'version control operations on the project repository.'
+TOOL_DESC = 'mutating git operations: commit, revert, and restore workspace state.'
 TOOL_MODE = 'mutate'
 TOOL_SCOPE = 'workspace'
 TOOL_POST_OBSERVE = 'artifacts'
-TOOL_RUNTIME_ARTIFACTS = True
+TOOL_RUNTIME_ARTIFACT_KEY = 'commit'
 
 import json
 import subprocess
@@ -35,37 +32,28 @@ def _git(*args, timeout=30):
         return f"Error: {result.stderr.strip()}"
     return result.stdout.strip()
 
-
-def git_log(count=15, path=None):
-    args = ["log", f"--oneline", f"-{count}"]
-    if path:
-        args += ["--", path]
-    return _git(*args)
-
-
-def git_diff(ref, path=None):
-    args = ["diff", ref]
-    if path:
-        args += ["--", path]
-    return _git(*args)
-
-
-def git_show(ref):
-    return _git("show", "--stat", ref)
+def _head_sha() -> str:
+    return _git("rev-parse", "HEAD")
 
 
 def git_revert(ref, message=None):
     result = _git("revert", "--no-edit", ref)
     if result.startswith("Error:"):
-        return result
+        return {"status": "error", "error": result}
     if message:
         _git("commit", "--amend", "-m", message)
-    return f"Reverted {ref}\n{_git('log', '--oneline', '-1')}"
+    return {
+        "status": "ok",
+        "action": "revert",
+        "target": ref,
+        "commit": _head_sha(),
+        "summary": _git("log", "--oneline", "-1"),
+    }
 
 
 def git_commit(message, paths=None):
     if not message:
-        return "Error: message is required for commit"
+        return {"status": "error", "error": "message is required for commit"}
     if paths:
         for p in paths:
             _git("add", p)
@@ -73,53 +61,63 @@ def git_commit(message, paths=None):
         _git("add", "-A")
     result = _git("commit", "-m", message)
     if result.startswith("Error:"):
-        return result
-    return f"Committed\n{_git('log', '--oneline', '-1')}"
+        return {"status": "error", "error": result}
+    return {
+        "status": "ok",
+        "action": "commit",
+        "commit": _head_sha(),
+        "summary": _git("log", "--oneline", "-1"),
+    }
 
 
 def git_checkout(ref, path):
     if not path:
-        return "Error: path is required for checkout"
+        return {"status": "error", "error": "path is required for checkout"}
     result = _git("checkout", ref, "--", path)
     if result.startswith("Error:"):
-        return result
+        return {"status": "error", "error": result}
     _git("add", path)
     commit_msg = f"Restore {path} from {ref[:8]}"
     _git("commit", "-m", commit_msg)
-    return f"Restored {path} from {ref}\n{_git('log', '--oneline', '-1')}"
+    return {
+        "status": "ok",
+        "action": "checkout",
+        "path": path,
+        "target": ref,
+        "commit": _head_sha(),
+        "summary": _git("log", "--oneline", "-1"),
+    }
 
 
 def main():
     params = json.load(sys.stdin)
-    action = params.get("action", "log")
+    action = params.get("action", "revert")
 
-    if action == "log":
-        print(git_log(params.get("count", 15), params.get("path")))
-    elif action == "diff":
-        print(git_diff(params.get("ref", "HEAD~1"), params.get("path")))
-    elif action == "show":
-        print(git_show(params.get("ref", "HEAD")))
-    elif action == "revert":
+    if action == "revert":
         ref = params.get("ref")
         if not ref:
             print("Error: ref is required for revert", file=sys.stderr)
             sys.exit(1)
-        print(git_revert(ref, params.get("message")))
+        result = git_revert(ref, params.get("message"))
     elif action == "commit":
         msg = params.get("message")
         if not msg:
             print("Error: message is required for commit", file=sys.stderr)
             sys.exit(1)
-        print(git_commit(msg, params.get("paths")))
+        result = git_commit(msg, params.get("paths"))
     elif action == "checkout":
         ref = params.get("ref")
         path = params.get("path")
         if not ref or not path:
             print("Error: ref and path are required for checkout", file=sys.stderr)
             sys.exit(1)
-        print(git_checkout(ref, path))
+        result = git_checkout(ref, path)
     else:
         print(f"Error: unknown action '{action}'", file=sys.stderr)
+        sys.exit(1)
+
+    print(json.dumps(result, indent=2))
+    if result.get("status") != "ok":
         sys.exit(1)
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""pptx_add_slide — add or duplicate a slide in an unpacked PPTX tree."""
+"""pptx_clean — remove orphaned content from an unpacked PPTX tree."""
 
 from __future__ import annotations
 
@@ -9,17 +9,19 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(__file__))
-from scan_tree import sandbox_path
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from tools.scan_tree import sandbox_path
 
 
 SKILL_SCRIPT = (
-    Path(__file__).resolve().parent
+    Path(__file__).resolve().parent.parent
     / "skills"
     / "productivity"
     / "powerpoint"
     / "scripts"
-    / "add_slide.py"
+    / "clean.py"
 )
 
 
@@ -27,9 +29,8 @@ def main() -> None:
     params = json.load(sys.stdin)
     workspace = os.environ.get("WORKSPACE", ".")
     unpacked_dir = params.get("unpacked_dir", "")
-    source = params.get("source", "")
-    if not unpacked_dir or not source:
-        print("Error: missing 'unpacked_dir' or 'source' parameter", file=sys.stderr)
+    if not unpacked_dir:
+        print("Error: missing 'unpacked_dir' parameter", file=sys.stderr)
         sys.exit(1)
 
     try:
@@ -39,7 +40,7 @@ def main() -> None:
         sys.exit(1)
 
     result = subprocess.run(
-        [sys.executable, str(SKILL_SCRIPT), resolved_dir, source],
+        [sys.executable, str(SKILL_SCRIPT), resolved_dir],
         capture_output=True,
         text=True,
     )

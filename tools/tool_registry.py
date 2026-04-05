@@ -9,10 +9,10 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from tools.hash_registry import HASH_CORE_TOOLS, HASH_SUPPORT_TOOLS
+from tools.hash.registry import HASH_CORE_TOOLS, HASH_SUPPORT_TOOLS
 
 _HELPER_EXCLUDES = {
-    "tools/hash_registry.py",
+    "tools/hash/registry.py",
     "tools/tool_contract.py",
     "tools/tool_registry.py",
     "tools/gap_config_report.py",
@@ -52,10 +52,26 @@ def _git_head_blob(path: str, *, cors_root: Path) -> str | None:
     return line[0][:12] if line else None
 
 
+def _working_tree_blob(path: str, *, cors_root: Path) -> str | None:
+    full_path = cors_root / path
+    if not full_path.exists():
+        return None
+    result = subprocess.run(
+        ["git", "hash-object", path],
+        cwd=cors_root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    line = result.stdout.strip().splitlines()
+    return line[0][:12] if line else None
+
+
 def public_tool_blob_refs(cors_root: Path) -> set[str]:
     refs: set[str] = set()
     for path in public_tool_paths(cors_root):
-        blob = _git_head_blob(path, cors_root=cors_root)
+        blob = _git_head_blob(path, cors_root=cors_root) or _working_tree_blob(path, cors_root=cors_root)
         if blob:
             refs.add(blob)
     return refs
@@ -64,7 +80,7 @@ def public_tool_blob_refs(cors_root: Path) -> set[str]:
 def internal_tool_blob_refs(cors_root: Path) -> set[str]:
     refs: set[str] = set()
     for path in INTERNAL_TOOL_PATHS:
-        blob = _git_head_blob(path, cors_root=cors_root)
+        blob = _git_head_blob(path, cors_root=cors_root) or _working_tree_blob(path, cors_root=cors_root)
         if blob:
             refs.add(blob)
     return refs

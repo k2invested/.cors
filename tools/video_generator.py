@@ -49,7 +49,7 @@ TOOL_DESC = 'YouTube Shorts video generator with narration, captions, and simple
 TOOL_MODE = 'mutate'
 TOOL_SCOPE = 'workspace'
 TOOL_POST_OBSERVE = 'artifacts'
-TOOL_RUNTIME_ARTIFACTS = True
+TOOL_ARTIFACT_PARAMS = ['output_path']
 
 import argparse
 import json
