@@ -20,8 +20,6 @@ The current `TOOL_MAP` in [loop.py](/Users/k2invested/Desktop/cors/loop.py) rout
 - `tools/email_check.py`
 - `tools/hash_manifest.py`
 - `tools/stitch_generate.py`
-- `tools/file_write.py`
-- `tools/file_edit.py`
 - `tools/code_exec.py`
 - `tools/email_send.py`
 - `tools/json_patch.py`

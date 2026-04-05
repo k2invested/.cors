@@ -3,7 +3,7 @@
   "skills/admin.st": {"on_mutate": "reprogramme_needed", "reprogramme_mode": "entity_editor"},
   "skills/entities/": {"on_mutate": "reprogramme_needed", "reprogramme_mode": "entity_editor"},
   "skills/actions/": {"on_mutate": "reason_needed", "reprogramme_mode": "action_editor"},
-  "tools/": {"on_mutate": "reason_needed", "reprogramme_mode": "action_editor"},
+  "tools/": {"on_mutate": "tool_needed"},
   "ui_output/": {"on_mutate": "stitch_needed"},
   "logs/": {"immutable": true},
   "store/": {"immutable": true},

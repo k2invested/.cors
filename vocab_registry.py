@@ -82,15 +82,15 @@ VOCABS: dict[str, VocabSpec] = {
         name="content_needed",
         category="mutate",
         priority=40,
-        tool="tools/file_write.py",
-        desc="Write new content into the workspace.",
+        tool="tools/hash_manifest.py",
+        desc="Write new content into the workspace through the hash manifest primitive.",
     ),
     "script_edit_needed": VocabSpec(
         name="script_edit_needed",
         category="mutate",
         priority=40,
-        tool="tools/file_edit.py",
-        desc="Edit script content in-place.",
+        tool="tools/hash_manifest.py",
+        desc="Edit script content in-place through the hash manifest primitive.",
     ),
     "command_needed": VocabSpec(
         name="command_needed",
@@ -106,6 +106,13 @@ VOCABS: dict[str, VocabSpec] = {
         priority=40,
         tool="tools/email_send.py",
         desc="Send a message or email.",
+    ),
+    "tool_needed": VocabSpec(
+        name="tool_needed",
+        category="mutate",
+        priority=40,
+        tool="tools/tool_builder.py",
+        desc="Author a validated tool script with explicit runtime contract metadata.",
     ),
     "json_patch_needed": VocabSpec(
         name="json_patch_needed",

@@ -23,6 +23,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tools.hash_registry import HASH_MANIFEST_ROUTES
+
 CORS_ROOT = str(Path(__file__).resolve().parent.parent)
 
 
@@ -83,12 +85,7 @@ def delegate_to_tool(tool_name: str, params: dict) -> str:
 
 
 # File type → specialised tool for mutations
-TOOL_ROUTES = {
-    ".st":   "st_builder.py",
-    ".json": "json_patch.py",
-    ".docx": "doc_edit.py",
-    ".pdf":  "pdf_fill.py",
-}
+TOOL_ROUTES = {suffix: Path(tool_path).name for suffix, tool_path in HASH_MANIFEST_ROUTES.items()}
 
 
 def route_by_type(path: str, params: dict) -> str | None:

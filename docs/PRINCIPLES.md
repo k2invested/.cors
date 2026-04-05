@@ -247,8 +247,8 @@ The LLM composes. The kernel executes. Auto-commit. Postcondition fires. These a
 |-------|--------------|-------------|--------------|
 | `hash_edit_needed` | hash_manifest.py — read/write/patch/diff by path. Routes by file type (.st→st_builder, .json→json_patch, .docx→doc_edit) | LLM composes JSON params | Per tree_policy.json |
 | `stitch_needed` | stitch_generate.py — prompt → HTML + Tailwind CSS | LLM composes UI prompt | `ui_output/` (screenshot blob) |
-| `content_needed` | file_write.py — write new file | LLM composes content | Commit tree |
-| `script_edit_needed` | file_edit.py — edit existing file | LLM composes shell command | Commit tree |
+| `content_needed` | hash_manifest.py — write new file through hash primitive | LLM composes content | Commit tree |
+| `script_edit_needed` | hash_manifest.py — edit existing file through hash primitive | LLM composes shell command | Commit tree |
 | `command_needed` | code_exec.py — execute shell command. Output blob-hashed into git. | LLM composes command | `logs/` (output blob) |
 | `message_needed` | email_send.py — send email/message | LLM composes message | Commit tree |
 | `json_patch_needed` | json_patch.py — surgical JSON mutation | LLM composes patch | Commit tree |

@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tools.tool_contract import load_tool_contract
 from vocab_registry import is_bridge, is_mutate, is_observe
 
 
@@ -146,16 +147,21 @@ def _tool_specs(*, cors_root: Path, tool_map: dict[str, dict], git: Any) -> list
             continue
         default_gap = inverse_tool_map.get(rel, "internal_only")
         activation = f"name:{default_gap}" if default_gap != "internal_only" else "internal_only"
+        contract = load_tool_contract(path)
+        desc = contract.desc if contract is not None else _tool_doc_summary(path)
+        omo_role = _vocab_role(default_gap)
+        if omo_role == "internal" and contract is not None:
+            omo_role = contract.mode
         specs.append(
             FoundationSpec(
                 ref=blob,
                 kind="tool_blob",
                 surface="described_blob",
                 source=rel,
-                desc=_tool_doc_summary(path),
+                desc=desc,
                 activation=activation,
                 default_gap=default_gap,
-                omo_role=_vocab_role(default_gap),
+                omo_role=omo_role,
             )
         )
     return specs

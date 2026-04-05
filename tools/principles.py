@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """principles — CRUD for the admin dev agent's architectural knowledge store.
 
-Same pattern as commitments.py but for system design principles.
-
 Input JSON:
   {"action": "create", "title": "<principle name>", "fact": "<what is true>", "source": "<file:line>", "category": "<architecture|pattern|invariant|threshold>"}
   {"action": "update", "principle_id": "<id>", "fact": "<updated fact>", "source": "<updated source>"}

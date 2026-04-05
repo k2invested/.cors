@@ -48,6 +48,7 @@ import manifest_engine as me
 import action_foundations as action_foundations_module
 from execution_engine import ExecutionConfig, ExecutionHooks, execute_iteration
 from tools import st_builder as st_builder_module
+from tools.hash_registry import HASH_RESOLVE_ROUTES
 from vocab_registry import (
     BRIDGE_VOCAB,
     DETERMINISTIC_VOCAB,
@@ -146,7 +147,7 @@ DEFAULT_TREE_POLICY = {
     "skills/admin.st":  {"on_mutate": "reprogramme_needed", "reprogramme_mode": "entity_editor"},
     "skills/entities/": {"on_mutate": "reprogramme_needed", "reprogramme_mode": "entity_editor"},
     "skills/actions/":  {"on_mutate": "reason_needed", "reprogramme_mode": "action_editor"},
-    "tools/":           {"on_mutate": "reason_needed", "reprogramme_mode": "action_editor"},
+    "tools/":           {"on_mutate": "tool_needed"},
     "ui_output/":       {"on_mutate": "stitch_needed"},
     "logs/":            {"immutable": True},
     "store/":           {"immutable": True},
@@ -633,9 +634,13 @@ def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
         return me.render_chain_package(package, ref)
 
     repo_path = CORS_ROOT / ref
-    if ("/" in ref or ref.endswith((".st", ".log"))) and repo_path.exists() and repo_path.is_file():
+    if ("/" in ref or ref.endswith((".st", ".log", ".docx", ".pdf", ".pptx", ".xlsx", ".html", ".epub", ".png", ".jpg", ".jpeg", ".webp", ".gif"))) and repo_path.exists() and repo_path.is_file():
         if repo_path.suffix == ".log":
             return _render_log_resolution(repo_path.read_text(errors="replace"), source_ref=ref)
+        if repo_path.suffix.lower() in {".docx", ".pdf", ".pptx", ".xlsx", ".html", ".epub", ".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+            routed = _render_specialized_repo_file(ref, repo_path)
+            if routed is not None:
+                return routed
         content = git_show(f"HEAD:{ref}")
         if not content.startswith("(unresolvable"):
             rendered = _render_structured_content(content, source_ref=ref)
@@ -650,6 +655,17 @@ def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
         return rendered or content
 
     return None
+
+
+def _render_specialized_repo_file(ref: str, repo_path: Path) -> str | None:
+    suffix = repo_path.suffix.lower()
+    tool_path = HASH_RESOLVE_ROUTES.get(suffix)
+    if not tool_path:
+        return None
+    output, code = execute_tool(tool_path, {"path": ref})
+    if code != 0:
+        return f"(unresolvable: {ref})"
+    return output or f"(empty: {ref})"
 
 
 def _collect_step_branch(step: Step, trajectory: Trajectory, *, max_depth: int = 5) -> list[dict]:
@@ -1145,6 +1161,7 @@ MUTATE (you compose a command, kernel executes):
   stitch_needed — generate UI via Google Stitch (prompt → HTML + Tailwind CSS)
   content_needed — write a new file
   script_edit_needed — edit an existing file
+  tool_needed — scaffold a new tool script with explicit runtime contract metadata
   command_needed — execute a shell command
   email_needed — send an email/message
   json_patch_needed — surgical JSON edit
@@ -1160,7 +1177,7 @@ Action/workflow ownership:
   - New action/workflow creation, repair, restructuring, or schema alignment stays under reason_needed.
   - Do not surface reprogramme_needed for skills/actions/*.st work.
   - reprogramme_needed is for semantic persistence in admin/entity trees and other entity-like state, not action-package authoring.
-  - Foundational Python tools under tools/*.py are real lower-order action blocks. reason_needed may surface content_needed for a new tool or script_edit_needed/hash_edit_needed for an existing tool before authoring the higher-order .st layer.
+  - Foundational Python tools under tools/*.py are real lower-order action blocks. reason_needed may surface tool_needed for a new tool or script_edit_needed/hash_edit_needed for an existing tool before authoring the higher-order .st layer.
   - Treat action/codon packages and tools as one hash-native action environment: .st packages by committed skill hash, tools by committed blob hash.
   - In that action environment, semantic-tree hashes are embeddable compositional units; described-blob hashes are foundational executable/data blocks.
   - Tool foundations do not need kernel vocab entries. They can be embedded and identified by committed blob hash.

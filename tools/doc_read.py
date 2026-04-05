@@ -18,7 +18,6 @@ def read_docx(filepath):
     """Extract text from a .docx file with stable paragraph numbering.
 
     Every paragraph gets a line number (1-indexed), including empty ones.
-    These numbers are stable references for doc_edit_batch.py edits.
     """
     from docx import Document
     doc = Document(filepath)
