@@ -25,9 +25,11 @@ from typing import Any, Callable
 
 from compile import GovernorSignal, is_mutate, is_observe
 from step import Epistemic, Gap, Step
+from tools.chain_registry import render_public_chain_registry
 from tools import st_builder as st_builder_module
 from tools.tool_contract import load_tool_contract, render_artifact_contract
 from tools.tool_registry import public_tool_paths
+from vocab_registry import FOUNDATIONAL_BRIDGE_POST_OBSERVE, render_configurable_vocab_registry
 
 
 @dataclass
@@ -128,6 +130,22 @@ def _render_public_tool_registry(cors_root: Path) -> str:
             f"| {contract.desc}"
         )
     return "\n".join(lines)
+
+
+def _bridge_reintegration_target(
+    *,
+    vocab: str | None,
+    written_path: str | None,
+    commit_sha: str | None,
+) -> tuple[list[str], str] | tuple[None, None]:
+    next_vocab = FOUNDATIONAL_BRIDGE_POST_OBSERVE.get(vocab or "")
+    if next_vocab != "reason_needed":
+        return None, None
+    refs = [written_path] if isinstance(written_path, str) and written_path else ([commit_sha] if commit_sha else [])
+    if not refs:
+        return None, None
+    subject = written_path or f"commit:{commit_sha}"
+    return refs, f"reintegrate {subject} after {vocab}"
 
 
 def _make_rogue_step(
@@ -690,7 +708,7 @@ def execute_iteration(
         else:
             compiler.resolve_current_gap(gap.hash)
 
-    elif vocab and is_mutate(vocab):
+    elif vocab in {"tool_needed", "vocab_reg_needed"} or (vocab and is_mutate(vocab)):
         policy = hooks.load_tree_policy()
         target_skill = _entity_target_for_reprogramme(gap, registry)
         reroute_vocab = None
@@ -790,6 +808,20 @@ def execute_iteration(
                 f"Observe tools must use post_observe='none'. Artifact tools must "
                 f"declare fixed artifact paths, artifact-bearing params, or a runtime artifact key."
             )
+        elif vocab == "vocab_reg_needed":
+            session.inject(_render_public_tool_registry(config.cors_root))
+            session.inject(render_public_chain_registry(config.cors_root))
+            session.inject(render_configurable_vocab_registry())
+            compose_prompt = (
+                f"Compose a semantic vocab route to resolve this gap:\n"
+                f"  gap:{gap.hash} \"{gap.desc}\"\n\n"
+                f"Respond with JSON params for vocab_builder.py:\n"
+                f'{{"name": "new_vocab_needed", "classifiable": "observe|mutate", '
+                f'"target_kind": "tool|chain", "target_ref": "tools/hash_manifest.py", '
+                f'"desc": "what the semantic route means", "prompt_hint": "how the route should be used"}}\n\n'
+                f"Use public tool or chain targets only. Prefer tool targets for executable routing. "
+                f"Do not invent bridge vocab here."
+            )
         else:
             compose_prompt = (
                 f"Compose a shell command to resolve this gap:\n"
@@ -832,6 +864,18 @@ def execute_iteration(
                     path = intent.get("path")
                     if isinstance(path, str) and path:
                         written_path = path
+                executed = True
+                exec_failed = code != 0
+            else:
+                print("  → no valid params extracted")
+        elif vocab == "vocab_reg_needed":
+            intent = hooks.extract_json(raw)
+            if intent:
+                output, code = hooks.execute_tool("tools/vocab_builder.py", intent)
+                print(f"  → vocab_builder: {output[:100]}")
+                written_path = hooks.extract_written_path(output)
+                if not written_path:
+                    written_path = "vocab_registry.py"
                 executed = True
                 exec_failed = code != 0
             else:
@@ -888,13 +932,22 @@ def execute_iteration(
                     chain_id=entry.chain_id,
                 )
                 compiler.record_execution(vocab, True)
-                postcond_refs, postcond_desc = _post_observe_resolution(
+                postcond_vocab = "hash_resolve_needed"
+                postcond_refs, postcond_desc = _bridge_reintegration_target(
                     vocab=vocab,
-                    tool_conf=tool_conf,
+                    written_path=written_path,
                     commit_sha=commit_sha,
-                    hooks=hooks,
-                    config=config,
                 )
+                if not postcond_refs or not postcond_desc:
+                    postcond_refs, postcond_desc = _post_observe_resolution(
+                        vocab=vocab,
+                        tool_conf=tool_conf,
+                        commit_sha=commit_sha,
+                        hooks=hooks,
+                        config=config,
+                    )
+                else:
+                    postcond_vocab = "reason_needed"
 
                 postcond = Gap.create(
                     desc=postcond_desc,
@@ -902,7 +955,7 @@ def execute_iteration(
                     step_refs=[step_result.hash],
                 )
                 postcond.scores = Epistemic(relevance=1.0, confidence=1.0, grounded=0.0)
-                postcond.vocab = "hash_resolve_needed"
+                postcond.vocab = postcond_vocab
                 assessment_lines = hooks.commit_assessment(commit_sha)
                 postcond_step = Step.create(
                     desc=f"postcondition: {gap.desc}",
@@ -915,7 +968,7 @@ def execute_iteration(
                 trajectory.append(postcond_step)
                 compiler.emit(postcond_step)
                 compiler.resolve_current_gap(gap.hash)
-                print(f"  → postcondition gap injected: hash_resolve_needed → {postcond_refs}")
+                print(f"  → postcondition gap injected: {postcond_vocab} → {postcond_refs}")
                 if assessment_lines:
                     print("  → postcondition assessment:")
                     for line in assessment_lines:
@@ -997,13 +1050,22 @@ def execute_iteration(
                     chain_id=entry.chain_id,
                 )
                 compiler.record_execution(vocab, False)
-                postcond_refs, postcond_desc = _post_observe_resolution(
+                postcond_vocab = "hash_resolve_needed"
+                postcond_refs, postcond_desc = _bridge_reintegration_target(
                     vocab=vocab,
-                    tool_conf=tool_conf,
+                    written_path=written_path,
                     commit_sha=None,
-                    hooks=hooks,
-                    config=config,
                 )
+                if not postcond_refs or not postcond_desc:
+                    postcond_refs, postcond_desc = _post_observe_resolution(
+                        vocab=vocab,
+                        tool_conf=tool_conf,
+                        commit_sha=None,
+                        hooks=hooks,
+                        config=config,
+                    )
+                else:
+                    postcond_vocab = "reason_needed"
                 if postcond_refs and postcond_desc:
                     postcond = Gap.create(
                         desc=postcond_desc,
@@ -1011,7 +1073,7 @@ def execute_iteration(
                         step_refs=[step_result.hash],
                     )
                     postcond.scores = Epistemic(relevance=1.0, confidence=1.0, grounded=0.0)
-                    postcond.vocab = "hash_resolve_needed"
+                    postcond.vocab = postcond_vocab
                     postcond_step = Step.create(
                         desc=f"postcondition: {gap.desc}",
                         step_refs=[step_result.hash],
@@ -1021,7 +1083,7 @@ def execute_iteration(
                     )
                     trajectory.append(postcond_step)
                     compiler.emit(postcond_step)
-                    print(f"  → postcondition gap injected: hash_resolve_needed → {postcond_refs}")
+                    print(f"  → postcondition gap injected: {postcond_vocab} → {postcond_refs}")
                 compiler.resolve_current_gap(gap.hash)
         else:
             compiler.resolve_current_gap(gap.hash)
@@ -1068,48 +1130,6 @@ def execute_iteration(
             compiler.emit(step_result)
         else:
             compiler.resolve_current_gap(gap.hash)
-
-    elif vocab == "commit_needed":
-        print("  → commit (end codon)")
-        commit_skill = registry.resolve_by_name("commit")
-        if commit_skill:
-            session.inject(f"## Commitment reintegration: {gap.desc}")
-            if resolved_data:
-                session.inject(f"## Commitment chain data\n{resolved_data}")
-            commit_step = Step.create(
-                desc=f"commitment reintegrated: {gap.desc}",
-                step_refs=[origin_step.hash],
-                content_refs=[commit_skill.hash] + gap.content_refs,
-                chain_id=entry.chain_id,
-            )
-            for st_step in commit_skill.steps:
-                child_gap = Gap.create(desc=st_step.desc, content_refs=gap.content_refs)
-                child_gap.scores = Epistemic(
-                    relevance=st_step.__dict__.get("relevance", 0.8),
-                    confidence=0.8,
-                    grounded=0.0,
-                )
-                child_gap.vocab = st_step.vocab
-                child_gap.turn_id = current_turn
-                commit_step.gaps.append(child_gap)
-            trajectory.append(commit_step)
-            compiler.emit(commit_step)
-            compiler.resolve_current_gap(gap.hash)
-            step_result = commit_step
-        else:
-            if resolved_data:
-                session.inject(f"## Context\n{resolved_data}")
-            raw = session.call(f"Reintegrate commitment: gap:{gap.hash} \"{gap.desc}\".")
-            step_result, child_gaps = hooks.parse_step_output(
-                raw,
-                step_refs=[origin_step.hash],
-                content_refs=gap.content_refs,
-                chain_id=entry.chain_id,
-            )
-            if child_gaps:
-                compiler.emit(step_result)
-            else:
-                compiler.resolve_current_gap(gap.hash)
 
     elif vocab == "reason_needed":
         print("  → reason controller")

@@ -380,8 +380,7 @@
         "hash_resolve_needed",
         "pattern_needed",
         "email_needed",
-        "external_context",
-        "clarify_needed"
+        "external_context"
       ]
     },
     "mutateVocab": {
@@ -389,7 +388,6 @@
         "hash_edit_needed",
         "stitch_needed",
         "content_needed",
-        "script_edit_needed",
         "command_needed",
         "message_needed",
         "json_patch_needed",
@@ -398,9 +396,11 @@
     },
     "bridgeVocab": {
       "enum": [
+        "clarify_needed",
         "reason_needed",
+        "vocab_reg_needed",
         "await_needed",
-        "commit_needed",
+        "tool_needed",
         "reprogramme_needed"
       ]
     },
@@ -414,14 +414,14 @@
         "hash_edit_needed",
         "stitch_needed",
         "content_needed",
-        "script_edit_needed",
         "command_needed",
         "message_needed",
         "json_patch_needed",
         "git_revert_needed",
         "reason_needed",
+        "vocab_reg_needed",
         "await_needed",
-        "commit_needed",
+        "tool_needed",
         "reprogramme_needed"
       ]
     },
@@ -743,8 +743,7 @@
               "items": {
                 "enum": [
                   "await_needed",
-                  "reason_needed",
-                  "commit_needed"
+                  "reason_needed"
                 ]
               }
             }

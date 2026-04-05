@@ -1,7 +1,7 @@
 {
   "name": "commit",
   "desc": "End codon for reasoning commitments. Reintegrates the commitment chain's full trajectory as a semantic tree into the main agent's context. Closes the reasoning chain.",
-  "trigger": "on_vocab:commit_needed",
+  "trigger": "manual",
   "author": "developer",
   "steps": [
     {

@@ -60,8 +60,6 @@ def derive_priority(kind: str, manifestation: dict) -> int:
         return 90
     if runtime_vocab == "await_needed":
         return 95
-    if runtime_vocab == "commit_needed":
-        return 98
     if runtime_vocab == "reprogramme_needed":
         return 99
 
@@ -79,11 +77,11 @@ def classify_allowed_vocab(allowed_vocab: list[str]) -> dict[str, list[str]]:
         "bridge": [],
     }
     for vocab in allowed_vocab:
-        if vocab in {"pattern_needed", "hash_resolve_needed", "email_needed", "external_context", "clarify_needed"}:
+        if vocab in {"pattern_needed", "hash_resolve_needed", "email_needed", "external_context"}:
             buckets["observe"].append(vocab)
-        elif vocab in {"hash_edit_needed", "stitch_needed", "content_needed", "script_edit_needed", "command_needed", "message_needed", "json_patch_needed", "git_revert_needed"}:
+        elif vocab in {"hash_edit_needed", "stitch_needed", "content_needed", "command_needed", "message_needed", "json_patch_needed", "git_revert_needed"}:
             buckets["mutate"].append(vocab)
-        elif vocab in {"reason_needed", "await_needed", "commit_needed", "reprogramme_needed"}:
+        elif vocab in {"clarify_needed", "reason_needed", "tool_needed", "vocab_reg_needed", "await_needed", "reprogramme_needed"}:
             buckets["bridge"].append(vocab)
     return buckets
 

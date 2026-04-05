@@ -14,9 +14,12 @@ class VocabSpec:
     tool: str | None = None
     post_observe: str | None = None
     desc: str = ""
+    target_kind: str | None = None
+    target_ref: str | None = None
+    prompt_hint: str = ""
 
-
-VOCABS: dict[str, VocabSpec] = {
+# BEGIN CONFIGURABLE_VOCABS
+CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
     "hash_resolve_needed": VocabSpec(
         name="hash_resolve_needed",
         category="observe",
@@ -26,6 +29,8 @@ VOCABS: dict[str, VocabSpec] = {
         allows_post_gap_emission=True,
         tool=None,
         desc="Resolve hashes and observe the resulting context.",
+        target_kind="builtin",
+        target_ref="hash_resolve",
     ),
     "pattern_needed": VocabSpec(
         name="pattern_needed",
@@ -35,6 +40,8 @@ VOCABS: dict[str, VocabSpec] = {
         observation_only=False,
         tool="tools/file_grep.py",
         desc="Search for a deterministic pattern in workspace content.",
+        target_kind="tool",
+        target_ref="tools/file_grep.py",
     ),
     "email_needed": VocabSpec(
         name="email_needed",
@@ -44,6 +51,8 @@ VOCABS: dict[str, VocabSpec] = {
         observation_only=False,
         tool="tools/email_check.py",
         desc="Inspect email context or mailbox state.",
+        target_kind="tool",
+        target_ref="tools/email_check.py",
     ),
     "external_context": VocabSpec(
         name="external_context",
@@ -55,20 +64,14 @@ VOCABS: dict[str, VocabSpec] = {
         tool=None,
         desc="Inject external context as passive observation only.",
     ),
-    "clarify_needed": VocabSpec(
-        name="clarify_needed",
-        category="observe",
-        priority=20,
-        deterministic=False,
-        observation_only=False,
-        desc="Request missing user-only information.",
-    ),
     "hash_edit_needed": VocabSpec(
         name="hash_edit_needed",
         category="mutate",
         priority=40,
         tool="tools/hash_manifest.py",
         desc="Patch or rewrite a workspace file.",
+        target_kind="tool",
+        target_ref="tools/hash_manifest.py",
     ),
     "stitch_needed": VocabSpec(
         name="stitch_needed",
@@ -77,6 +80,8 @@ VOCABS: dict[str, VocabSpec] = {
         tool="tools/stitch_generate.py",
         post_observe="ui_output/",
         desc="Generate stitched UI output artifacts.",
+        target_kind="tool",
+        target_ref="tools/stitch_generate.py",
     ),
     "content_needed": VocabSpec(
         name="content_needed",
@@ -84,13 +89,8 @@ VOCABS: dict[str, VocabSpec] = {
         priority=40,
         tool="tools/hash_manifest.py",
         desc="Write new content into the workspace through the hash manifest primitive.",
-    ),
-    "script_edit_needed": VocabSpec(
-        name="script_edit_needed",
-        category="mutate",
-        priority=40,
-        tool="tools/hash_manifest.py",
-        desc="Edit script content in-place through the hash manifest primitive.",
+        target_kind="tool",
+        target_ref="tools/hash_manifest.py",
     ),
     "command_needed": VocabSpec(
         name="command_needed",
@@ -99,6 +99,8 @@ VOCABS: dict[str, VocabSpec] = {
         tool="tools/code_exec.py",
         post_observe="bot.log",
         desc="Execute a shell command to mutate state.",
+        target_kind="tool",
+        target_ref="tools/code_exec.py",
     ),
     "message_needed": VocabSpec(
         name="message_needed",
@@ -106,13 +108,8 @@ VOCABS: dict[str, VocabSpec] = {
         priority=40,
         tool="tools/email_send.py",
         desc="Send a message or email.",
-    ),
-    "tool_needed": VocabSpec(
-        name="tool_needed",
-        category="mutate",
-        priority=40,
-        tool="tools/tool_builder.py",
-        desc="Author a validated tool script with explicit runtime contract metadata.",
+        target_kind="tool",
+        target_ref="tools/email_send.py",
     ),
     "json_patch_needed": VocabSpec(
         name="json_patch_needed",
@@ -120,6 +117,8 @@ VOCABS: dict[str, VocabSpec] = {
         priority=40,
         tool="tools/json_patch.py",
         desc="Apply a structured JSON patch.",
+        target_kind="tool",
+        target_ref="tools/json_patch.py",
     ),
     "git_revert_needed": VocabSpec(
         name="git_revert_needed",
@@ -127,6 +126,21 @@ VOCABS: dict[str, VocabSpec] = {
         priority=40,
         tool="tools/git_ops.py",
         desc="Revert git state.",
+        target_kind="tool",
+        target_ref="tools/git_ops.py",
+    ),
+}
+# END CONFIGURABLE_VOCABS
+
+# BEGIN FOUNDATIONAL_BRIDGES
+FOUNDATIONAL_BRIDGES: dict[str, VocabSpec] = {
+    "clarify_needed": VocabSpec(
+        name="clarify_needed",
+        category="bridge",
+        priority=20,
+        deterministic=False,
+        observation_only=False,
+        desc="Request missing user-only information after reason has exhausted available context.",
     ),
     "reason_needed": VocabSpec(
         name="reason_needed",
@@ -134,17 +148,25 @@ VOCABS: dict[str, VocabSpec] = {
         priority=90,
         desc="Stateful inline judgment and routing.",
     ),
+    "tool_needed": VocabSpec(
+        name="tool_needed",
+        category="bridge",
+        priority=92,
+        tool="tools/tool_builder.py",
+        desc="Reason-routed tool authoring branch with validated runtime contract metadata.",
+    ),
+    "vocab_reg_needed": VocabSpec(
+        name="vocab_reg_needed",
+        category="bridge",
+        priority=93,
+        tool="tools/vocab_builder.py",
+        desc="Reason-routed semantic vocab routing branch for configurable observe/mutate paths.",
+    ),
     "await_needed": VocabSpec(
         name="await_needed",
         category="bridge",
         priority=95,
         desc="Pause and rejoin with synchronized background work.",
-    ),
-    "commit_needed": VocabSpec(
-        name="commit_needed",
-        category="bridge",
-        priority=98,
-        desc="Terminal commitment codon.",
     ),
     "reprogramme_needed": VocabSpec(
         name="reprogramme_needed",
@@ -152,6 +174,14 @@ VOCABS: dict[str, VocabSpec] = {
         priority=99,
         desc="Stateless semantic persistence primitive.",
     ),
+}
+# END FOUNDATIONAL_BRIDGES
+
+
+VOCABS: dict[str, VocabSpec] = {**CONFIGURABLE_VOCABS, **FOUNDATIONAL_BRIDGES}
+FOUNDATIONAL_BRIDGE_POST_OBSERVE = {
+    "tool_needed": "reason_needed",
+    "vocab_reg_needed": "reason_needed",
 }
 
 
@@ -185,15 +215,15 @@ def vocab_priority(name: str | None) -> int:
     return spec.priority if spec is not None else 50
 
 
-OBSERVE_VOCAB = {name for name, spec in VOCABS.items() if spec.category == "observe"}
-MUTATE_VOCAB = {name for name, spec in VOCABS.items() if spec.category == "mutate"}
-BRIDGE_VOCAB = {name for name, spec in VOCABS.items() if spec.category == "bridge"}
+OBSERVE_VOCAB = {name for name, spec in CONFIGURABLE_VOCABS.items() if spec.category == "observe"}
+MUTATE_VOCAB = {name for name, spec in CONFIGURABLE_VOCABS.items() if spec.category == "mutate"}
+BRIDGE_VOCAB = set(FOUNDATIONAL_BRIDGES)
 
 DETERMINISTIC_VOCAB = {name for name, spec in VOCABS.items() if spec.deterministic}
 OBSERVATION_ONLY_VOCAB = {name for name, spec in VOCABS.items() if spec.observation_only}
 TOOL_MAP = {
     name: {k: v for k, v in {"tool": spec.tool, "post_observe": spec.post_observe}.items() if v is not None or k == "tool"}
-    for name, spec in VOCABS.items()
+    for name, spec in CONFIGURABLE_VOCABS.items()
     if spec.category in {"observe", "mutate"}
 }
 
@@ -208,3 +238,13 @@ def validate_tree_policy_targets(policy: dict) -> list[str]:
             if target and not has_vocab(str(target)):
                 invalid.append(f"{path}:{key}:{target}")
     return invalid
+
+
+def render_configurable_vocab_registry() -> str:
+    lines = ["## Configurable Vocab Registry"]
+    for name, spec in CONFIGURABLE_VOCABS.items():
+        target = spec.target_ref or spec.tool or "internal"
+        lines.append(
+            f"- {name} | classifiable={spec.category} | target={target} | {spec.desc}"
+        )
+    return "\n".join(lines)

@@ -59,6 +59,7 @@ from compile import (
 from skills.loader import Skill, SkillRegistry, SkillStep, load_all, load_skill
 from step import Chain, Epistemic, Gap, Step, Trajectory, absolute_time, blob_hash, chain_hash, relative_time
 from tools import chain_to_st as chain_to_st_module
+from tools import chain_registry as chain_registry_module
 from tools.hash import registry as hash_registry_module
 from tools import hash_manifest as hash_manifest_module
 from tools.hash import office_manifest as office_manifest_module
@@ -66,6 +67,7 @@ from tools import st_builder as st_builder_module
 from tools import tool_builder as tool_builder_module
 from tools import tool_contract as tool_contract_module
 from tools import tool_registry as tool_registry_module
+from tools import vocab_builder as vocab_builder_module
 
 SKILLS_DIR = ROOT / "skills"
 TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
@@ -405,12 +407,12 @@ P3_CASES = [
     ("observe_hash_resolve_needed", lambda: is_observe("hash_resolve_needed")),
     ("observe_email_needed", lambda: is_observe("email_needed")),
     ("observe_external_context", lambda: is_observe("external_context")),
-    ("observe_clarify_needed", lambda: is_observe("clarify_needed")),
+    ("bridge_clarify_needed", lambda: is_bridge("clarify_needed")),
     ("mutate_hash_edit_needed", lambda: is_mutate("hash_edit_needed")),
     ("mutate_stitch_needed", lambda: is_mutate("stitch_needed")),
     ("mutate_content_needed", lambda: is_mutate("content_needed")),
-    ("mutate_script_edit_needed", lambda: is_mutate("script_edit_needed")),
-    ("mutate_tool_needed", lambda: is_mutate("tool_needed")),
+    ("bridge_tool_needed", lambda: is_bridge("tool_needed")),
+    ("bridge_vocab_reg_needed", lambda: is_bridge("vocab_reg_needed")),
     ("mutate_command_needed", lambda: is_mutate("command_needed")),
     ("mutate_message_needed", lambda: is_mutate("message_needed")),
     ("mutate_json_patch_needed", lambda: is_mutate("json_patch_needed")),
@@ -420,7 +422,6 @@ P3_CASES = [
     ("step_render_unknown_trigger_term_is_unknown", lambda: step_module.vocab_class("research_needed") == "_"),
     ("bridge_reason_needed", lambda: is_bridge("reason_needed")),
     ("bridge_await_needed", lambda: is_bridge("await_needed")),
-    ("bridge_commit_needed", lambda: is_bridge("commit_needed")),
     ("bridge_reprogramme_needed", lambda: is_bridge("reprogramme_needed")),
     ("deterministic_vocab_is_hash_resolve", lambda: loop.DETERMINISTIC_VOCAB == {"hash_resolve_needed"}),
     ("observation_only_contains_external_context", lambda: "external_context" in loop.OBSERVATION_ONLY_VOCAB),
@@ -431,14 +432,16 @@ P3_CASES = [
     ("loop_observation_only_matches_registry", lambda: loop.OBSERVATION_ONLY_VOCAB == vocab_registry_module.OBSERVATION_ONLY_VOCAB),
     ("loop_deterministic_matches_registry", lambda: loop.DETERMINISTIC_VOCAB == vocab_registry_module.DETERMINISTIC_VOCAB),
     ("tool_map_hash_edit_routes_hash_manifest", lambda: loop.TOOL_MAP["hash_edit_needed"]["tool"] == "tools/hash_manifest.py"),
-    ("tool_map_tool_needed_routes_tool_builder", lambda: loop.TOOL_MAP["tool_needed"]["tool"] == "tools/tool_builder.py"),
+    ("tool_needed_not_in_mutate_tool_map", lambda: "tool_needed" not in loop.TOOL_MAP),
+    ("vocab_reg_needed_not_in_mutate_tool_map", lambda: "vocab_reg_needed" not in loop.TOOL_MAP),
     ("tool_map_stitch_has_post_observe", lambda: loop.TOOL_MAP["stitch_needed"]["post_observe"] == "ui_output/"),
     ("tool_map_command_has_log_post_observe", lambda: loop.TOOL_MAP["command_needed"]["post_observe"] == "bot.log"),
     ("priority_observe_before_mutate", lambda: vocab_priority("pattern_needed") < vocab_priority("content_needed")),
     ("priority_mutate_before_reason", lambda: vocab_priority("content_needed") < vocab_priority("reason_needed")),
     ("priority_reason_before_await", lambda: vocab_priority("reason_needed") < vocab_priority("await_needed")),
-    ("priority_await_before_commit", lambda: vocab_priority("await_needed") < vocab_priority("commit_needed")),
-    ("priority_commit_before_reprogramme", lambda: vocab_priority("commit_needed") < vocab_priority("reprogramme_needed")),
+    ("priority_tool_before_await", lambda: vocab_priority("tool_needed") < vocab_priority("await_needed")),
+    ("priority_vocab_reg_before_await", lambda: vocab_priority("vocab_reg_needed") < vocab_priority("await_needed")),
+    ("priority_await_before_reprogramme", lambda: vocab_priority("await_needed") < vocab_priority("reprogramme_needed")),
     ("pre_diff_prompt_says_actions_are_reason_domain", lambda: "Anything involving skills/actions/*.st is reason_needed's domain." in loop.PRE_DIFF_SYSTEM),
     ("pre_diff_prompt_routes_tooling_and_chain_building_to_reason", lambda: "Anything involving tooling/tool-script authoring, workflow building/editing, or chain/stepchain building/editing should route to reason_needed first." in loop.PRE_DIFF_SYSTEM),
     ("tree_policy_skills_reroutes_reprogramme", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
@@ -447,6 +450,7 @@ P3_CASES = [
     ("tree_policy_entities_set_entity_editor_mode", lambda: loop._match_policy("skills/entities/clinton.st", loop._load_tree_policy())["reprogramme_mode"] == "entity_editor"),
     ("tree_policy_actions_reroute_to_reason", lambda: loop._match_policy("skills/actions/hash_edit.st", loop._load_tree_policy())["on_mutate"] == "reason_needed"),
     ("tree_policy_actions_set_action_editor_mode", lambda: loop._match_policy("skills/actions/hash_edit.st", loop._load_tree_policy())["reprogramme_mode"] == "action_editor"),
+    ("tree_policy_vocab_registry_routes_to_vocab_reg_needed", lambda: loop._match_policy("vocab_registry.py", loop._load_tree_policy())["on_mutate"] == "vocab_reg_needed"),
     ("tree_policy_exact_match_compile_immutable", lambda: loop._match_policy("compile.py", loop._load_tree_policy())["immutable"] is True),
     ("tree_policy_longest_prefix_wins", lambda: loop._match_policy("skills/codons/trigger.st", loop._load_tree_policy())["on_reject"] == "reason_needed"),
     ("tree_policy_vocab_targets_are_valid", lambda: vocab_registry_module.validate_tree_policy_targets(loop._load_tree_policy()) == []),
@@ -760,7 +764,6 @@ P7_CASES = [
     ("hash_edit_has_deterministic_steps_again", lambda: any(not s.post_diff for s in skill("hash_edit").steps)),
     ("await_first_two_deterministic", lambda: all(not s.post_diff for s in skill("await").steps[:2])),
     ("await_last_step_flexible", lambda: skill("await").steps[-1].post_diff is True),
-    ("commit_first_step_deterministic", lambda: skill("commit").steps[0].post_diff is False),
     ("commit_later_steps_flexible", lambda: all(s.post_diff for s in skill("commit").steps[1:])),
     ("reprogramme_steps_all_terminal", lambda: all(not s.post_diff for s in skill("reprogramme").steps)),
     ("builder_observe_maps_to_post_diff_true", lambda: st_builder_module.build_st({"name": "x", "desc": "d", "actions": [{"do": "inspect file", "observe": True}]})["steps"][0]["post_diff"] is True),
@@ -877,8 +880,6 @@ P10_CASES = [
     ("await_trigger", lambda: skill("await").trigger == "on_vocab:await_needed"),
     ("await_wait_step_observe", lambda: skill("await").steps[0].vocab == "hash_resolve_needed"),
     ("await_last_step_flexible", lambda: skill("await").steps[-1].post_diff is True),
-    ("commit_trigger", lambda: skill("commit").trigger == "on_vocab:commit_needed"),
-    ("commit_first_step_observe", lambda: skill("commit").steps[0].vocab == "hash_resolve_needed"),
     ("commit_relevance_descends", lambda: [s["relevance"] for s in skill_data("commit")["steps"]] == [1.0, 0.9, 0.8]),
     ("reprogramme_trigger", lambda: skill("reprogramme").trigger == "on_vocab:reprogramme_needed"),
     ("reprogramme_relevance_descends", lambda: [s["relevance"] for s in skill_data("reprogramme")["steps"]] == [1.0, 0.9, 0.8]),
@@ -892,13 +893,11 @@ P10_CASES = [
     ("dangling_gaps_ignore_dormant", lambda: len(loop._find_dangling_gaps((lambda traj: (traj.append(make_step("s", gaps=[make_gap("d", dormant=True)])), traj)[1])(Trajectory()))) == 0),
     ("dangling_gaps_ignore_resolved", lambda: len(loop._find_dangling_gaps((lambda traj: (traj.append(make_step("s", gaps=[make_gap("r", resolved=True)])), traj)[1])(Trajectory()))) == 0),
     ("await_steps_count", lambda: skill("await").step_count() == 3),
-    ("commit_steps_count", lambda: skill("commit").step_count() == 3),
 ]
 
 P10_CASES += [
     ("trigger_skill_is_codon", lambda: skill("trigger").artifact_kind == "codon"),
     ("await_skill_is_codon", lambda: skill("await").artifact_kind == "codon"),
-    ("commit_skill_is_codon", lambda: skill("commit").artifact_kind == "codon"),
     ("reprogramme_skill_is_codon", lambda: skill("reprogramme").artifact_kind == "codon"),
     ("route_mode_for_admin_source_is_entity_editor", lambda: execution_engine_module._reprogramme_mode_for_source("skills/admin.st") == "entity_editor"),
     ("route_mode_for_entity_source_is_entity_editor", lambda: execution_engine_module._reprogramme_mode_for_source("skills/entities/clinton.st") == "entity_editor"),
@@ -4085,6 +4084,49 @@ def test_p12_tool_registry_exposes_only_public_hash_tools():
     assert "tools/hash/document_extract_marker.py" not in tool_registry_module.PUBLIC_TOOL_PATHS
 
 
+def test_p12_chain_registry_exposes_action_chain_paths():
+    assert chain_registry_module.PUBLIC_CHAIN_PATHS == (
+        "skills/actions/architect.st",
+        "skills/actions/debug.st",
+        "skills/actions/hash_edit.st",
+    )
+
+
+def test_p12_chain_registry_derives_hash_edit_contract():
+    contracts = {contract.name: contract for contract in chain_registry_module.list_public_chain_contracts(ROOT)}
+    contract = contracts["hash_edit"]
+
+    assert contract.source == "skills/actions/hash_edit.st"
+    assert contract.trigger == "on_vocab:hash_edit_needed"
+    assert contract.activation == "name:hash_edit_needed"
+    assert contract.default_gap == "hash_edit_needed"
+    assert contract.entry_vocab == "hash_resolve_needed"
+    assert contract.step_count == 3
+    assert contract.omo_shape == "observe->bridge->mutate"
+    assert contract.tool_paths == ("tools/hash_manifest.py",)
+
+
+def test_p12_chain_registry_derives_command_action_tools():
+    contracts = {contract.name: contract for contract in chain_registry_module.list_public_chain_contracts(ROOT)}
+    architect = contracts["architect"]
+    debug = contracts["debug"]
+
+    assert architect.activation == "command:architect"
+    assert architect.default_gap == "hash_resolve_needed"
+    assert architect.tool_paths == ("tools/hash_manifest.py", "tools/code_exec.py")
+    assert debug.activation == "command:debug"
+    assert debug.tool_paths == ("tools/hash_manifest.py", "tools/code_exec.py")
+
+
+def test_p12_render_public_chain_registry_lists_compact_chain_surface():
+    rendered = chain_registry_module.render_public_chain_registry(ROOT)
+
+    assert rendered.startswith("## Public Chain Registry")
+    assert "skills/actions/hash_edit.st" in rendered
+    assert "activation=name:hash_edit_needed" in rendered
+    assert "omo=observe->bridge->mutate" in rendered
+
+
 def test_p12_all_public_tools_express_valid_contract_metadata():
     missing_or_invalid = []
     for rel in tool_registry_module.PUBLIC_TOOL_PATHS:
@@ -4263,6 +4305,39 @@ def test_p12_tool_builder_writes_param_based_artifact_stub(tmp_path, monkeypatch
     assert tool_contract_module.validate_tool_file(target) == []
 
 
+def test_p12_vocab_builder_writes_configurable_tool_route(tmp_path):
+    registry_copy = tmp_path / "vocab_registry.py"
+    registry_copy.write_text((ROOT / "vocab_registry.py").read_text(encoding="utf-8"), encoding="utf-8")
+    stdin = json.dumps(
+        {
+            "name": "demo_vocab_needed",
+            "classifiable": "mutate",
+            "target_kind": "tool",
+            "target_ref": "tools/hash_manifest.py",
+            "desc": "route demo semantic mutations through hash manifest",
+            "prompt_hint": "Use for demo write/edit requests.",
+            "registry_path": str(registry_copy),
+        }
+    )
+
+    old_stdin = sys.stdin
+    old_stdout = sys.stdout
+    try:
+        sys.stdin = SimpleNamespace(read=lambda: stdin)
+        buffer = []
+        sys.stdout = SimpleNamespace(write=lambda s: buffer.append(s), flush=lambda: None)
+        vocab_builder_module.main()
+    finally:
+        sys.stdin = old_stdin
+        sys.stdout = old_stdout
+
+    content = registry_copy.read_text(encoding="utf-8")
+    assert '"demo_vocab_needed": VocabSpec(' in content
+    assert 'target_kind="tool"' in content
+    assert 'target_ref="tools/hash_manifest.py"' in content
+    assert 'prompt_hint="Use for demo write/edit requests."' in content
+
+
 def test_p12_tool_needed_injects_public_tool_registry_before_compose():
     class FakeSession:
         def __init__(self):
@@ -4335,6 +4410,149 @@ def test_p12_tool_needed_injects_public_tool_registry_before_compose():
     assert any("tools/hash_resolve.py | observe/workspace | post_observe=none" in content for content in session.injected)
     assert any("tools/hash_manifest.py | mutate/workspace | post_observe=artifacts | artifacts=derived" in content for content in session.injected)
     assert session.calls == 1
+
+
+def test_p12_vocab_reg_needed_injects_registries_before_compose():
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+            self.calls = 0
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            self.calls += 1
+            return json.dumps(
+                {
+                    "name": "demo_vocab_needed",
+                    "classifiable": "mutate",
+                    "target_kind": "tool",
+                    "target_ref": "tools/hash_manifest.py",
+                    "desc": "route demo semantic mutations through hash manifest",
+                }
+            )
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("add a vocab route for hash edits", vocab="vocab_reg_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("written: vocab_registry.py", 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: "vocab_registry.py",
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert any(content.startswith("## Public Tool Registry") for content in session.injected)
+    assert any(content.startswith("## Public Chain Registry") for content in session.injected)
+    assert any(content.startswith("## Configurable Vocab Registry") for content in session.injected)
+    assert session.calls == 1
+
+
+def test_p12_tool_needed_reintegrates_through_reason_needed_after_write():
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps(
+                {
+                    "path": "tools/demo_registry_tool.py",
+                    "desc": "inspect registry-aware tool composition",
+                    "mode": "observe",
+                    "scope": "workspace",
+                    "post_observe": "none",
+                }
+            )
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("create a registry-aware tool", vocab="tool_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("written: tools/demo_registry_tool.py", 0),
+        auto_commit=lambda message, paths=None: ("abc123def456", None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: "tools/demo_registry_tool.py",
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert compiler.ledger.stack[-1].gap.vocab == "reason_needed"
+    assert compiler.ledger.stack[-1].gap.content_refs == ["tools/demo_registry_tool.py"]
 
 
 def test_p12_render_log_resolution_caps_chars():

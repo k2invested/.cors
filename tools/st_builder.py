@@ -137,7 +137,7 @@ VALID_TRIGGERS = {"manual", "every_turn", "on_mention"}
 VALID_TRIGGER_PREFIXES = {"on_contact:", "on_vocab:", "scheduled:", "command:"}
 
 REQUIRED_STEP_FIELDS = {"action", "desc"}
-BRIDGE_RUNTIME_VOCAB = {"reason_needed", "await_needed", "commit_needed", "reprogramme_needed"}
+BRIDGE_RUNTIME_VOCAB = {"clarify_needed", "reason_needed", "tool_needed", "vocab_reg_needed", "await_needed", "reprogramme_needed"}
 ACTION_ENRICHMENT_FIELDS = {"input_schema", "output_schema"}
 EMBEDDING_ACTIVATION_MODES = {"named_default", "hash_embedded"}
 EMBEDDING_OVERRIDE_FIELDS = {
@@ -531,7 +531,7 @@ def _phase_kind_for_step(step: dict) -> str:
         return "reason"
     if vocab == "await_needed":
         return "await"
-    if vocab in {"commit_needed", "reprogramme_needed"}:
+    if vocab in {"tool_needed", "vocab_reg_needed", "reprogramme_needed"}:
         return "higher_order"
     if vocab in MUTATE_VOCAB:
         return "mutate"

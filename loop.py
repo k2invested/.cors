@@ -148,6 +148,7 @@ DEFAULT_TREE_POLICY = {
     "skills/entities/": {"on_mutate": "reprogramme_needed", "reprogramme_mode": "entity_editor"},
     "skills/actions/":  {"on_mutate": "reason_needed", "reprogramme_mode": "action_editor"},
     "tools/":           {"on_mutate": "tool_needed"},
+    "vocab_registry.py": {"on_mutate": "vocab_reg_needed"},
     "ui_output/":       {"on_mutate": "stitch_needed"},
     "logs/":            {"immutable": True},
     "store/":           {"immutable": True},
@@ -1138,7 +1139,7 @@ Each gap maps to a vocab term that tells the kernel HOW to resolve it:
 OBSERVE (kernel resolves, you receive data):
   pattern_needed — search file contents by a concrete pattern you already know
   hash_resolve_needed — resolve step/gap/blob hashes, skill hashes, or repo paths like skills/admin.st
-  mailbox_needed — check mailbox state
+  email_needed — check mailbox state
   external_context — surface from current context
   (workspace files visible via HEAD commit tree. URLs and web research are steps inside workflow .st files, not standalone vocab.)
 
@@ -1160,16 +1161,14 @@ MUTATE (you compose a command, kernel executes):
   hash_edit_needed — edit any file (universal: read by hash → compose edit → execute via hash_manifest)
   stitch_needed — generate UI via Google Stitch (prompt → HTML + Tailwind CSS)
   content_needed — write a new file
-  script_edit_needed — edit an existing file
-  tool_needed — scaffold a new tool script with explicit runtime contract metadata
   command_needed — execute a shell command
-  email_needed — send an email/message
+  message_needed — send an email/message
   json_patch_needed — surgical JSON edit
   git_revert_needed — git revert/checkout
 
 For explicit edit/update requests, do not stop at "need to inspect". Emit the actual mutate gap as well as any prerequisite observation gap. The compiler will resolve the observe gap first, then return to the mutate gap.
 
-For .st files, identity profiles, preferences, or long-horizon semantic state updates, use reprogramme_needed as the actual update gap. Use hash_edit_needed or script_edit_needed for ordinary workspace file edits.
+For .st files, identity profiles, preferences, or long-horizon semantic state updates, use reprogramme_needed as the actual update gap. Use hash_edit_needed for ordinary workspace file edits.
 
 Action/workflow ownership:
   - Anything involving skills/actions/*.st is reason_needed's domain.
@@ -1177,7 +1176,7 @@ Action/workflow ownership:
   - New action/workflow creation, repair, restructuring, or schema alignment stays under reason_needed.
   - Do not surface reprogramme_needed for skills/actions/*.st work.
   - reprogramme_needed is for semantic persistence in admin/entity trees and other entity-like state, not action-package authoring.
-  - Foundational Python tools under tools/*.py are real lower-order action blocks. reason_needed may surface tool_needed for a new tool or script_edit_needed/hash_edit_needed for an existing tool before authoring the higher-order .st layer.
+  - Foundational Python tools under tools/*.py are real lower-order action blocks. reason_needed may surface tool_needed for a new tool, vocab_reg_needed for semantic routing over a public tool/chain, or hash_edit_needed for an existing file edit before authoring the higher-order .st layer.
   - Treat action/codon packages and tools as one hash-native action environment: .st packages by committed skill hash, tools by committed blob hash.
   - In that action environment, semantic-tree hashes are embeddable compositional units; described-blob hashes are foundational executable/data blocks.
   - Tool foundations do not need kernel vocab entries. They can be embedded and identified by committed blob hash.
@@ -1199,7 +1198,6 @@ Treat the bridge codons as primitives, not optional helpers:
 - reason_needed is the primitive for stateful judgment, structural abstraction, planning, persistence judgment, and reorientation
 - reprogramme_needed is the primitive for stateless semantic persistence once that judgment is made
 - await_needed is the primitive for synchronization and reintegration
-- commit_needed is the primitive for commitment closure and reintegration
 
 If no action is needed, emit no gaps. Greetings, acknowledgements, and one-off conversational adaptation can be no-gap. Stable user-model updates are not no-gap.
 
@@ -1458,8 +1456,8 @@ def run_turn(
         )) is not None
     ) or "    (none)"
     dynamic_bridge = (
-        "BRIDGE (four codons):\n"
-        "  These are primitives, not optional helper tools. Use them whenever the turn crosses a structural boundary.\n\n"
+        "BRIDGE (foundational control surfaces):\n"
+        "  These are primitives, not configurable semantic paths. Use them whenever the turn crosses a structural boundary.\n\n"
         "  reason_needed — START CODON. Stateful structural abstraction. USE THIS when:\n"
         "    - A decision requires deeper analysis than one step\n"
         "    - Long-term planning or judgment is needed\n"
@@ -1470,17 +1468,16 @@ def run_turn(
         "    - Ambiguity may be reducible by traversing available context rather than asking the user immediately\n"
         "    - A commitment needs activation, reintegration, or reorientation\n"
         "    This is the primitive for stateful judgment and structure. It reasons over semantic trees, entity space, executable structure, and persistence judgment.\n\n"
-        "  Clarify discipline:\n"
-        "    - clarify_needed is not the default response to uncertainty.\n"
+        "  clarify_needed — USER-ONLY BLOCKER. Do not activate directly unless reason_needed has already exhausted available context.\n"
         "    - If available context, history, semantic trees, .st packages, or workflow structure can reduce ambiguity, use reason_needed first.\n"
         "    - Reserve clarify_needed for genuinely user-only information or for cases where multiple plausible paths would waste effort or create real risk.\n\n"
+        "  tool_needed — TOOL AUTHORING BRANCH. Use this only as a reason-routed follow-on when the missing capability is a new public tool under tools/*.py.\n"
+        "    Post-observe returns to reason_needed for reintegration.\n\n"
+        "  vocab_reg_needed — VOCAB ROUTING BRANCH. Use this only as a reason-routed follow-on when a public tool or chain needs a configurable semantic path in vocab_registry.py.\n"
+        "    Post-observe returns to reason_needed for reintegration.\n\n"
         "  await_needed — PAUSE CODON. Synchronization checkpoint.\n"
         "    Use this when background work must explicitly rejoin the parent chain.\n"
         "    Suspends the parent flow until the sub-agent or background branch is ready.\n\n"
-        "  commit_needed — END CODON. Do NOT emit this directly. It is injected automatically\n"
-        "    by the workflow commitment path when a commitment is manifested. It sits at lowest relevance behind\n"
-        "    all commitment gaps — fires last, reintegrates the full commitment tree into\n"
-        "    main context, then closes or continues the chain. Compiler laws maintained.\n\n"
         "  reprogramme_needed — PERSIST CODON. Stateless semantic state update. USE THIS when:\n"
         "    - The system has already determined that semantic state should change\n"
         "    - A user explicitly asks to remember, update, track, or persist something\n"
@@ -2191,7 +2188,7 @@ def _clone_gap_for_carry_forward(gap: Gap, *, current_turn: int) -> Gap:
 
 
 def _discord_gap_is_allowed(gap: Gap) -> bool:
-    return bool(gap.vocab) and is_observe(gap.vocab)
+    return bool(gap.vocab) and (is_observe(gap.vocab) or gap.vocab == "clarify_needed")
 
 
 def _is_bound_discord_profile(contact_id: str, identity_skill: Skill | None) -> bool:

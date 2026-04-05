@@ -58,11 +58,11 @@
         "pattern_needed",
         "hash_edit_needed",
         "content_needed",
-        "script_edit_needed",
         "command_needed",
         "reason_needed",
+        "vocab_reg_needed",
+        "tool_needed",
         "await_needed",
-        "commit_needed",
         "reprogramme_needed",
         "clarify_needed",
         "stitch_needed"

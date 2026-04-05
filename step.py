@@ -103,14 +103,14 @@ def vocab_class(vocab: Optional[str]) -> str:
     """Compress runtime vocab into a one-character manifestation class."""
     if not vocab:
         return "_"
+    if vocab in CLARIFY_VOCABS:
+        return "c"
     if vocab in OBSERVE_VOCAB:
         return "o"
     if vocab in MUTATE_VOCAB:
         return "m"
     if vocab in BRIDGE_VOCAB:
         return "b"
-    if vocab in CLARIFY_VOCABS:
-        return "c"
     return "_"
 
 
@@ -151,7 +151,7 @@ class Gap:
     step_refs:   list[str] = field(default_factory=list)   # layer 1: reasoning chain followed
     origin:      Optional[str] = None   # step hash that surfaced this gap
     scores:      Epistemic = field(default_factory=Epistemic)
-    vocab:       Optional[str] = None   # mapped precondition (scan_needed, script_edit_needed, etc.)
+    vocab:       Optional[str] = None   # mapped runtime surface (hash_edit_needed, reason_needed, etc.)
     vocab_score: float = 0.0            # confidence in the vocab mapping
     resolved:    bool = False           # True when chain closed this gap
     resolution_kind: Optional[str] = None  # how the gap closed: rogue_handoff, success, etc.

@@ -12,9 +12,11 @@ from pathlib import Path
 from tools.hash.registry import HASH_CORE_TOOLS, HASH_SUPPORT_TOOLS
 
 _HELPER_EXCLUDES = {
+    "tools/chain_registry.py",
     "tools/hash/registry.py",
     "tools/tool_contract.py",
     "tools/tool_registry.py",
+    "tools/vocab_builder.py",
     "tools/gap_config_report.py",
 }
 
