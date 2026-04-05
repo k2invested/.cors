@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from skills.loader import load_all
-from tools import security_compile as security_compile_module
+from system import security_compile as security_compile_module
 
 
 def gap_doc(vocab="hash_resolve_needed", desc="inspect current state") -> dict:
@@ -272,7 +272,7 @@ def test_security_compile_allows_codon_activation_surface():
 def test_security_compile_cli_outputs_contract():
     payload = json.dumps(gap_doc())
     result = subprocess.run(
-        ["python3", str(ROOT / "tools" / "security_compile.py")],
+        ["python3", str(ROOT / "system" / "security_compile.py")],
         input=payload,
         capture_output=True,
         text=True,

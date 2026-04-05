@@ -76,7 +76,7 @@ def state_paths_for_contact(contact_id: str) -> dict[str, Path]:
     return {
         "traj_file": base / "trajectory.json",
         "chains_file": base / "chains.json",
-        "chains_dir": base / "chains",
+        "chains_dir": base / "trajectory_store" / "command",
     }
 
 

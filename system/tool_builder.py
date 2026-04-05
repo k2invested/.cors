@@ -15,9 +15,12 @@ import sys
 from pathlib import Path
 from string import Template
 
-sys.path.insert(0, os.path.dirname(__file__))
-from scan_tree import sandbox_path
-from tool_contract import validate_tool_file
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools.scan_tree import sandbox_path
+from system.tool_contract import validate_tool_file
 
 
 def _render_stub(

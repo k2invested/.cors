@@ -28,7 +28,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tools.hash.registry import HASH_MANIFEST_ROUTES
+from system.hash_registry import HASH_MANIFEST_ROUTES
 
 CORS_ROOT = str(Path(__file__).resolve().parent.parent)
 

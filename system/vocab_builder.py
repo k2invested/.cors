@@ -20,8 +20,8 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.chain_registry import public_chain_paths
-from tools.tool_registry import public_tool_paths
+from system.chain_registry import public_chain_ref_map
+from system.tool_registry import public_tool_ref_map
 from vocab_registry import CONFIGURABLE_VOCABS, VocabSpec
 
 
@@ -85,12 +85,12 @@ def _default_priority(classifiable: str) -> int:
 
 def _validate_target(*, target_kind: str, target_ref: str) -> None:
     if target_kind == "tool":
-        if target_ref not in public_tool_paths(ROOT):
-            raise ValueError(f"target_ref is not a public tool: {target_ref}")
+        if target_ref not in public_tool_ref_map(ROOT):
+            raise ValueError(f"target_ref is not a public tool ref: {target_ref}")
         return
     if target_kind == "chain":
-        if target_ref not in public_chain_paths(ROOT):
-            raise ValueError(f"target_ref is not a public chain: {target_ref}")
+        if target_ref not in public_chain_ref_map(ROOT):
+            raise ValueError(f"target_ref is not a public chain ref: {target_ref}")
         return
     raise ValueError("target_kind must be 'tool' or 'chain'")
 
@@ -147,7 +147,7 @@ def main() -> None:
             print("Error: missing 'desc' parameter", file=sys.stderr)
             sys.exit(1)
         _validate_target(target_kind=target_kind, target_ref=target_ref)
-        tool = target_ref if target_kind == "tool" else None
+        tool = public_tool_ref_map(ROOT).get(target_ref) if target_kind == "tool" else None
         entries[name] = VocabSpec(
             name=name,
             category=classifiable,

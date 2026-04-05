@@ -1,6 +1,6 @@
 # skills and `.st` files
 
-The skill tree is now split by meaning, not just by file format.
+The skill tree is split by meaning, not just by file format.
 
 ```text
 skills/
@@ -22,10 +22,12 @@ skills/
 - `reason_needed`
   - judgment
   - activation
-  - deciding when a tool, chain, clarification, or persistence step is needed
+  - deciding when a tool, vocab route, clarification, child workflow, or persistence step is needed
 - `tool_needed`
   - creating new public tools under [tools/](/Users/k2invested/Desktop/cors/tools)
   - every tool script must express its own runtime contract metadata
+- `vocab_reg_needed`
+  - configuring semantic vocab routes over public tools and public chains
 - `reprogramme_needed`
   - semantic persistence for entity/admin state
   - not workflow origination
@@ -73,7 +75,7 @@ Current law:
 
 - creation or repair of `skills/actions/*.st` belongs to `reason_needed`
 - public activation stays with the final completed workflow
-- lower layers usually remain `manual` until promoted later
+- embedded workflow reuse is allowed but still secondary to tool-backed construction
 
 ## Codons
 
@@ -84,11 +86,24 @@ Current codons:
 - [reprogramme.st](/Users/k2invested/Desktop/cors/skills/codons/reprogramme.st)
 - [commitment_chain_construction_spec.st](/Users/k2invested/Desktop/cors/skills/codons/commitment_chain_construction_spec.st)
 
-`reason_needed` is a runtime vocab, not a mutable authored codon package.
+`reason_needed`, `tool_needed`, and `vocab_reg_needed` are runtime vocabs, not mutable authored codon packages.
+
+## Child Workflow Reintegration
+
+The current runtime model is:
+
+- `reason_needed` may activate a child workflow by hash
+- it may choose `await_needed=true` or `false`
+- the child runs in isolated trajectory storage
+- the child tree is reinjected into the parent on:
+  - `await_needed`, if waiting synchronously
+  - `reason_needed`, if reintegrating asynchronously
+
+`commit.st` remains the reintegration codon at the end of child `.st` flows.
 
 ## Chain Construction Spec
 
-[commitment_chain_construction_spec.st](/Users/k2invested/Desktop/cors/skills/codons/commitment_chain_construction_spec.st) is now just a protected planning spec. It is not part of the live `reason_needed` path anymore. It exists as a future reference point for `chain_needed`.
+[commitment_chain_construction_spec.st](/Users/k2invested/Desktop/cors/skills/codons/commitment_chain_construction_spec.st) is a protected planning spec. It is not part of the live `reason_needed` path anymore. It exists as a future reference point for `chain_needed`.
 
 ## Builder Reality
 

@@ -7,7 +7,7 @@ curation path for:
   - updates to existing executable `.st` packages
 
 It is NOT the deterministic compiler for `skeleton.v1`. New action
-structure belongs to `tools/skeleton_compile.py`.
+structure belongs to `system/skeleton_compile.py`.
 
 The builder preserves explicit semantic structure and explicit step
 configuration. It does not infer workflow vocab from natural language.
@@ -26,7 +26,7 @@ if str(ROOT) not in sys.path:
 
 from compile import OBSERVE_VOCAB, MUTATE_VOCAB, BRIDGE_VOCAB
 from skills.loader import compute_skill_hash
-from tools.tool_registry import internal_tool_blob_refs, is_public_tool_path, public_tool_blob_refs
+from system.tool_registry import internal_tool_blob_refs, is_public_tool_path, public_tool_blob_refs
 
 SKILLS_DIR = str(ROOT / "skills")
 ENTITY_SKILLS_DIR = str(ROOT / "skills" / "entities")
@@ -1326,7 +1326,7 @@ def main():
         else:
             if looks_like_skeleton(intent):
                 print(
-                    "Error: skeleton.v1 input should be compiled with tools/skeleton_compile.py, "
+                    "Error: skeleton.v1 input should be compiled with system/skeleton_compile.py, "
                     "not built through st_builder."
                 )
                 raise SystemExit(1)

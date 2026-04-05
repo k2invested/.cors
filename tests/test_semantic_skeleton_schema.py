@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT))
 
 SEMANTIC_SCHEMA = ROOT / "schemas" / "semantic_skeleton.v1.json"
 
-from tools import semantic_skeleton_compile as semantic_compile_module
+from system import semantic_skeleton_compile as semantic_compile_module
 
 
 def load_schema() -> dict:
@@ -177,7 +177,7 @@ def test_semantic_compile_rejects_action_without_workflow_fields():
 def test_semantic_compile_cli_outputs_package():
     payload = json.dumps(hybrid_doc())
     result = subprocess.run(
-        ["python3", str(ROOT / "tools" / "semantic_skeleton_compile.py")],
+        ["python3", str(ROOT / "system" / "semantic_skeleton_compile.py")],
         input=payload,
         capture_output=True,
         text=True,

@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.skeleton_compile import compile_skeleton
+from system.skeleton_compile import compile_skeleton
 
 
 def validate_semantic_skeleton(doc: dict) -> list[str]:

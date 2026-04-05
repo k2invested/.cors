@@ -2,19 +2,23 @@
 
 Law 9: The loop always closes.
 
-Every background trigger (reprogramme_needed gap) must have a reintegration path:
+Every background trigger must have a reintegration path:
   1. MANUAL AWAIT: a downstream await_needed step in the same .st (synchronous, same-turn)
   2. HEARTBEAT:    no await, but the heartbeat mechanism fires post-synthesis (asynchronous,
                    next turn). This is structurally guaranteed by the kernel — not a failure.
 
+Current background trigger forms:
+  - reason_needed + activate_ref / activation_ref  (current minimal activation surface)
+  - reprogramme_needed                             (legacy compatibility)
+
 The validator distinguishes these paths and flags actual violations.
 
 Per-skill outcomes:
-  CLOSED     — reprogramme_needed + downstream await_needed. Explicit sync closure. Ideal.
-  HEARTBEAT  — reprogramme_needed, no downstream await. Async closure via heartbeat. Valid.
+  CLOSED     — background trigger + downstream await_needed. Explicit sync closure. Ideal.
+  HEARTBEAT  — background trigger, no downstream await. Async closure via heartbeat. Valid.
   CLEAN      — no background trigger. Nothing to close. Fine.
-  ORPHAN     — await_needed with no upstream reprogramme_needed. Suspicious (warn).
-  MISORDERED — await_needed appears BEFORE its reprogramme_needed. Ordering violation (fail).
+  ORPHAN     — await_needed with no upstream background trigger. Suspicious (warn).
+  MISORDERED — await_needed appears BEFORE its background trigger. Ordering violation (fail).
 
 Recursive: if a step embeds a known skill hash in content_refs, that skill is also validated.
 The validator reports the full tree with indent.
@@ -46,7 +50,8 @@ from pathlib import Path
 CORS_ROOT = Path(__file__).parent.parent
 SKILLS_DIR = CORS_ROOT / "skills"
 
-BACKGROUND_VOCAB = "reprogramme_needed"
+LEGACY_BACKGROUND_VOCAB = "reprogramme_needed"
+REASON_VOCAB = "reason_needed"
 AWAIT_VOCAB = "await_needed"
 
 
@@ -56,7 +61,7 @@ AWAIT_VOCAB = "await_needed"
 class Finding:
     """One Law 9 observation within a skill's step sequence."""
     kind: str          # CLOSED | HEARTBEAT | ORPHAN | MISORDERED
-    trigger_idx: int   # step index of reprogramme_needed (-1 = N/A)
+    trigger_idx: int   # step index of background trigger (-1 = N/A)
     await_idx: int     # step index of await_needed (-1 = N/A)
     message: str
 
@@ -133,20 +138,36 @@ class ValidationResult:
 
 # ── Step Checker ──────────────────────────────────────────────────────────────
 
+def _is_background_trigger(step: dict) -> bool:
+    vocab = step.get("vocab")
+    if vocab == LEGACY_BACKGROUND_VOCAB:
+        return True
+    if vocab != REASON_VOCAB:
+        return False
+    return bool(step.get("activate_ref") or step.get("activation_ref"))
+
+
+def _background_label(step: dict) -> str:
+    vocab = step.get("vocab")
+    if vocab == REASON_VOCAB:
+        return "reason_needed activation"
+    return vocab or "background trigger"
+
+
 def check_steps(steps: list[dict]) -> list[Finding]:
     """Analyse a flat step sequence for Law 9 compliance.
 
     Rules:
-      1. Every reprogramme_needed at index i must have a downstream await_needed
+      1. Every background trigger at index i must have a downstream await_needed
          at index j > i → CLOSED. If no downstream await → HEARTBEAT (valid).
-      2. Every await_needed at index j must have an upstream reprogramme_needed
+      2. Every await_needed at index j must have an upstream background trigger
          at index i < j → otherwise ORPHAN (warn).
-      3. If await appears before reprogramme in the same pair → MISORDERED (fail).
+      3. If await appears before a background trigger in the same pair → MISORDERED (fail).
     """
     findings: list[Finding] = []
 
     # Collect positions
-    bg_positions = [i for i, s in enumerate(steps) if s.get("vocab") == BACKGROUND_VOCAB]
+    bg_positions = [i for i, s in enumerate(steps) if _is_background_trigger(s)]
     aw_positions = [i for i, s in enumerate(steps) if s.get("vocab") == AWAIT_VOCAB]
 
     if not bg_positions and not aw_positions:
@@ -156,6 +177,7 @@ def check_steps(steps: list[dict]) -> list[Finding]:
     # Check every background trigger
     matched_awaits: set[int] = set()
     for bg_idx in bg_positions:
+        bg_label = _background_label(steps[bg_idx])
         # Downstream await: any await_needed at index > bg_idx
         downstream = [j for j in aw_positions if j > bg_idx]
         if downstream:
@@ -166,7 +188,7 @@ def check_steps(steps: list[dict]) -> list[Finding]:
                 trigger_idx=bg_idx,
                 await_idx=aw_idx,
                 message=(
-                    f"step[{bg_idx}] reprogramme_needed → "
+                    f"step[{bg_idx}] {bg_label} → "
                     f"step[{aw_idx}] await_needed "
                     f"(explicit sync closure)"
                 ),
@@ -178,7 +200,7 @@ def check_steps(steps: list[dict]) -> list[Finding]:
                 trigger_idx=bg_idx,
                 await_idx=-1,
                 message=(
-                    f"step[{bg_idx}] reprogramme_needed, no downstream await_needed "
+                    f"step[{bg_idx}] {bg_label}, no downstream await_needed "
                     f"(heartbeat fires post-synthesis — async closure)"
                 ),
             ))
@@ -197,7 +219,7 @@ def check_steps(steps: list[dict]) -> list[Finding]:
                     await_idx=aw_idx,
                     message=(
                         f"step[{aw_idx}] await_needed appears BEFORE "
-                        f"step[{bg_idx}] reprogramme_needed — "
+                        f"step[{bg_idx}] {_background_label(steps[bg_idx])} — "
                         f"checkpoint must follow its trigger"
                     ),
                 ))
@@ -209,7 +231,7 @@ def check_steps(steps: list[dict]) -> list[Finding]:
                     await_idx=aw_idx,
                     message=(
                         f"step[{aw_idx}] await_needed has no upstream "
-                        f"reprogramme_needed — orphaned checkpoint"
+                        f"background trigger — orphaned checkpoint"
                     ),
                 ))
 

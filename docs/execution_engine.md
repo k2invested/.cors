@@ -12,7 +12,7 @@ resolve refs
   -> route by vocab
   -> execute observation or mutation
   -> emit resulting step
-  -> attach commit/post-observe consequences
+  -> attach post-observe or reintegration consequences
 ```
 
 ## Main Objects
@@ -22,11 +22,11 @@ resolve refs
 - `ExecutionOutcome`
 - `execute_iteration(...)`
 
-The module receives git, tool execution, parsing, and policy hooks instead of owning those systems directly.
+The module receives git, tool execution, parsing, isolated-runner, and policy hooks instead of owning those systems directly.
 
 ## Clarify
 
-Clarification is merged into one bounded frontier step:
+Clarification is still one bounded frontier step:
 
 - collect current-turn clarify gaps
 - dedupe them
@@ -53,10 +53,11 @@ Current important reroutes:
 - `tools/*` mutation -> `tool_needed`
 - `skills/actions/*` mutation -> `reason_needed`
 - entity/admin `.st` mutation -> `reprogramme_needed`
+- `vocab_registry.py` mutation -> `vocab_reg_needed`
 
 ## reason_needed
 
-`reason_needed` is now back to a plain judgment/decision branch.
+`reason_needed` is the judgment and activation branch.
 
 Its job is to:
 
@@ -64,14 +65,36 @@ Its job is to:
 - choose the next concrete move
 - surface the next executable gap
 - decide whether the work belongs to:
-  - a normal tool/mutation step
+  - a normal tool-backed step
   - `tool_needed`
+  - `vocab_reg_needed`
   - `reprogramme_needed`
   - later, `chain_needed`
 
-It is no longer the workflow-authoring controller.
+It can also activate a child workflow directly with a minimal payload:
 
-## tool_needed
+```json
+{"activate_ref":"<workflow-hash>","prompt":"task for the child workflow","await_needed":true}
+```
+
+or the same shape with `await_needed=false`.
+
+## Child Activation
+
+When `reason_needed` emits that payload:
+
+- `activate_ref`
+  - the target child workflow hash
+- `prompt`
+  - the child task framing
+- `await_needed=true`
+  - parent gets an `await_needed` checkpoint before synthesis
+- `await_needed=false`
+  - parent gets post-synth `reason_needed` reintegration
+
+The executor launches the child through the isolated workflow hook and records the activation on the parent chain.
+
+## tool_needed And vocab_reg_needed
 
 `tool_needed` is the tool-tree mutation branch.
 
@@ -81,7 +104,18 @@ It receives:
 - the public tool registry
 - the tool builder scaffold path
 
-It writes tools that already contain the registry-derived contract metadata.
+It writes tools that already contain registry-derived contract metadata and reintegrates through `reason_needed`.
+
+`vocab_reg_needed` is the semantic routing branch.
+
+It receives:
+
+- the current request
+- the public tool registry
+- the public chain registry
+- the current configurable vocab registry
+
+It updates configurable semantic routes in [vocab_registry.py](/Users/k2invested/Desktop/cors/vocab_registry.py) and also reintegrates through `reason_needed`.
 
 ## reprogramme_needed
 
@@ -121,4 +155,9 @@ execute
   -> continue iteration
 ```
 
-That is the main mechanism that keeps mutation from directly exploding the ledger.
+For ordinary mutations, post-observe usually re-enters through `hash_resolve_needed`.
+
+For foundational bridge writers:
+
+- `tool_needed -> reason_needed`
+- `vocab_reg_needed -> reason_needed`

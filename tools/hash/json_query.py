@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""json_query — JSONPath query against agent memory stores.
+"""json_query — JSONPath query against hash-resolved workspace JSON files.
 
-Input JSON: {"query": "<JSONPath or text search>", "filter": "<optional text filter>"}
-Env: SELF_JSON_PATH — path to the self.json memory store.
+Input JSON:
+  {"path": "<relative workspace JSON path>", "query": "<JSONPath or text search>", "filter": "<optional text filter>"}
+  {"query": "<JSONPath or text search>", "filter": "<optional text filter>"}
+
+If `path` is omitted, falls back to `SELF_JSON_PATH`.
 """
-TOOL_DESC = 'JSONPath query against agent memory stores.'
+TOOL_DESC = 'JSONPath query against hash-resolved workspace JSON files.'
 TOOL_MODE = 'observe'
 TOOL_SCOPE = 'workspace'
 TOOL_POST_OBSERVE = 'none'
 
 import json, os, sys
+
+from tools.scan_tree import sandbox_path
 
 MAX_RESULTS = 50
 MAX_OUTPUT = 32_000
@@ -83,7 +88,17 @@ def main():
     query = params.get("query", "$")
     text_filter = params.get("filter", None)
 
-    json_path = os.environ.get("SELF_JSON_PATH", "")
+    workspace = os.environ.get("WORKSPACE", ".")
+    json_path = params.get("path")
+    if isinstance(json_path, str) and json_path.strip():
+        try:
+            json_path = sandbox_path(json_path.strip(), workspace)
+        except (ValueError, FileNotFoundError) as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+    else:
+        json_path = os.environ.get("SELF_JSON_PATH", "")
+
     if not json_path or not os.path.exists(json_path):
         print(f"Error: SELF_JSON_PATH not set or file not found ({json_path})")
         sys.exit(1)

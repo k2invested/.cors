@@ -13,8 +13,7 @@ TOOL_POST_OBSERVE = 'none'
 
 import json, os, sys
 
-sys.path.insert(0, os.path.dirname(__file__))
-from scan_tree import sandbox_path
+from tools.scan_tree import sandbox_path
 
 
 def check_fields(filepath):

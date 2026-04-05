@@ -13,21 +13,24 @@ input
      -> manifest_engine.py
      -> skills/loader.py
      -> tools/*
-  -> trajectory.json / chains.json / git objects
+     -> system/*
+  -> trajectory.json / chains.json / trajectory_store/* / git objects
 ```
 
 ## Core Split
 
 - [step.py](/Users/k2invested/Desktop/cors/step.py)
-  - runtime objects and tree renders
+  - runtime objects, semantic trees, extracted-chain storage
 - [compile.py](/Users/k2invested/Desktop/cors/compile.py)
-  - lawful frontier sequencing
+  - lawful frontier sequencing and background bookkeeping
 - [execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py)
-  - per-gap execution and routing
+  - per-gap execution, routing, and child activation
 - [manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py)
-  - package rendering and activation
+  - package rendering and semantic-tree projection
 - [loop.py](/Users/k2invested/Desktop/cors/loop.py)
-  - outer turn orchestration
+  - outer turn orchestration and state persistence
+- [system/](/Users/k2invested/Desktop/cors/system)
+  - immutable registry, builder, and compiler infrastructure
 
 ## Skill Tree
 
@@ -51,9 +54,11 @@ Meaning:
 - `reason_needed`
   - judgment
   - routing
-  - deciding which step type should handle the work
+  - child-workflow activation
 - `tool_needed`
   - tool-tree authoring under `tools/`
+- `vocab_reg_needed`
+  - configurable semantic routing in `vocab_registry.py`
 - `reprogramme_needed`
   - entity/admin persistence
 
@@ -67,18 +72,39 @@ skills/entities/*  -> reprogramme_needed
 skills/actions/*   -> reason_needed
 skills/codons/*    -> immutable -> reason_needed on reject
 tools/*            -> tool_needed
+vocab_registry.py  -> vocab_reg_needed
+system/*           -> immutable -> reason_needed on reject
 ```
 
-## Tool Layer
+## Tool And Chain Layers
 
-The public tool surface is derived from [tools/tool_registry.py](/Users/k2invested/Desktop/cors/tools/tool_registry.py).
+The public tool surface is derived from [system/tool_registry.py](/Users/k2invested/Desktop/cors/system/tool_registry.py).
+
+The public chain surface is derived from [system/chain_registry.py](/Users/k2invested/Desktop/cors/system/chain_registry.py).
 
 The two core file primitives are:
 
 - [tools/hash_resolve.py](/Users/k2invested/Desktop/cors/tools/hash_resolve.py)
 - [tools/hash_manifest.py](/Users/k2invested/Desktop/cors/tools/hash_manifest.py)
 
-Specialized handlers behind those two primitives stay internal in [tools/hash/registry.py](/Users/k2invested/Desktop/cors/tools/hash/registry.py).
+Specialized handlers behind those two primitives stay internal in [system/hash_registry.py](/Users/k2invested/Desktop/cors/system/hash_registry.py).
+
+## Background Activation
+
+Child workflows are reason-led and minimal:
+
+- `reason_needed` may emit:
+  - `activate_ref`
+  - `prompt`
+  - `await_needed`
+- `await_needed=true`
+  - parent gets an `await_needed` checkpoint before synthesis
+- `await_needed=false`
+  - parent gets a post-synth `reason_needed` reintegration point
+- isolated child stores live under:
+  - `trajectory_store/command`
+  - `trajectory_store/subagent`
+  - `trajectory_store/background_agent`
 
 ## Observe / Mutate Rhythm
 

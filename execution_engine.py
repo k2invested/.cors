@@ -25,10 +25,10 @@ from typing import Any, Callable
 
 from compile import GovernorSignal, is_mutate, is_observe
 from step import Epistemic, Gap, Step
-from tools.chain_registry import render_public_chain_registry
+from system.chain_registry import render_public_chain_registry
 from tools import st_builder as st_builder_module
-from tools.tool_contract import load_tool_contract, render_artifact_contract
-from tools.tool_registry import public_tool_paths
+from system.tool_contract import ToolContract, load_tool_contract
+from system.tool_registry import render_public_tool_registry
 from vocab_registry import FOUNDATIONAL_BRIDGE_POST_OBSERVE, render_configurable_vocab_registry
 
 
@@ -50,6 +50,9 @@ class ExecutionHooks:
     git: Callable[[list[str], str | None], str]
     commit_assessment: Callable[[str], list[str]]
     step_assessment: Callable[[dict | None, dict | None, str | None], list[str]]
+    run_isolated_workflow: Callable[..., dict[str, Any]] = field(
+        default=lambda ref, **kwargs: {"status": "missing", "activation_ref": ref}
+    )
     render_session_context: Callable[[Any, Any, str, str | None, str | None], str] = field(
         default=lambda trajectory, registry, user_message, active_chain_id=None, active_gap=None: ""
     )
@@ -69,6 +72,30 @@ class ExecutionConfig:
 class ExecutionOutcome:
     control: str = "continue"
     step_result: Step | None = None
+
+
+def _extract_reason_activation_intent(raw: str, hooks: ExecutionHooks) -> dict[str, Any] | None:
+    data = hooks.extract_json(raw)
+    if not isinstance(data, dict) or "gaps" in data:
+        return None
+    activate_ref = data.get("activate_ref")
+    if not isinstance(activate_ref, str) or not activate_ref.strip():
+        return None
+    prompt = data.get("prompt")
+    if prompt is not None and not isinstance(prompt, str):
+        return None
+    await_needed = data.get("await_needed")
+    if not isinstance(await_needed, bool):
+        return None
+    return {
+        "activate_ref": activate_ref.strip(),
+        "prompt": prompt.strip() if isinstance(prompt, str) and prompt.strip() else None,
+        "await_needed": await_needed,
+    }
+
+
+def _render_public_tool_registry(cors_root: Path) -> str:
+    return render_public_tool_registry(cors_root)
 
 
 def _record_step(step_result: Step, *, entry: Any, trajectory: Any, compiler: Any) -> None:
@@ -101,12 +128,15 @@ def _post_observe_resolution(
     vocab: str | None,
     tool_conf: dict | Any,
     commit_sha: str | None,
+    runtime_refs: list[str] | None,
     hooks: ExecutionHooks,
     config: ExecutionConfig,
 ) -> tuple[list[str], str] | tuple[None, None]:
     post_observe = tool_conf.get("post_observe") if isinstance(tool_conf, dict) else None
     if isinstance(post_observe, str) and post_observe.endswith(".log"):
         return [post_observe], f"observe {post_observe}: {post_observe}"
+    if runtime_refs:
+        return runtime_refs, f"observe artifacts: {', '.join(runtime_refs)}"
     if post_observe and commit_sha:
         tree_files = hooks.git(["ls-tree", "-r", "--name-only", commit_sha, post_observe], str(config.cors_root))
         targeted_refs = [f"{commit_sha}:{f}" for f in tree_files.split("\n") if f.strip()]
@@ -114,22 +144,6 @@ def _post_observe_resolution(
     if commit_sha:
         return [commit_sha], f"observe commit:{commit_sha}"
     return None, None
-
-
-def _render_public_tool_registry(cors_root: Path) -> str:
-    lines = ["## Public Tool Registry"]
-    for rel in public_tool_paths(cors_root):
-        contract = load_tool_contract(cors_root / rel)
-        if contract is None:
-            lines.append(f"- {rel} | contract=missing")
-            continue
-        lines.append(
-            f"- {rel} | {contract.mode}/{contract.scope} "
-            f"| post_observe={contract.post_observe} "
-            f"| artifacts={render_artifact_contract(contract)} "
-            f"| {contract.desc}"
-        )
-    return "\n".join(lines)
 
 
 def _bridge_reintegration_target(
@@ -146,6 +160,118 @@ def _bridge_reintegration_target(
         return None, None
     subject = written_path or f"commit:{commit_sha}"
     return refs, f"reintegrate {subject} after {vocab}"
+
+
+def _dedupe_refs(refs: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for ref in refs:
+        candidate = str(ref).strip()
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        ordered.append(candidate)
+    return ordered
+
+
+def _collect_contract_artifact_refs(
+    *,
+    contract: ToolContract | None,
+    intent: dict | None,
+    output: str,
+    hooks: ExecutionHooks,
+) -> tuple[list[str], str | None]:
+    refs: list[str] = []
+    runtime_commit: str | None = None
+    try:
+        data = hooks.extract_json(output)
+    except Exception:
+        data = None
+    if isinstance(data, dict):
+        commit = data.get("commit")
+        if isinstance(commit, str) and commit.strip():
+            runtime_commit = commit.strip()
+        if contract and contract.runtime_artifact_key:
+            artifact_value = data.get(contract.runtime_artifact_key)
+            if isinstance(artifact_value, str) and artifact_value.strip():
+                refs.append(artifact_value.strip())
+            elif isinstance(artifact_value, list):
+                refs.extend(str(item).strip() for item in artifact_value if isinstance(item, str) and item.strip())
+
+    written_path = hooks.extract_written_path(output)
+    if written_path:
+        refs.append(written_path)
+
+    if contract and isinstance(intent, dict):
+        for key in contract.artifact_params:
+            value = intent.get(key)
+            if isinstance(value, str) and value.strip():
+                refs.append(value.strip())
+            elif isinstance(value, list):
+                refs.extend(str(item).strip() for item in value if isinstance(item, str) and item.strip())
+
+    if contract:
+        refs.extend(contract.default_artifacts)
+
+    refs = _dedupe_refs(refs)
+    return refs, runtime_commit
+
+
+def _mutate_tool_compose_prompt(*, vocab: str, gap: Gap, tool_path: str, contract: ToolContract | None) -> str:
+    if vocab == "command_needed":
+        return (
+            f"Compose params for {tool_path} to resolve this gap:\n"
+            f"  gap:{gap.hash} \"{gap.desc}\"\n\n"
+            f"Respond with JSON params for code_exec.py:\n"
+            f'{{"command": "..."}}\n'
+            f"Or:\n"
+            f'{{"commands": ["step 1", "step 2"]}}\n\n'
+            f"This is macOS. Use python3 one-liners for JSON edits, not sed."
+        )
+    if vocab == "message_needed":
+        return (
+            f"Compose params for {tool_path} to resolve this gap:\n"
+            f"  gap:{gap.hash} \"{gap.desc}\"\n\n"
+            f"Respond with JSON params for email_send.py:\n"
+            f'{{"to": "recipient@example.com", "subject": "subject", "body": "message body", "attachment": "optional/relative/path"}}\n\n'
+            f"If a default recipient should be used, you may omit `to`."
+        )
+    if vocab == "git_revert_needed":
+        return (
+            f"Compose params for {tool_path} to resolve this gap:\n"
+            f"  gap:{gap.hash} \"{gap.desc}\"\n\n"
+            f"Respond with JSON params for git_ops.py. Allowed shapes:\n"
+            f'{{"action": "revert", "ref": "<commit hash>", "message": "optional"}}\n'
+            f'{{"action": "checkout", "ref": "<commit hash>", "path": "relative/file/path"}}\n'
+            f'{{"action": "commit", "message": "commit message", "paths": ["optional/path"]}}'
+        )
+    if vocab == "stitch_needed":
+        return (
+            f"Compose params for {tool_path} to resolve this gap:\n"
+            f"  gap:{gap.hash} \"{gap.desc}\"\n\n"
+            f"Respond with JSON params for stitch_generate.py:\n"
+            f'{{"prompt": "UI description", "device": "MOBILE|DESKTOP|TABLET|AGNOSTIC", "project": "optional", "variant_mode": "optional"}}'
+        )
+    if vocab == "json_patch_needed":
+        return (
+            f"Compose a JSON file edit to resolve this gap:\n"
+            f"  gap:{gap.hash} \"{gap.desc}\"\n\n"
+            f"Respond with JSON params for hash_manifest.py:\n"
+            f'{{"action": "patch", "path": "relative/file.json", "patch": {{"old": "exact JSON text to replace", "new": "replacement JSON text"}}}}\n\n'
+            f"Use the EXACT current file content for the `old` field. Do not guess."
+        )
+    if contract:
+        return (
+            f"Compose params for {tool_path} to resolve this gap:\n"
+            f"  gap:{gap.hash} \"{gap.desc}\"\n\n"
+            f"Tool contract: mode={contract.mode} scope={contract.scope} post_observe={contract.post_observe}\n"
+            f"Respond with JSON params only."
+        )
+    return (
+        f"Compose params for {tool_path} to resolve this gap:\n"
+        f"  gap:{gap.hash} \"{gap.desc}\"\n\n"
+        f"Respond with JSON params only."
+    )
 
 
 def _make_rogue_step(
@@ -781,6 +907,10 @@ def execute_iteration(
         if resolved_data:
             session.inject(f"## Resolved context for mutation\n{resolved_data}")
 
+        tool_conf = config.tool_map.get(vocab, {})
+        tool_path = tool_conf.get("tool") if isinstance(tool_conf, dict) else None
+        tool_contract = load_tool_contract(config.cors_root / tool_path) if isinstance(tool_path, str) and tool_path else None
+
         if vocab == "hash_edit_needed":
             compose_prompt = (
                 f"Compose a file edit to resolve this gap:\n"
@@ -797,7 +927,7 @@ def execute_iteration(
             compose_prompt = (
                 f"Compose a tool scaffold to resolve this gap:\n"
                 f"  gap:{gap.hash} \"{gap.desc}\"\n\n"
-                f"Respond with JSON params for tool_builder.py:\n"
+                f"Respond with JSON params for system/tool_builder.py:\n"
                 f'{{"path": "tools/new_tool.py", "desc": "what the tool does", '
                 f'"mode": "observe|mutate", "scope": "workspace|external", '
                 f'"post_observe": "none|log|artifacts", '
@@ -815,12 +945,19 @@ def execute_iteration(
             compose_prompt = (
                 f"Compose a semantic vocab route to resolve this gap:\n"
                 f"  gap:{gap.hash} \"{gap.desc}\"\n\n"
-                f"Respond with JSON params for vocab_builder.py:\n"
+                f"Respond with JSON params for system/vocab_builder.py:\n"
                 f'{{"name": "new_vocab_needed", "classifiable": "observe|mutate", '
-                f'"target_kind": "tool|chain", "target_ref": "tools/hash_manifest.py", '
+                f'"target_kind": "tool|chain", "target_ref": "da6ab1b8070b", '
                 f'"desc": "what the semantic route means", "prompt_hint": "how the route should be used"}}\n\n'
-                f"Use public tool or chain targets only. Prefer tool targets for executable routing. "
+                f"Use public tool or chain blob refs only. Prefer tool targets for executable routing. "
                 f"Do not invent bridge vocab here."
+            )
+        elif tool_path:
+            compose_prompt = _mutate_tool_compose_prompt(
+                vocab=vocab or "",
+                gap=gap,
+                tool_path=tool_path,
+                contract=tool_contract,
             )
         else:
             compose_prompt = (
@@ -839,6 +976,8 @@ def execute_iteration(
         output = ""
         intent = None
         written_path = None
+        runtime_refs: list[str] = []
+        runtime_commit: str | None = None
 
         if vocab == "hash_edit_needed":
             intent = hooks.extract_json(raw)
@@ -857,7 +996,7 @@ def execute_iteration(
         elif vocab == "tool_needed":
             intent = hooks.extract_json(raw)
             if intent:
-                output, code = hooks.execute_tool("tools/tool_builder.py", intent)
+                output, code = hooks.execute_tool("system/tool_builder.py", intent)
                 print(f"  → tool_builder: {output[:100]}")
                 written_path = hooks.extract_written_path(output)
                 if not written_path and isinstance(intent, dict):
@@ -871,11 +1010,31 @@ def execute_iteration(
         elif vocab == "vocab_reg_needed":
             intent = hooks.extract_json(raw)
             if intent:
-                output, code = hooks.execute_tool("tools/vocab_builder.py", intent)
+                output, code = hooks.execute_tool("system/vocab_builder.py", intent)
                 print(f"  → vocab_builder: {output[:100]}")
                 written_path = hooks.extract_written_path(output)
                 if not written_path:
                     written_path = "vocab_registry.py"
+                executed = True
+                exec_failed = code != 0
+            else:
+                print("  → no valid params extracted")
+        elif tool_path:
+            intent = hooks.extract_json(raw)
+            if intent:
+                output, code = hooks.execute_tool(tool_path, intent)
+                print(f"  → {Path(tool_path).name}: {output[:100]}")
+                runtime_refs, runtime_commit = _collect_contract_artifact_refs(
+                    contract=tool_contract,
+                    intent=intent,
+                    output=output,
+                    hooks=hooks,
+                )
+                if not written_path:
+                    for ref in runtime_refs:
+                        if "/" in ref or "." in Path(ref).name:
+                            written_path = ref
+                            break
                 executed = True
                 exec_failed = code != 0
             else:
@@ -919,9 +1078,11 @@ def execute_iteration(
             return ExecutionOutcome(control="continue", step_result=step_result)
 
         if executed:
-            commit_paths = [written_path] if written_path else None
-            commit_sha, on_reject = hooks.auto_commit(f"step: {gap.desc[:50]}", paths=commit_paths)
-            tool_conf = config.tool_map.get(vocab, {})
+            commit_sha = runtime_commit
+            on_reject = None
+            if not commit_sha:
+                commit_paths = [written_path] if written_path else None
+                commit_sha, on_reject = hooks.auto_commit(f"step: {gap.desc[:50]}", paths=commit_paths)
             if commit_sha:
                 print(f"  → committed: {commit_sha}")
                 step_result = Step.create(
@@ -943,6 +1104,7 @@ def execute_iteration(
                         vocab=vocab,
                         tool_conf=tool_conf,
                         commit_sha=commit_sha,
+                        runtime_refs=runtime_refs,
                         hooks=hooks,
                         config=config,
                     )
@@ -1061,6 +1223,7 @@ def execute_iteration(
                         vocab=vocab,
                         tool_conf=tool_conf,
                         commit_sha=None,
+                        runtime_refs=runtime_refs,
                         hooks=hooks,
                         config=config,
                     )
@@ -1138,6 +1301,10 @@ def execute_iteration(
         raw = session.call(
             f"Reason inline about: gap:{gap.hash} \"{gap.desc}\".\n"
             "Choose the next lawful move in the current turn.\n"
+            "If a child workflow should run, you may respond with JSON only:\n"
+            '{"activate_ref": "<workflow-hash>", "prompt": "task for the child workflow", "await_needed": true}\n'
+            "or the same shape with await_needed=false.\n"
+            "Use only public workflow hashes.\n"
             "- If judgment is enough, emit the next clarified gap(s) or no gaps.\n"
             "- Use reason_needed for open specifications, competing interpretations, and deciding the next concrete move.\n"
             "- If a tool or workflow should exist but does not yet, emit the concrete creation or edit gap(s) needed to make that happen.\n"
@@ -1146,23 +1313,60 @@ def execute_iteration(
             "- If an existing workflow should be triggered, emit the activation gap(s) for that path.\n"
             "Keep reasoning stateful and current-turn; do not defer by scheduling background work unless a later gap explicitly does so."
         )
-        step_result, child_gaps = hooks.parse_step_output(
-            raw,
-            step_refs=[origin_step.hash],
-            content_refs=gap.content_refs,
-            chain_id=entry.chain_id,
-        )
-        rewrites = _sanitize_reason_child_gaps(
-            child_gaps,
-            registry=registry,
-            policy=hooks.load_tree_policy(),
-        )
-        if rewrites:
-            print(f"  → rewrote {rewrites} reason-emitted reprogramme gap(s) to reason_needed")
-        if child_gaps:
-            compiler.emit(step_result)
-        else:
+        activation_intent = _extract_reason_activation_intent(raw, hooks)
+        if activation_intent:
+            activate_ref = activation_intent["activate_ref"]
+            await_needed = activation_intent["await_needed"]
+            task_prompt = activation_intent["prompt"] or gap.desc
+            await_policy = "manual" if await_needed else "none"
+            print(f"  → activate isolated workflow:{activate_ref} [{await_policy}]")
+            child_result = hooks.run_isolated_workflow(
+                activate_ref,
+                task_prompt=task_prompt,
+                store_kind="background_agent",
+                await_policy=await_policy,
+            )
+            compiler.record_background_trigger(
+                entry.chain_id,
+                refs=[activate_ref],
+                activation_ref=activate_ref,
+                await_policy=await_policy,
+                store_kind="background_agent",
+                parent_step=origin_step.hash,
+            )
+            session.inject(
+                "## Child workflow activation\n"
+                f"activation_ref: {activate_ref}\n"
+                f"await_needed: {str(await_needed).lower()}\n"
+                f"status: {child_result.get('status', 'unknown')}\n"
+                f"store_kind: {child_result.get('store_kind', 'background_agent')}\n"
+                f"task: {task_prompt}"
+            )
+            step_result = Step.create(
+                desc=f"activated child workflow:{activate_ref}",
+                step_refs=[origin_step.hash],
+                content_refs=[activate_ref],
+                chain_id=entry.chain_id,
+            )
             compiler.resolve_current_gap(gap.hash)
+        else:
+            step_result, child_gaps = hooks.parse_step_output(
+                raw,
+                step_refs=[origin_step.hash],
+                content_refs=gap.content_refs,
+                chain_id=entry.chain_id,
+            )
+            rewrites = _sanitize_reason_child_gaps(
+                child_gaps,
+                registry=registry,
+                policy=hooks.load_tree_policy(),
+            )
+            if rewrites:
+                print(f"  → rewrote {rewrites} reason-emitted reprogramme gap(s) to reason_needed")
+            if child_gaps:
+                compiler.emit(step_result)
+            else:
+                compiler.resolve_current_gap(gap.hash)
 
     elif vocab == "await_needed":
         print("  → await (pause codon)")

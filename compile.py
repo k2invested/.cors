@@ -235,6 +235,18 @@ class GovernorState:
         return all(diffs[i] * diffs[i+1] < 0 for i in range(len(diffs)-1))
 
 
+@dataclass(frozen=True)
+class BackgroundTrigger:
+    """Parent-side bookkeeping for a child workflow activated out-of-band."""
+
+    parent_chain_id: str
+    activation_ref: str | None = None
+    await_policy: str = "none"
+    store_kind: str = "background_agent"
+    parent_step: str | None = None
+    refs: tuple[str, ...] = ()
+
+
 def govern(entry: LedgerEntry, chain_length: int, state: GovernorState) -> GovernorSignal:
     """Deterministic governor. Pure measurement on epistemic vectors."""
 
@@ -286,9 +298,8 @@ class Compiler:
         self.active_chain: Chain | None = None
         self.last_was_mutation: bool = False  # OMO tracking
         self.current_turn: int = current_turn  # for cross-turn threshold
-        self._background_triggers: set[str] = set()
+        self._background_triggers: list[BackgroundTrigger] = []
         self._awaited_chains: set[str] = set()
-        self._background_trigger_refs: dict[str, set[str]] = {}
 
     # ── 1. Emission → Admission → Placement ──
 
@@ -549,24 +560,63 @@ class Compiler:
         a corresponding await_needed in the same chain. Used by the heartbeat
         mechanism: if True and no manual await was set, an automatic
         reason_needed persists after synthesis."""
-        for chain_id, state in self.ledger.chain_states.items():
-            if state == ChainState.CLOSED:
-                continue
-            if chain_id in self._background_triggers and chain_id not in self._awaited_chains:
-                return True
-        return False
+        return any(self._trigger_is_unresolved(trigger) for trigger in self._background_triggers)
 
-    def record_background_trigger(self, chain_id: str, refs: list[str] | None = None):
+    def _trigger_is_unresolved(self, trigger: BackgroundTrigger) -> bool:
+        state = self.ledger.chain_states.get(trigger.parent_chain_id)
+        if state == ChainState.CLOSED:
+            return False
+        return True
+
+    def record_background_trigger(
+        self,
+        chain_id: str,
+        refs: list[str] | None = None,
+        *,
+        activation_ref: str | None = None,
+        await_policy: str = "none",
+        store_kind: str = "background_agent",
+        parent_step: str | None = None,
+    ):
         """Record that a chain triggered a background workflow."""
-        self._background_triggers.add(chain_id)
-        if refs:
-            stored = self._background_trigger_refs.setdefault(chain_id, set())
-            for ref in refs:
-                stored.add(ref)
+        trigger = BackgroundTrigger(
+            parent_chain_id=chain_id,
+            activation_ref=activation_ref,
+            await_policy=await_policy,
+            store_kind=store_kind,
+            parent_step=parent_step,
+            refs=tuple(refs or ()),
+        )
+        if trigger not in self._background_triggers:
+            self._background_triggers.append(trigger)
 
     def record_await(self, chain_id: str):
         """Record that a chain set an await checkpoint."""
         self._awaited_chains.add(chain_id)
+
+    def _background_refs_for_policy(self, await_policy: str) -> list[str]:
+        refs: list[str] = []
+        for trigger in self._background_triggers:
+            if trigger.await_policy != await_policy or not self._trigger_is_unresolved(trigger):
+                continue
+            for ref in trigger.refs:
+                if ref not in refs:
+                    refs.append(ref)
+            if trigger.activation_ref and trigger.activation_ref not in refs:
+                refs.append(trigger.activation_ref)
+        return refs
+
+    def manual_await_refs(self) -> list[str]:
+        """Refs for child work that should suspend the parent before synthesis."""
+        return self._background_refs_for_policy("manual")
+
+    def manual_await_chain_ids(self) -> list[str]:
+        chain_ids: list[str] = []
+        for trigger in self._background_triggers:
+            if trigger.await_policy == "manual" and self._trigger_is_unresolved(trigger):
+                if trigger.parent_chain_id not in chain_ids:
+                    chain_ids.append(trigger.parent_chain_id)
+        return chain_ids
 
     def needs_heartbeat(self) -> bool:
         """After synthesis, should an automatic reason_needed persist?
@@ -578,17 +628,26 @@ class Compiler:
 
         Law 9: the loop always closes.
         """
-        unresolved = self._background_triggers - self._awaited_chains
-        return len(unresolved) > 0
+        return any(
+            trigger.await_policy != "manual"
+            and trigger.parent_chain_id not in self._awaited_chains
+            and self._trigger_is_unresolved(trigger)
+            for trigger in self._background_triggers
+        )
 
     def background_refs(self) -> list[str]:
         """Refs associated with unresolved background triggers."""
         refs: list[str] = []
-        unresolved = self._background_triggers - self._awaited_chains
-        for chain_id in unresolved:
-            for ref in sorted(self._background_trigger_refs.get(chain_id, set())):
+        for trigger in self._background_triggers:
+            if trigger.await_policy == "manual":
+                continue
+            if trigger.parent_chain_id in self._awaited_chains or not self._trigger_is_unresolved(trigger):
+                continue
+            for ref in trigger.refs:
                 if ref not in refs:
                     refs.append(ref)
+            if trigger.activation_ref and trigger.activation_ref not in refs:
+                refs.append(trigger.activation_ref)
         return refs
 
     # ── 6. Status ──

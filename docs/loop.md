@@ -6,7 +6,7 @@
 
 `run_turn()` does the outer work:
 
-1. load trajectory, chains, skills, and HEAD
+1. load trajectory, extracted chain index, skills, and HEAD
 2. create the origin step
 3. inject identity and recent runtime context
 4. build the compiler
@@ -37,6 +37,8 @@ skills/admin.st  -> reprogramme_needed, entity_editor
 skills/entities/ -> reprogramme_needed, entity_editor
 skills/actions/  -> reason_needed
 tools/           -> tool_needed
+vocab_registry.py -> vocab_reg_needed
+system/          -> immutable, reject to reason_needed
 ui_output/       -> stitch_needed
 ```
 
@@ -44,6 +46,7 @@ This means:
 
 - `reason_needed` activates structural work
 - `tool_needed` owns tool-tree writes
+- `vocab_reg_needed` owns configurable semantic routing
 - `reprogramme_needed` owns entity/admin persistence
 
 ## Observe / Mutate Rhythm
@@ -65,6 +68,7 @@ The loop still owns the kernel-side `hash_resolve_needed` behavior. It resolves:
 - gap hashes
 - chain/package refs
 - git objects
+- workspace paths
 
 It also routes supported file types through specialized hash-resolve handlers while keeping the public surface unified under the hash primitive.
 
@@ -89,3 +93,28 @@ execute mutation
 ```
 
 That keeps the consequence visible to the model before synthesis.
+
+## Isolated Child Workflows
+
+The loop now owns isolated workflow execution:
+
+- [trajectory_store/command](/Users/k2invested/Desktop/cors/trajectory_store/command)
+  - extracted chains from the main command flow
+- [trajectory_store/subagent](/Users/k2invested/Desktop/cors/trajectory_store/subagent)
+  - isolated subagent flow storage
+- [trajectory_store/background_agent](/Users/k2invested/Desktop/cors/trajectory_store/background_agent)
+  - isolated background workflow storage
+
+`run_isolated_workflow_ref(...)` executes a child workflow in one of those stores and persists an alias by `activation_ref` so the parent can resolve the child tree by hash.
+
+## Await And Reintegration
+
+The parent-side law is now:
+
+- `reason_needed` chooses whether child activation sets `await_needed`
+- `await_needed=true`
+  - parent gets an explicit `await_needed` checkpoint before synthesis
+- `await_needed=false`
+  - parent gets a post-synth `reason_needed` heartbeat instead
+
+In both cases, the child semantic tree is the reintegration surface.

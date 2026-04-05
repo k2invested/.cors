@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from tools import skeleton_compile as skeleton_compile_module
+from system import skeleton_compile as skeleton_compile_module
 from tools import st_builder as st_builder_module
 
 
@@ -321,7 +321,7 @@ def test_st_builder_cli_rejects_skeleton_input():
         cwd=str(ROOT),
     )
     assert result.returncode == 1
-    assert "skeleton.v1 input should be compiled with tools/skeleton_compile.py" in result.stdout
+    assert "skeleton.v1 input should be compiled with system/skeleton_compile.py" in result.stdout
 
 
 def test_st_builder_cli_rejects_new_action_origination():
@@ -480,7 +480,7 @@ def test_st_builder_writes_new_entity_under_entities_subdir(tmp_path):
 def test_skeleton_compile_cli_outputs_json():
     payload = json.dumps(example_skeleton())
     result = subprocess.run(
-        ["python3", str(ROOT / "tools" / "skeleton_compile.py")],
+        ["python3", str(ROOT / "system" / "skeleton_compile.py")],
         input=payload,
         capture_output=True,
         text=True,

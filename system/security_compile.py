@@ -36,8 +36,8 @@ if str(ROOT) not in sys.path:
 
 from compile import OBSERVE_VOCAB, MUTATE_VOCAB, BRIDGE_VOCAB
 from skills.loader import load_skill, load_all
-from tools.skeleton_compile import compile_skeleton
-from tools.semantic_skeleton_compile import compile_semantic_skeleton
+from system.skeleton_compile import compile_skeleton
+from system.semantic_skeleton_compile import compile_semantic_skeleton
 
 
 RUNTIME_VOCAB = set(OBSERVE_VOCAB) | set(MUTATE_VOCAB) | set(BRIDGE_VOCAB)
@@ -52,7 +52,7 @@ PROTECTED_PREFIXES = [
     "trajectory.json",
     "chains.json",
 ]
-CHAINS_DIR = ROOT / "chains"
+CHAINS_DIR = ROOT / "trajectory_store" / "command"
 _REGISTRY = None
 
 

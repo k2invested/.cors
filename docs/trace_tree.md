@@ -2,7 +2,7 @@
 
 `trace_tree.v1` is the canonical replay substrate for simulation and structural backtesting.
 
-It is not a replacement for `trajectory.json`, and it is not a new runtime ontology. It is a derived trace layer that records how a gap configuration actually unfolded across generations, returns, sibling blocking, and reintegration.
+It is not a replacement for `trajectory.json`, and it is not a new runtime ontology. It is a derived trace layer that records how a gap configuration actually unfolded across generations, returns, sibling blocking, activation, and reintegration.
 
 The distinction is:
 
@@ -22,7 +22,7 @@ Pairwise transition checking is not enough for cors.
 
 A gap can be locally legal and still produce globally unhealthy structure once it:
 
-- re-enters through `post_diff`
+- re-enters through post-observe
 - emits child generations
 - blocks siblings
 - activates an embedded package
@@ -30,8 +30,6 @@ A gap can be locally legal and still produce globally unhealthy structure once i
 - mutates and then fails to close under OMO
 
 So the simulator needs a record of unfolding topology, not only adjacency.
-
-`trace_tree.v1` is that record.
 
 ## Trace Unit
 
@@ -48,16 +46,9 @@ Every node has four parts:
 - `topology`
 - `outcome`
 
-That keeps the contract aligned with the OS itself:
+## gap
 
-- the gap says what was missing
-- manifestation says how it unfolded
-- topology says where it sat in the branch structure
-- outcome says how that local branch closed or redirected
-
-## `gap`
-
-The `gap` block preserves the expression that the simulator should learn from:
+The `gap` block preserves the expression the simulator should learn from:
 
 - `desc`
 - `vocab`
@@ -66,11 +57,7 @@ The `gap` block preserves the expression that the simulator should learn from:
 - compressed score bands
 - optional compact `signature`
 
-This is not only for readability. It is the thing the simulator generalizes over.
-
-Two trace nodes with similar `gap` expressions but different unfolding topologies are exactly the kind of evidence the simulator should compare.
-
-## `manifestation`
+## manifestation
 
 This block captures what the gap did structurally.
 
@@ -82,13 +69,18 @@ It records:
 - `post_diff`
 - `activation_mode`
 - optional `activation_ref`
-- optional `emitted_commit`
+- optional `await_policy`
+- optional `store_kind`
 - optional `background`
 - `return_policy`
 
-This is the main bridge from gap config to execution grammar.
+For current child activation, the important shape is:
 
-## `topology`
+- `reason_needed` activation with `activation_ref`
+- optional `await_policy=manual`
+- isolated child store selection
+
+## topology
 
 This is the part that ordinary chain storage does not express well enough.
 
@@ -101,9 +93,7 @@ It records:
 - sibling policy
 - which siblings were blocked behind this branch
 
-This is how the simulator learns more than adjacency. It can see whether a branch unwrapped depth-first, how long siblings were deferred, and how multi-generation offspring formed before return.
-
-## `outcome`
+## outcome
 
 This captures how the local unfolding ended:
 
@@ -131,17 +121,12 @@ The same format can be derived from several places:
 - `semantic_skeleton`
 - `manual_fixture`
 
-That matters because the simulator should not need separate replay logic for authored structure and realized structure. They should both lower into the same trace grammar.
-
 ## Relationship To Semantic Trees
 
 The semantic tree render is the readable surface.
 `trace_tree.v1` is the machine-facing replay surface.
 
 They should converge on the same grammar.
-
-The semantic tree can stay thin for the model by using compact signatures.
-The trace tree can stay richer for the simulator by storing the same meaning explicitly.
 
 That means:
 
@@ -160,20 +145,16 @@ In other words:
 - `security_compile` says what is likely to happen
 - `trace_tree` says what actually happened in comparable structures
 
-That is the backtesting loop.
+## Derivation Tool
 
-## Recommended Next Step
+The derivation tool is:
 
-The next useful implementation is not yet a full simulator. It is a derivation tool:
+- [system/trace_tree_build.py](/Users/k2invested/Desktop/cors/system/trace_tree_build.py)
 
-- `tools/trace_tree_build.py`
-
-That tool should be able to lower:
+That tool can lower:
 
 - a realized chain from trajectory
 - a compiled `stepchain.v1`
 - a skeleton via compilation
 
 into `trace_tree.v1`.
-
-Once that exists, the simulator can replay one canonical format instead of having to know every source form directly.

@@ -54,7 +54,7 @@ def test_state_paths_for_contact_are_isolated_per_user():
     paths = discord_bot.state_paths_for_contact("discord:42")
     assert str(paths["traj_file"]).endswith("state/discord/discord_42/trajectory.json")
     assert str(paths["chains_file"]).endswith("state/discord/discord_42/chains.json")
-    assert str(paths["chains_dir"]).endswith("state/discord/discord_42/chains")
+    assert str(paths["chains_dir"]).endswith("state/discord/discord_42/trajectory_store/command")
 
 
 def test_handle_transport_command_wipes_contact_state(tmp_path, monkeypatch):

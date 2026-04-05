@@ -29,8 +29,8 @@ if str(ROOT) not in sys.path:
 
 import manifest_engine as manifest_engine_module
 from step import score_band, vocab_class
-from tools.skeleton_compile import compile_skeleton
-from tools.semantic_skeleton_compile import compile_semantic_skeleton
+from system.skeleton_compile import compile_skeleton
+from system.semantic_skeleton_compile import compile_semantic_skeleton
 
 
 KIND_MAP = {

@@ -58,16 +58,15 @@ from compile import (
 )
 from skills.loader import Skill, SkillRegistry, SkillStep, load_all, load_skill
 from step import Chain, Epistemic, Gap, Step, Trajectory, absolute_time, blob_hash, chain_hash, relative_time
-from tools import chain_to_st as chain_to_st_module
-from tools import chain_registry as chain_registry_module
-from tools.hash import registry as hash_registry_module
+from system import chain_registry as chain_registry_module
+from system import hash_registry as hash_registry_module
 from tools import hash_manifest as hash_manifest_module
 from tools.hash import office_manifest as office_manifest_module
 from tools import st_builder as st_builder_module
-from tools import tool_builder as tool_builder_module
-from tools import tool_contract as tool_contract_module
-from tools import tool_registry as tool_registry_module
-from tools import vocab_builder as vocab_builder_module
+from system import tool_builder as tool_builder_module
+from system import tool_contract as tool_contract_module
+from system import tool_registry as tool_registry_module
+from system import vocab_builder as vocab_builder_module
 
 SKILLS_DIR = ROOT / "skills"
 TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
@@ -450,6 +449,7 @@ P3_CASES = [
     ("tree_policy_entities_set_entity_editor_mode", lambda: loop._match_policy("skills/entities/clinton.st", loop._load_tree_policy())["reprogramme_mode"] == "entity_editor"),
     ("tree_policy_actions_reroute_to_reason", lambda: loop._match_policy("skills/actions/hash_edit.st", loop._load_tree_policy())["on_mutate"] == "reason_needed"),
     ("tree_policy_actions_set_action_editor_mode", lambda: loop._match_policy("skills/actions/hash_edit.st", loop._load_tree_policy())["reprogramme_mode"] == "action_editor"),
+    ("tree_policy_system_is_immutable", lambda: loop._match_policy("system/tool_registry.py", loop._load_tree_policy())["immutable"] is True),
     ("tree_policy_vocab_registry_routes_to_vocab_reg_needed", lambda: loop._match_policy("vocab_registry.py", loop._load_tree_policy())["on_mutate"] == "vocab_reg_needed"),
     ("tree_policy_exact_match_compile_immutable", lambda: loop._match_policy("compile.py", loop._load_tree_policy())["immutable"] is True),
     ("tree_policy_longest_prefix_wins", lambda: loop._match_policy("skills/codons/trigger.st", loop._load_tree_policy())["on_reject"] == "reason_needed"),
@@ -771,9 +771,6 @@ P7_CASES = [
     ("action_update_requires_existing_ref", lambda: any("requires 'existing_ref'" in e for e in st_builder_module.validate_st({"name": "x", "desc": "d", "steps": []}, artifact_kind="action_update"))),
     ("render_for_prompt_marks_admin_deterministic", lambda: "(deterministic)" in registry().render_for_prompt()),
     ("render_for_prompt_marks_mixed_skill", lambda: "hash_edit" in registry().render_for_prompt() and "(mixed)" in registry().render_for_prompt()),
-    ("extract_st_steps_blob_is_terminal", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "observe target", "content_refs": ["blob_a"], "gaps": []}]})[0]["post_diff"] is False),
-    ("extract_st_steps_gap_branch_is_flexible", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "branch", "gaps": [{"content_refs": ["blob_a"], "step_refs": ["step_a"], "scores": {"relevance": 0.8}, "vocab": "pattern_needed"}]}]})[0]["post_diff"] is True),
-    ("extract_st_steps_commit_implies_post_diff", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "mutate", "commit": "abc", "gaps": [{"content_refs": [], "step_refs": [], "scores": {"relevance": 0.8}, "vocab": "content_needed"}]}]})[0]["post_diff"] is True),
     ("admin_deterministic_steps_helper", lambda: all(not s.post_diff for s in skill("admin").steps)),
     ("hash_edit_flexible_steps_helper", lambda: len(skill("hash_edit").flexible_steps()) == 1),
 ]
@@ -1055,6 +1052,141 @@ P12_CASES += [
 ]
 
 
+def test_p12_compiler_background_refs_split_manual_await_from_async():
+    compiler = Compiler(Trajectory())
+    compiler.ledger.chain_states["manual"] = ChainState.OPEN
+    compiler.ledger.chain_states["async"] = ChainState.OPEN
+
+    compiler.record_background_trigger(
+        "manual",
+        refs=["child_manual"],
+        activation_ref="child_manual",
+        await_policy="manual",
+    )
+    compiler.record_background_trigger(
+        "async",
+        refs=["child_async"],
+        activation_ref="child_async",
+        await_policy="none",
+    )
+
+    assert compiler.manual_await_refs() == ["child_manual"]
+    assert compiler.background_refs() == ["child_async"]
+    assert compiler.needs_heartbeat() is True
+
+
+def test_p12_persist_manual_await_frontier_emits_await_gap():
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    compiler.ledger.chain_states["parent"] = ChainState.OPEN
+    origin = make_step("origin")
+    traj.append(origin)
+    compiler.record_background_trigger(
+        "parent",
+        refs=["child_chain"],
+        activation_ref="child_chain",
+        await_policy="manual",
+    )
+
+    await_step = loop._persist_manual_await_frontier(traj, compiler, origin, 5)
+
+    assert await_step is not None
+    assert await_step.desc.startswith("await frontier:")
+    assert await_step.content_refs == ["child_chain"]
+    assert len(await_step.gaps) == 1
+    assert await_step.gaps[0].vocab == "await_needed"
+    assert await_step.gaps[0].carry_forward is True
+    assert "parent" in compiler._awaited_chains
+
+
+def test_p12_load_chain_package_searches_sibling_trajectory_stores(tmp_path):
+    command_dir = tmp_path / "command"
+    background_dir = tmp_path / "background_agent"
+    command_dir.mkdir(parents=True)
+    background_dir.mkdir(parents=True)
+    doc = {
+        "hash": "childflow1234",
+        "origin_gap": "gap123",
+        "desc": "background flow",
+        "steps": [],
+    }
+    (background_dir / "childflow1234.json").write_text(json.dumps(doc))
+
+    loaded = manifest_engine_module.load_chain_package(command_dir, "childflow1234")
+
+    assert loaded == doc
+
+
+def test_p12_extract_chains_writes_activation_alias(tmp_path):
+    traj = Trajectory()
+    step = make_step("child")
+    traj.append(step)
+    chain = Chain.create("gap123", step.hash)
+    chain.resolved = True
+    chain.extracted = True
+    chain.activation_ref = "workflow_alias"
+    traj.add_chain(chain)
+
+    traj.extract_chains(str(tmp_path))
+
+    assert (tmp_path / f"{chain.hash}.json").exists()
+    assert (tmp_path / "workflow_alias.json").exists()
+
+
+def test_p12_run_isolated_workflow_ref_writes_background_store(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "TRAJECTORY_STORE_DIR", tmp_path / "trajectory_store")
+    monkeypatch.setattr(loop, "COMMAND_TRAJECTORY_DIR", loop.TRAJECTORY_STORE_DIR / "command")
+    monkeypatch.setattr(loop, "SUBAGENT_TRAJECTORY_DIR", loop.TRAJECTORY_STORE_DIR / "subagent")
+    monkeypatch.setattr(loop, "BACKGROUND_AGENT_TRAJECTORY_DIR", loop.TRAJECTORY_STORE_DIR / "background_agent")
+
+    class FakeSession:
+        def __init__(self, model=None):
+            self.messages = []
+
+        def set_system(self, content: str):
+            self.messages = [{"role": "system", "content": content}]
+
+        def inject(self, content: str, role: str = "user"):
+            self.messages.append({"role": role, "content": content})
+
+        def call(self, user_content: str = None) -> str:
+            if user_content:
+                self.inject(user_content)
+            return '{"gaps":[]}'
+
+    monkeypatch.setattr(loop, "Session", FakeSession)
+    monkeypatch.setattr(loop, "_synthesize", lambda session, user_message, turn_facts=None: "child done")
+
+    def fake_execute_iteration(**kwargs):
+        entry = kwargs["entry"]
+        trajectory = kwargs["trajectory"]
+        compiler = kwargs["compiler"]
+        step_result = make_step(f"child executed: {entry.gap.desc}", chain_id=entry.chain_id)
+        trajectory.append(step_result)
+        compiler.add_step_to_chain(step_result.hash)
+        compiler.resolve_current_gap(entry.gap.hash)
+        return SimpleNamespace(control="continue", step_result=step_result)
+
+    monkeypatch.setattr(loop, "execute_iteration", fake_execute_iteration)
+
+    ref = skill("hash_edit").hash
+    result = loop.run_isolated_workflow_ref(
+        ref,
+        task_prompt="apply a deterministic child edit flow",
+        store_kind="background_agent",
+        await_policy="none",
+    )
+
+    assert result["status"] == "ok"
+    assert Path(str(result["trajectory"])).exists()
+    assert Path(str(result["chains_file"])).exists()
+    alias_path = Path(str(result["chains_dir"])) / f"{ref}.json"
+    assert alias_path.exists()
+    alias_doc = json.loads(alias_path.read_text())
+    assert alias_doc["activation_ref"] == ref
+    assert alias_doc["store_kind"] == "background_agent"
+
+
 P13_CASES = [
     ("max_chain_depth_constant", lambda: MAX_CHAIN_DEPTH == 15),
     ("chain_extract_length_constant", lambda: CHAIN_EXTRACT_LENGTH == 8),
@@ -1071,9 +1203,6 @@ P13_CASES = [
     ("force_close_marks_reason", lambda: (lambda ctx: (ctx.compiler.force_close_chain(next(iter(ctx.traj.chains))), "force-closed" in next(iter(ctx.traj.chains.values())).desc)[1])(build_origin_context())),
     ("render_recent_reports_step_count", lambda: build_chain_context().chain.length() == 2),
     ("recent_chains_returns_chain_units", lambda: build_chain_context().traj.recent_chains(1)[0].origin_gap == build_chain_context().chain.origin_gap),
-    ("extract_st_steps_preserves_content_refs", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "observe target", "gaps": [{"content_refs": ["entity_hash"], "step_refs": [], "scores": {"relevance": 0.9}, "vocab": "hash_resolve_needed"}]}]})[0]["content_refs"] == ["entity_hash"]),
-    ("extract_st_steps_derives_relevance_when_missing", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "observe", "gaps": [{}]}]})[0]["relevance"] == 1.0),
-    ("extract_st_steps_slugifies_action", lambda: chain_to_st_module.extract_st_steps({"resolved_steps": [{"desc": "Observe target file", "gaps": []}]})[0]["action"] == "observe_target_file"),
     ("compose_over_construction_keeps_codon_steps_short", lambda: all(skill(name).step_count() <= 4 for name in ("trigger", "await", "commit", "reprogramme"))),
 ]
 
@@ -1194,25 +1323,6 @@ def test_p9_chains_save_load_and_extract(tmp_path):
     assert any(chains_dir.iterdir())
 
 
-def test_p10_chain_to_st_roundtrip_writes_file(tmp_path, monkeypatch):
-    chain_doc, _step_doc = serialized_chain_files(tmp_path)
-    monkeypatch.setattr(chain_to_st_module, "CORS_ROOT", tmp_path)
-    monkeypatch.setattr(chain_to_st_module, "TRAJ_FILE", tmp_path / "trajectory.json")
-    monkeypatch.setattr(chain_to_st_module, "CHAINS_FILE", tmp_path / "chains.json")
-
-    output_path = tmp_path / "skills" / "curated.st"
-    result = chain_to_st_module.chain_to_st(
-        chain_hash=chain_doc["hash"],
-        name="curated",
-        desc="curated workflow",
-        refs={"admin": "admin_hash"},
-        output_path=str(output_path),
-    )
-
-    assert result["status"] == "ok"
-    assert result["st"]["source_chain"] == chain_doc["hash"]
-    assert result["st"]["refs"] == {"admin": "admin_hash"}
-    assert output_path.exists()
 
 
 def test_p12_auto_commit_contract_clean_tree(monkeypatch):
@@ -1847,7 +1957,7 @@ def test_p12_command_needed_commit_postcondition_resolves_bot_log(monkeypatch):
             self.injected.append(content)
 
         def call(self, user_content: str = None) -> str:
-            return "pytest -q"
+            return json.dumps({"command": "pytest -q"})
 
     class Result:
         stdout = "tests passed"
@@ -1868,7 +1978,7 @@ def test_p12_command_needed_commit_postcondition_resolves_bot_log(monkeypatch):
         execute_tool=lambda tool, params: ("", 0),
         auto_commit=lambda message, paths=None: ("abc123", None),
         parse_step_output=loop._parse_step_output,
-        extract_json=lambda raw: None,
+        extract_json=lambda raw: json.loads(raw),
         extract_command=lambda raw: raw,
         extract_written_path=lambda output: None,
         is_reprogramme_intent=loop._is_reprogramme_intent,
@@ -1921,7 +2031,7 @@ def test_p12_command_needed_without_commit_still_emits_log_postcondition(monkeyp
             self.injected.append(content)
 
         def call(self, user_content: str = None) -> str:
-            return "pytest -q"
+            return json.dumps({"command": "pytest -q"})
 
     class Result:
         stdout = "tests passed"
@@ -1942,7 +2052,7 @@ def test_p12_command_needed_without_commit_still_emits_log_postcondition(monkeyp
         execute_tool=lambda tool, params: ("", 0),
         auto_commit=lambda message, paths=None: (None, None),
         parse_step_output=loop._parse_step_output,
-        extract_json=lambda raw: None,
+        extract_json=lambda raw: json.loads(raw),
         extract_command=lambda raw: raw,
         extract_written_path=lambda output: None,
         is_reprogramme_intent=loop._is_reprogramme_intent,
@@ -4073,6 +4183,7 @@ def test_p12_hash_registry_captures_core_routes():
     )
     assert hash_registry_module.HASH_MANIFEST_ROUTES[".docx"] == "tools/hash/doc_edit.py"
     assert hash_registry_module.HASH_MANIFEST_ROUTES[".pptx"] == "tools/hash/office_manifest.py"
+    assert hash_registry_module.HASH_RESOLVE_ROUTES[".json"] == "tools/hash/json_query.py"
     assert hash_registry_module.HASH_RESOLVE_ROUTES[".pdf"] == "tools/hash/pdf_read.py"
     assert hash_registry_module.HASH_RESOLVE_ROUTES[".png"] == "tools/hash/document_extract_marker.py"
 
@@ -4080,6 +4191,7 @@ def test_p12_hash_registry_captures_core_routes():
 def test_p12_tool_registry_exposes_only_public_hash_tools():
     assert "tools/hash_resolve.py" in tool_registry_module.PUBLIC_TOOL_PATHS
     assert "tools/hash_manifest.py" in tool_registry_module.PUBLIC_TOOL_PATHS
+    assert "tools/hash/json_query.py" not in tool_registry_module.PUBLIC_TOOL_PATHS
     assert "tools/hash/doc_read.py" not in tool_registry_module.PUBLIC_TOOL_PATHS
     assert "tools/hash/document_extract_marker.py" not in tool_registry_module.PUBLIC_TOOL_PATHS
 
@@ -4138,11 +4250,15 @@ def test_p12_all_public_tools_express_valid_contract_metadata():
 
 def test_p12_render_public_tool_registry_lists_public_tools_and_contracts():
     rendered = execution_engine_module._render_public_tool_registry(ROOT)
+    tool_refs = tool_registry_module.public_tool_ref_map(ROOT)
+    hash_resolve_ref = next(ref for ref, path in tool_refs.items() if path == "tools/hash_resolve.py")
+    hash_manifest_ref = next(ref for ref, path in tool_refs.items() if path == "tools/hash_manifest.py")
 
     assert rendered.startswith("## Public Tool Registry")
-    assert "tools/hash_resolve.py | observe/workspace | post_observe=none" in rendered
-    assert "tools/hash_manifest.py | mutate/workspace | post_observe=artifacts | artifacts=derived" in rendered
-    assert "tools/runway_gen.py | mutate/external | post_observe=log | artifacts=none" in rendered
+    assert f"tools/hash_resolve.py | ref={hash_resolve_ref} | observe/workspace | post_observe=none" in rendered
+    assert f"tools/hash_manifest.py | ref={hash_manifest_ref} | mutate/workspace | post_observe=artifacts | artifacts=derived" in rendered
+    assert "tools/runway_gen.py | ref=" in rendered
+    assert "mutate/external | post_observe=log | artifacts=none" in rendered
     assert "tools/hash/doc_read.py" not in rendered
     assert "tools/hash/document_extract_marker.py" not in rendered
 
@@ -4308,12 +4424,15 @@ def test_p12_tool_builder_writes_param_based_artifact_stub(tmp_path, monkeypatch
 def test_p12_vocab_builder_writes_configurable_tool_route(tmp_path):
     registry_copy = tmp_path / "vocab_registry.py"
     registry_copy.write_text((ROOT / "vocab_registry.py").read_text(encoding="utf-8"), encoding="utf-8")
+    hash_manifest_ref = next(
+        ref for ref, path in tool_registry_module.public_tool_ref_map(ROOT).items() if path == "tools/hash_manifest.py"
+    )
     stdin = json.dumps(
         {
             "name": "demo_vocab_needed",
             "classifiable": "mutate",
             "target_kind": "tool",
-            "target_ref": "tools/hash_manifest.py",
+            "target_ref": hash_manifest_ref,
             "desc": "route demo semantic mutations through hash manifest",
             "prompt_hint": "Use for demo write/edit requests.",
             "registry_path": str(registry_copy),
@@ -4334,7 +4453,7 @@ def test_p12_vocab_builder_writes_configurable_tool_route(tmp_path):
     content = registry_copy.read_text(encoding="utf-8")
     assert '"demo_vocab_needed": VocabSpec(' in content
     assert 'target_kind="tool"' in content
-    assert 'target_ref="tools/hash_manifest.py"' in content
+    assert f'target_ref="{hash_manifest_ref}"' in content
     assert 'prompt_hint="Use for demo write/edit requests."' in content
 
 
@@ -4407,8 +4526,11 @@ def test_p12_tool_needed_injects_public_tool_registry_before_compose():
 
     assert outcome.step_result is not None
     assert any(content.startswith("## Public Tool Registry") for content in session.injected)
-    assert any("tools/hash_resolve.py | observe/workspace | post_observe=none" in content for content in session.injected)
-    assert any("tools/hash_manifest.py | mutate/workspace | post_observe=artifacts | artifacts=derived" in content for content in session.injected)
+    tool_refs = tool_registry_module.public_tool_ref_map(ROOT)
+    hash_resolve_ref = next(ref for ref, path in tool_refs.items() if path == "tools/hash_resolve.py")
+    hash_manifest_ref = next(ref for ref, path in tool_refs.items() if path == "tools/hash_manifest.py")
+    assert any(f"tools/hash_resolve.py | ref={hash_resolve_ref} | observe/workspace | post_observe=none" in content for content in session.injected)
+    assert any(f"tools/hash_manifest.py | ref={hash_manifest_ref} | mutate/workspace | post_observe=artifacts | artifacts=derived" in content for content in session.injected)
     assert session.calls == 1
 
 
@@ -4423,12 +4545,15 @@ def test_p12_vocab_reg_needed_injects_registries_before_compose():
 
         def call(self, user_content: str = None) -> str:
             self.calls += 1
+            hash_manifest_ref = next(
+                ref for ref, path in tool_registry_module.public_tool_ref_map(ROOT).items() if path == "tools/hash_manifest.py"
+            )
             return json.dumps(
                 {
                     "name": "demo_vocab_needed",
                     "classifiable": "mutate",
                     "target_kind": "tool",
-                    "target_ref": "tools/hash_manifest.py",
+                    "target_ref": hash_manifest_ref,
                     "desc": "route demo semantic mutations through hash manifest",
                 }
             )
@@ -4573,6 +4698,278 @@ def test_p12_extract_written_path_reads_first_json_artifact():
     output = json.dumps({"status": "ok", "artifacts": ["assets/clip1.mp4", "assets/clip2.mp4"]})
 
     assert loop._extract_written_path(output) == "assets/clip1.mp4"
+
+
+def test_p12_message_needed_executes_tool_and_post_observes_written_artifact():
+    class FakeSession:
+        def inject(self, content: str, role: str = "user"):
+            pass
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps(
+                {
+                    "to": "recipient@example.com",
+                    "subject": "Hello",
+                    "body": "World",
+                }
+            )
+
+    executed_tools: list[tuple[str, dict]] = []
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("send an email update", vocab="message_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: (
+            executed_tools.append((tool, params)) or (json.dumps({"status": "sent", "path": "outbox/email_123.json"}), 0)
+        ),
+        auto_commit=lambda message, paths=None: ("abc123def456", None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=FakeSession(),
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert executed_tools == [("tools/email_send.py", {"to": "recipient@example.com", "subject": "Hello", "body": "World"})]
+    assert compiler.ledger.stack[-1].gap.vocab == "hash_resolve_needed"
+    assert compiler.ledger.stack[-1].gap.content_refs == ["outbox/email_123.json"]
+
+
+def test_p12_git_revert_needed_uses_tool_reported_commit_for_post_observe():
+    class FakeSession:
+        def inject(self, content: str, role: str = "user"):
+            pass
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps(
+                {
+                    "action": "revert",
+                    "ref": "deadbeef1234",
+                }
+            )
+
+    executed_tools: list[tuple[str, dict]] = []
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("revert the bad commit", vocab="git_revert_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+
+    def fail_auto_commit(message, paths=None):
+        raise AssertionError("auto_commit should not run when the tool already returns a commit")
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: (
+            executed_tools.append((tool, params)) or (json.dumps({"status": "ok", "commit": "feedface5678"}), 0)
+        ),
+        auto_commit=fail_auto_commit,
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=FakeSession(),
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert executed_tools == [("tools/git_ops.py", {"action": "revert", "ref": "deadbeef1234"})]
+    assert compiler.ledger.stack[-1].gap.vocab == "hash_resolve_needed"
+    assert compiler.ledger.stack[-1].gap.content_refs == ["feedface5678"]
+
+
+def test_p12_reason_needed_can_activate_isolated_workflow_without_await():
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps(
+                {
+                    "activate_ref": skill("hash_edit").hash,
+                    "prompt": "apply child workflow",
+                    "await_needed": False,
+                }
+            )
+
+    activated: list[dict] = []
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    compiler.ledger.chain_states["parent_chain"] = ChainState.OPEN
+    origin_step = make_step("origin")
+    gap = make_gap("delegate child work", vocab="reason_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="parent_chain")
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        run_isolated_workflow=lambda ref, **kwargs: activated.append({"ref": ref, **kwargs}) or {"status": "ok", "activation_ref": ref, "store_kind": "background_agent"},
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "trajectory_store" / "command",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=FakeSession(),
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert activated == [{"ref": skill("hash_edit").hash, "task_prompt": "apply child workflow", "store_kind": "background_agent", "await_policy": "none"}]
+    assert compiler.background_refs() == [skill("hash_edit").hash]
+    assert compiler.manual_await_refs() == []
+
+
+def test_p12_reason_needed_can_activate_isolated_workflow_with_manual_await():
+    class FakeSession:
+        def call(self, user_content: str = None) -> str:
+            return json.dumps(
+                {
+                    "activate_ref": skill("hash_edit").hash,
+                    "prompt": "apply child workflow",
+                    "await_needed": True,
+                }
+            )
+
+        def inject(self, content: str, role: str = "user"):
+            pass
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    compiler.ledger.chain_states["parent_chain"] = ChainState.OPEN
+    origin_step = make_step("origin")
+    gap = make_gap("delegate child work", vocab="reason_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="parent_chain")
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        run_isolated_workflow=lambda ref, **kwargs: {"status": "ok", "activation_ref": ref, "store_kind": "background_agent"},
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "trajectory_store" / "command",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=FakeSession(),
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert compiler.manual_await_refs() == [skill("hash_edit").hash]
+    assert compiler.background_refs() == []
 
 
 def test_p12_existing_action_update_does_not_require_reason():

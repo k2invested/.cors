@@ -19,7 +19,7 @@ Two hash layers (never mixed):
 Storage:
   Atomic steps:       trajectory.json (accumulated, sequential)
   Predefined steps:   skills/*.st (authored, hash-addressed)
-  Extracted chains:   chains/*.json (long chains promoted from trajectory)
+  Extracted chains:   trajectory_store/*/*.json (long chains promoted from trajectory)
   Content:            .git/ (blobs, trees, commits — resolved on demand)
 
 The trajectory is a closed hash graph. Raw data never touches it.
@@ -392,6 +392,10 @@ class Chain:
     desc:       str = ""          # semantic summary (set when chain completes)
     resolved:   bool = False
     extracted:  bool = False      # True if saved to chains/*.json
+    store_kind: str = "command"
+    activation_ref: str | None = None
+    parent_chain_id: str | None = None
+    await_policy: str | None = None
 
     @staticmethod
     def create(origin_gap: str, first_step: str) -> "Chain":
@@ -418,7 +422,14 @@ class Chain:
             "desc": self.desc,
             "resolved": self.resolved,
             "extracted": self.extracted,
+            "store_kind": self.store_kind,
         }
+        if self.activation_ref:
+            data["activation_ref"] = self.activation_ref
+        if self.parent_chain_id:
+            data["parent_chain_id"] = self.parent_chain_id
+        if self.await_policy:
+            data["await_policy"] = self.await_policy
         return data
 
     @staticmethod
@@ -430,6 +441,10 @@ class Chain:
             desc=d.get("desc", ""),
             resolved=d.get("resolved", False),
             extracted=d.get("extracted", False),
+            store_kind=d.get("store_kind", "command"),
+            activation_ref=d.get("activation_ref"),
+            parent_chain_id=d.get("parent_chain_id"),
+            await_policy=d.get("await_policy"),
         )
 
 
@@ -535,7 +550,7 @@ class Trajectory:
         """Extract long/resolved chains to individual files.
 
         Chains marked as extracted get their full step data saved to
-        chains/{chain_hash}.json. The trajectory keeps the chain hash
+        trajectory_store/<kind>/{chain_hash}.json. The trajectory keeps the chain hash
         but the step data moves to the file — keeps trajectory compact.
         """
         import os
@@ -549,14 +564,26 @@ class Trajectory:
                     "hash": chain.hash,
                     "origin_gap": chain.origin_gap,
                     "desc": chain.desc,
+                    "store_kind": chain.store_kind,
                     "steps": [],
                 }
+                if chain.activation_ref:
+                    chain_data["activation_ref"] = chain.activation_ref
+                if chain.parent_chain_id:
+                    chain_data["parent_chain_id"] = chain.parent_chain_id
+                if chain.await_policy:
+                    chain_data["await_policy"] = chain.await_policy
                 for step_hash in chain.steps:
                     step = self.steps.get(step_hash)
                     if step:
                         chain_data["steps"].append(step.to_dict())
                 with open(chain_path, "w") as f:
                     json.dump(chain_data, f, indent=2)
+                if chain.activation_ref:
+                    alias_path = os.path.join(chains_dir, f"{chain.activation_ref}.json")
+                    if not os.path.exists(alias_path):
+                        with open(alias_path, "w") as f:
+                            json.dump(chain_data, f, indent=2)
 
     def append_to_passive_chain(self, chain_hash: str, step: "Step") -> bool:
         """Append a step to a passive (cross-turn) chain.

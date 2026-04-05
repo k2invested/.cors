@@ -12,7 +12,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from tools.tool_registry import _working_tree_blob, public_tool_blob_refs
+from system.tool_registry import _working_tree_blob, public_tool_blob_refs
 from vocab_registry import TOOL_MAP, is_bridge, is_mutate, is_observe
 
 
@@ -147,6 +147,10 @@ def list_public_chain_contracts(cors_root: Path) -> tuple[ChainContract, ...]:
 
 def public_chain_blob_refs(cors_root: Path) -> set[str]:
     return {contract.ref for contract in list_public_chain_contracts(cors_root)}
+
+
+def public_chain_ref_map(cors_root: Path) -> dict[str, str]:
+    return {contract.ref: contract.source for contract in list_public_chain_contracts(cors_root)}
 
 
 def render_public_chain_registry(cors_root: Path) -> str:

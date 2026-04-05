@@ -2,13 +2,14 @@
 
 Tests exercise all four outcomes the validator can emit:
   CLEAN      — no background triggers
-  CLOSED     — reprogramme_needed + downstream await_needed
-  HEARTBEAT  — reprogramme_needed, no await (heartbeat path)
-  ORPHAN     — await_needed with no upstream reprogramme_needed
-  MISORDERED — await_needed before its reprogramme_needed
+  CLOSED     — background trigger + downstream await_needed
+  HEARTBEAT  — background trigger, no await (heartbeat path)
+  ORPHAN     — await_needed with no upstream background trigger
+  MISORDERED — await_needed before its background trigger
 
 Also tests:
-  - Multi-trigger chains (multiple reprogramme_needed)
+  - Current reason-needed activations
+  - Legacy reprogramme_needed compatibility
   - Mixed chains (some CLOSED, some HEARTBEAT in same skill)
   - Recursive embedded skill validation
 """
@@ -27,17 +28,19 @@ from validate_chain import (
     Finding,
     validate_file,
     ValidationResult,
-    BACKGROUND_VOCAB,
+    LEGACY_BACKGROUND_VOCAB,
+    REASON_VOCAB,
     AWAIT_VOCAB,
 )
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def step(vocab: str | None = None, action: str = "do_thing") -> dict:
+def step(vocab: str | None = None, action: str = "do_thing", **extra) -> dict:
     s = {"action": action, "desc": action.replace("_", " "), "post_diff": True}
     if vocab is not None:
         s["vocab"] = vocab
+    s.update(extra)
     return s
 
 
@@ -50,16 +53,16 @@ def skill_json(steps: list[dict], name: str = "test_skill") -> str:
 class TestCheckSteps:
 
     def test_clean_no_background(self):
-        """No reprogramme or await vocab — returns empty findings."""
+        """No background or await vocab — returns empty findings."""
         steps = [step("hash_resolve_needed"), step("command_needed"), step(None)]
         findings = check_steps(steps)
         assert findings == []
 
-    def test_closed_explicit_await(self):
-        """reprogramme_needed followed by await_needed → CLOSED."""
+    def test_closed_explicit_await_for_reason_activation(self):
+        """reason_needed + activate_ref followed by await_needed → CLOSED."""
         steps = [
             step("hash_resolve_needed"),
-            step(BACKGROUND_VOCAB),       # index 1
+            step(REASON_VOCAB, activate_ref="flow123"),  # index 1
             step("content_needed"),
             step(AWAIT_VOCAB),            # index 3
         ]
@@ -69,11 +72,11 @@ class TestCheckSteps:
         assert findings[0].trigger_idx == 1
         assert findings[0].await_idx == 3
 
-    def test_heartbeat_no_await(self):
-        """reprogramme_needed with no downstream await → HEARTBEAT (valid)."""
+    def test_heartbeat_no_await_for_reason_activation(self):
+        """reason_needed + activate_ref with no downstream await → HEARTBEAT."""
         steps = [
             step("hash_resolve_needed"),
-            step(BACKGROUND_VOCAB),       # index 1
+            step(REASON_VOCAB, activation_ref="flow123"),  # index 1
             step("content_needed"),
         ]
         findings = check_steps(steps)
@@ -83,7 +86,7 @@ class TestCheckSteps:
         assert findings[0].await_idx == -1
 
     def test_orphan_await_no_trigger(self):
-        """await_needed with no upstream reprogramme_needed → ORPHAN."""
+        """await_needed with no upstream background trigger → ORPHAN."""
         steps = [
             step("hash_resolve_needed"),
             step(AWAIT_VOCAB),            # index 1 — no trigger above it
@@ -95,27 +98,27 @@ class TestCheckSteps:
         assert findings[0].await_idx == 1
 
     def test_misordered_await_before_trigger(self):
-        """await_needed before its reprogramme_needed → MISORDERED."""
+        """await_needed before its background trigger → MISORDERED."""
         steps = [
             step("hash_resolve_needed"),
             step(AWAIT_VOCAB),            # index 1 — before trigger
             step("content_needed"),
-            step(BACKGROUND_VOCAB),       # index 3 — comes after await
+            step(REASON_VOCAB, activate_ref="flow123"),  # index 3 — comes after await
         ]
         findings = check_steps(steps)
-        # The await is orphaned/misordered. The reprogramme has no downstream await → HEARTBEAT.
+        # The await is orphaned/misordered. The activation has no downstream await → HEARTBEAT.
         kinds = {f.kind for f in findings}
         assert "MISORDERED" in kinds
         assert "HEARTBEAT" in kinds
 
     def test_multiple_triggers_mixed(self):
-        """Two reprogramme_needed: first has await (CLOSED), second does not (HEARTBEAT)."""
+        """Two background triggers: first has await (CLOSED), second does not (HEARTBEAT)."""
         steps = [
-            step(BACKGROUND_VOCAB),       # index 0
+            step(REASON_VOCAB, activate_ref="flow123"),  # index 0
             step("content_needed"),
             step(AWAIT_VOCAB),            # index 2 — closes trigger 0
             step("hash_resolve_needed"),
-            step(BACKGROUND_VOCAB),       # index 4 — no await downstream
+            step(LEGACY_BACKGROUND_VOCAB),  # index 4 — no await downstream
         ]
         findings = check_steps(steps)
         kinds = [f.kind for f in findings]
@@ -128,12 +131,12 @@ class TestCheckSteps:
         assert heartbeat.trigger_idx == 4
 
     def test_multiple_triggers_all_closed(self):
-        """Two reprogramme_needed, each followed by its own await_needed → all CLOSED."""
+        """Two background triggers, each followed by its own await_needed → all CLOSED."""
         steps = [
-            step(BACKGROUND_VOCAB),       # index 0
+            step(REASON_VOCAB, activate_ref="flow123"),  # index 0
             step(AWAIT_VOCAB),            # index 1
             step("content_needed"),
-            step(BACKGROUND_VOCAB),       # index 3
+            step(LEGACY_BACKGROUND_VOCAB),  # index 3
             step(AWAIT_VOCAB),            # index 4
         ]
         findings = check_steps(steps)
@@ -142,11 +145,27 @@ class TestCheckSteps:
         assert len(findings) == 2
 
     def test_adjacent_trigger_and_await(self):
-        """reprogramme_needed immediately followed by await_needed → CLOSED."""
+        """background trigger immediately followed by await_needed → CLOSED."""
         steps = [
-            step(BACKGROUND_VOCAB),       # index 0
+            step(REASON_VOCAB, activation_ref="flow123"),  # index 0
             step(AWAIT_VOCAB),            # index 1
         ]
+        findings = check_steps(steps)
+        assert len(findings) == 1
+        assert findings[0].kind == "CLOSED"
+
+    def test_plain_reason_step_is_not_background_trigger(self):
+        """Ordinary reason_needed without activation metadata is ignored."""
+        steps = [
+            step(REASON_VOCAB),
+            step("hash_resolve_needed"),
+        ]
+        findings = check_steps(steps)
+        assert findings == []
+
+    def test_legacy_reprogramme_trigger_still_validates(self):
+        """Legacy reprogramme_needed still counts as a background trigger."""
+        steps = [step(LEGACY_BACKGROUND_VOCAB), step(AWAIT_VOCAB)]
         findings = check_steps(steps)
         assert len(findings) == 1
         assert findings[0].kind == "CLOSED"
@@ -169,14 +188,14 @@ class TestValidateFile:
         assert not result.findings  # no findings = CLEAN
 
     def test_heartbeat_file_is_warn(self, tmp_path):
-        p = self._write_st(tmp_path, [step(BACKGROUND_VOCAB)])
+        p = self._write_st(tmp_path, [step(REASON_VOCAB, activate_ref="flow123")])
         result = validate_file(p, registry={})
         assert result.law9_status == "WARN"
         assert result.findings[0].kind == "HEARTBEAT"
         assert not result.has_violations
 
     def test_closed_file_is_pass(self, tmp_path):
-        p = self._write_st(tmp_path, [step(BACKGROUND_VOCAB), step(AWAIT_VOCAB)])
+        p = self._write_st(tmp_path, [step(REASON_VOCAB, activate_ref="flow123"), step(AWAIT_VOCAB)])
         result = validate_file(p, registry={})
         assert result.law9_status == "PASS"
         assert result.findings[0].kind == "CLOSED"
@@ -188,7 +207,7 @@ class TestValidateFile:
         assert result.has_violations
 
     def test_misordered_file_is_fail(self, tmp_path):
-        p = self._write_st(tmp_path, [step(AWAIT_VOCAB), step(BACKGROUND_VOCAB)])
+        p = self._write_st(tmp_path, [step(AWAIT_VOCAB), step(REASON_VOCAB, activate_ref="flow123")])
         result = validate_file(p, registry={})
         assert result.law9_status == "FAIL"
         assert result.has_violations

@@ -18,6 +18,7 @@ HASH_MANIFEST_ROUTES = {
 }
 
 HASH_RESOLVE_ROUTES = {
+    ".json": "tools/hash/json_query.py",
     ".docx": "tools/hash/doc_read.py",
     ".pdf": "tools/hash/pdf_read.py",
     ".pptx": "tools/hash/document_extract_marker.py",
@@ -33,8 +34,11 @@ HASH_RESOLVE_ROUTES = {
 
 HASH_SUPPORT_TOOLS = (
     "tools/hash/office_manifest.py",
+    "tools/hash/json_query.py",
     "tools/hash/doc_read.py",
     "tools/hash/pdf_read.py",
+    "tools/hash/pdf_check_fields.py",
+    "tools/hash/pdf_extract_pymupdf.py",
     "tools/hash/document_extract_marker.py",
     "tools/st_builder.py",
     "tools/json_patch.py",

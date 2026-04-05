@@ -39,16 +39,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from env_loader import load_env
-from step import Step, Gap, Epistemic, Trajectory, TREE_LANGUAGE_KEY
+from step import Step, Gap, Epistemic, Trajectory, Chain, TREE_LANGUAGE_KEY
 from compile import (
-    Compiler, GovernorSignal, is_mutate, is_observe,
+    ChainState, Compiler, GovernorSignal, is_mutate, is_observe,
 )
 from skills.loader import load_all, SkillRegistry, Skill
 import manifest_engine as me
 import action_foundations as action_foundations_module
 from execution_engine import ExecutionConfig, ExecutionHooks, execute_iteration
 from tools import st_builder as st_builder_module
-from tools.hash.registry import HASH_RESOLVE_ROUTES
+from system.hash_registry import HASH_RESOLVE_ROUTES
 from vocab_registry import (
     BRIDGE_VOCAB,
     DETERMINISTIC_VOCAB,
@@ -64,7 +64,12 @@ CORS_ROOT    = Path(__file__).parent
 SKILLS_DIR   = CORS_ROOT / "skills"
 TRAJ_FILE    = CORS_ROOT / "trajectory.json"
 CHAINS_FILE  = CORS_ROOT / "chains.json"
-CHAINS_DIR   = CORS_ROOT / "chains"
+TRAJECTORY_STORE_DIR = CORS_ROOT / "trajectory_store"
+COMMAND_TRAJECTORY_DIR = TRAJECTORY_STORE_DIR / "command"
+SUBAGENT_TRAJECTORY_DIR = TRAJECTORY_STORE_DIR / "subagent"
+BACKGROUND_AGENT_TRAJECTORY_DIR = TRAJECTORY_STORE_DIR / "background_agent"
+LEGACY_CHAINS_DIR = CORS_ROOT / "chains"
+CHAINS_DIR   = COMMAND_TRAJECTORY_DIR
 MAX_ITERATIONS = 30
 TRAJECTORY_WINDOW = 10   # how many recent chains to render for LLM
 _turn_counter = 0        # increments each turn — used for cross-turn gap threshold
@@ -90,6 +95,16 @@ def _state_paths(
         trajectory=Path(traj_file) if traj_file is not None else TRAJ_FILE,
         chains_file=Path(chains_file) if chains_file is not None else CHAINS_FILE,
         chains_dir=Path(chains_dir) if chains_dir is not None else CHAINS_DIR,
+    )
+
+
+def _child_state_paths(store_kind: str, activation_ref: str) -> StatePaths:
+    safe_ref = re.sub(r"[^A-Za-z0-9._-]+", "_", activation_ref).strip("._-") or "child"
+    base = TRAJECTORY_STORE_DIR / store_kind
+    return _state_paths(
+        traj_file=base / f"{safe_ref}.trajectory.json",
+        chains_file=base / f"{safe_ref}.chains.json",
+        chains_dir=base,
     )
 
 
@@ -147,6 +162,7 @@ DEFAULT_TREE_POLICY = {
     "skills/admin.st":  {"on_mutate": "reprogramme_needed", "reprogramme_mode": "entity_editor"},
     "skills/entities/": {"on_mutate": "reprogramme_needed", "reprogramme_mode": "entity_editor"},
     "skills/actions/":  {"on_mutate": "reason_needed", "reprogramme_mode": "action_editor"},
+    "system/":          {"immutable": True, "on_reject": "reason_needed"},
     "tools/":           {"on_mutate": "tool_needed"},
     "vocab_registry.py": {"on_mutate": "vocab_reg_needed"},
     "ui_output/":       {"on_mutate": "stitch_needed"},
@@ -345,9 +361,9 @@ def _step_action_label(node: dict, fallback_index: int) -> str:
 
 def _validator_assess_step_file(data: dict) -> dict:
     from tools import st_builder as st_builder_module
-    from tools.security_compile import security_compile
-    from tools.semantic_skeleton_compile import compile_semantic_skeleton
-    from tools.trace_tree_build import build_from_stepchain
+    from system.security_compile import security_compile
+    from system.semantic_skeleton_compile import compile_semantic_skeleton
+    from system.trace_tree_build import build_from_stepchain
 
     steps = data.get("steps", [])
     if not isinstance(steps, list):
@@ -635,10 +651,10 @@ def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
         return me.render_chain_package(package, ref)
 
     repo_path = CORS_ROOT / ref
-    if ("/" in ref or ref.endswith((".st", ".log", ".docx", ".pdf", ".pptx", ".xlsx", ".html", ".epub", ".png", ".jpg", ".jpeg", ".webp", ".gif"))) and repo_path.exists() and repo_path.is_file():
+    if ("/" in ref or ref.endswith((".st", ".log", ".json", ".docx", ".pdf", ".pptx", ".xlsx", ".html", ".epub", ".png", ".jpg", ".jpeg", ".webp", ".gif"))) and repo_path.exists() and repo_path.is_file():
         if repo_path.suffix == ".log":
             return _render_log_resolution(repo_path.read_text(errors="replace"), source_ref=ref)
-        if repo_path.suffix.lower() in {".docx", ".pdf", ".pptx", ".xlsx", ".html", ".epub", ".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+        if repo_path.suffix.lower() in {".json", ".docx", ".pdf", ".pptx", ".xlsx", ".html", ".epub", ".png", ".jpg", ".jpeg", ".webp", ".gif"}:
             routed = _render_specialized_repo_file(ref, repo_path)
             if routed is not None:
                 return routed
@@ -1449,7 +1465,7 @@ def run_turn(
         if (owner := action_foundations_module.resolve_trigger_owner(
             term,
             registry=registry,
-            chains_dir=CORS_ROOT / "chains",
+            chains_dir=CHAINS_DIR,
             cors_root=CORS_ROOT,
             tool_map=TOOL_MAP,
             git=git_show,
@@ -1740,6 +1756,12 @@ def run_turn(
         if forced_step:
             print(f"  → forced frontier persisted with {len(forced_step.gaps)} gap(s)")
             turn_facts["persisted_frontiers"].append(forced_step.desc)
+
+    manual_await_step = _persist_manual_await_frontier(trajectory, compiler, origin_step, current_turn)
+    if manual_await_step:
+        print("\n── MANUAL AWAIT: persisting synchronization checkpoint before synthesis ──")
+        print(f"  → await frontier persisted with {len(manual_await_step.gaps)} gap(s)")
+        turn_facts["persisted_frontiers"].append(manual_await_step.desc)
 
     # ── 6. SYNTHESIS ─────────────────────────────────────────────────
 
@@ -2051,6 +2073,7 @@ def _execution_hooks(chains_dir: Path | None = None) -> ExecutionHooks:
         git=git,
         commit_assessment=_commit_assessment_for_commit,
         step_assessment=_step_assessment_for_docs,
+        run_isolated_workflow=run_isolated_workflow_ref,
     )
 
 
@@ -2283,6 +2306,36 @@ def _persist_forced_synth_frontier(trajectory: Trajectory, compiler: Compiler, o
     )
     trajectory.append(forced_step)
     return forced_step
+
+
+def _persist_manual_await_frontier(
+    trajectory: Trajectory,
+    compiler: Compiler,
+    origin_step: Step,
+    current_turn: int,
+) -> Step | None:
+    refs = compiler.manual_await_refs()
+    if not refs:
+        return None
+    for chain_id in compiler.manual_await_chain_ids():
+        compiler.record_await(chain_id)
+    await_gap = Gap.create(
+        desc="await: background workflow in progress — inspect committed child semantic tree when ready",
+        step_refs=[origin_step.hash],
+        content_refs=refs,
+    )
+    await_gap.scores = Epistemic(relevance=0.95, confidence=0.8, grounded=0.0)
+    await_gap.vocab = "await_needed"
+    await_gap.turn_id = current_turn
+    await_gap.carry_forward = True
+    await_step = Step.create(
+        desc="await frontier: manual background synchronization checkpoint",
+        step_refs=[origin_step.hash],
+        content_refs=refs,
+        gaps=[await_gap],
+    )
+    trajectory.append(await_step)
+    return await_step
 
 
 def _find_identity_skill(contact_id: str, registry: SkillRegistry) -> Skill | None:
@@ -2681,6 +2734,9 @@ def _save_turn(trajectory: Trajectory, state: StatePaths | None = None):
     active_state = state or _state_paths()
     active_state.trajectory.parent.mkdir(parents=True, exist_ok=True)
     active_state.chains_file.parent.mkdir(parents=True, exist_ok=True)
+    active_state.chains_dir.parent.mkdir(parents=True, exist_ok=True)
+    (active_state.chains_dir.parent / "subagent").mkdir(parents=True, exist_ok=True)
+    (active_state.chains_dir.parent / "background_agent").mkdir(parents=True, exist_ok=True)
     active_state.chains_dir.mkdir(parents=True, exist_ok=True)
     trajectory.save(str(active_state.trajectory))
     trajectory.save_chains(str(active_state.chains_file))
@@ -2689,6 +2745,174 @@ def _save_turn(trajectory: Trajectory, state: StatePaths | None = None):
     extracted = sum(1 for c in trajectory.chains.values() if c.extracted)
     print(f"  Saved: {len(trajectory.order)} steps, {len(trajectory.chains)} chains"
           + (f" ({extracted} extracted)" if extracted else ""))
+
+
+def run_isolated_workflow_ref(
+    ref: str,
+    *,
+    task_prompt: str | None = None,
+    store_kind: str = "background_agent",
+    await_policy: str = "none",
+    contact_id: str = "admin",
+) -> dict[str, str | int | None]:
+    """Run a workflow reference in an isolated trajectory store.
+
+    This is the child-runtime primitive for subagent/background execution.
+    The child workflow gets its own trajectory/chains files, but resolved
+    chains are aliased by activation ref so the parent can resolve them
+    through hash_resolve_needed later.
+    """
+
+    global _turn_counter, _skill_registry
+    _turn_counter += 1
+    current_turn = _turn_counter
+
+    state = _child_state_paths(store_kind, ref)
+    trajectory = Trajectory.load(str(state.trajectory))
+    Trajectory.load_chains(str(state.chains_file), trajectory)
+
+    registry = load_all(str(SKILLS_DIR))
+    _skill_registry = registry
+    session = Session(model=os.environ.get("KERNEL_COMPOSE_MODEL", "gpt-4.1"))
+    session.set_system(PRE_DIFF_SYSTEM)
+    session.inject(
+        "## Isolated Workflow Activation\n"
+        f"activation_ref: {ref}\n"
+        f"store_kind: {store_kind}\n"
+        f"await_policy: {await_policy}\n"
+        f"task: {task_prompt or '(none)'}"
+    )
+
+    origin_gap = Gap.create(
+        desc=task_prompt or f"run isolated workflow {ref}",
+        content_refs=[ref],
+    )
+    origin_gap.resolved = True
+    origin_gap.turn_id = current_turn
+    origin = Step.create(
+        desc=f"child activation:{ref}",
+        content_refs=[ref],
+        gaps=[origin_gap],
+    )
+    trajectory.append(origin)
+
+    compiler = Compiler(trajectory, current_turn=current_turn)
+    chain = Chain.create(origin_gap.hash, origin.hash)
+    chain.store_kind = store_kind
+    chain.activation_ref = ref
+    chain.await_policy = await_policy
+    trajectory.add_chain(chain)
+    compiler.active_chain = chain
+    compiler.ledger.chain_states[chain.hash] = ChainState.OPEN
+
+    skill = registry.resolve(ref)
+    if skill is not None:
+        activation_step = me.activate_skill_package(
+            skill,
+            ref,
+            origin_gap,
+            origin,
+            chain.hash,
+            current_turn,
+            task_prompt=task_prompt,
+            registry=registry,
+            chains_dir=state.chains_dir,
+            cors_root=CORS_ROOT,
+            tool_map=TOOL_MAP,
+            git=git_show,
+        )
+        session.inject(f"## Activated workflow\n{_render_skill_package(skill)}")
+    else:
+        activation_step = me.activate_chain_reference(
+            state.chains_dir,
+            ref,
+            "inline",
+            origin_gap,
+            origin,
+            chain.hash,
+            registry,
+            compiler,
+            trajectory,
+            current_turn,
+            task_prompt=task_prompt,
+            tool_map=TOOL_MAP,
+        )
+        package = me.load_chain_package(state.chains_dir, ref, trajectory)
+        if package is not None:
+            session.inject(f"## Activated workflow\n{me.render_chain_package(package, ref)}")
+
+    if activation_step is None:
+        _save_turn(trajectory, state)
+        return {
+            "status": "missing",
+            "activation_ref": ref,
+            "store_kind": store_kind,
+            "trajectory": str(state.trajectory),
+            "chains_file": str(state.chains_file),
+            "chains_dir": str(state.chains_dir),
+            "response": None,
+        }
+
+    trajectory.append(activation_step)
+    compiler.add_step_to_chain(activation_step.hash)
+    compiler.emit(activation_step)
+
+    for iteration in range(MAX_ITERATIONS):
+        entry, signal = compiler.next()
+        if entry is None or signal == GovernorSignal.HALT:
+            break
+        gap = entry.gap
+        session.inject(
+            "## Active Chain Tree\n"
+            f"{trajectory.render_chain(entry.chain_id, registry=registry, highlight_gap=gap.hash)}"
+        )
+        outcome = execute_iteration(
+            entry=entry,
+            signal=signal,
+            session=session,
+            origin_step=origin,
+            trajectory=trajectory,
+            compiler=compiler,
+            registry=registry,
+            current_turn=current_turn,
+            hooks=_execution_hooks(state.chains_dir),
+            config=_execution_config(state.chains_dir, task_prompt or ref),
+        )
+        if outcome.control == "break" or compiler.is_done():
+            break
+
+    child_response = _synthesize(session, task_prompt or f"child workflow {ref}")
+
+    chain.store_kind = store_kind
+    chain.activation_ref = ref
+    chain.await_policy = await_policy
+    if chain.resolved:
+            commit_step = Step.create(
+                desc=f"commit: reintegrate child workflow {ref}",
+                step_refs=[activation_step.hash],
+                content_refs=[ref, chain.hash],
+                chain_id=chain.hash,
+            )
+            trajectory.append(commit_step)
+            chain.add_step(commit_step.hash)
+
+    for child_chain in trajectory.chains.values():
+        if child_chain.resolved:
+            child_chain.store_kind = store_kind
+            child_chain.activation_ref = child_chain.activation_ref or ref
+            child_chain.await_policy = child_chain.await_policy or await_policy
+            child_chain.extracted = True
+
+    _save_turn(trajectory, state)
+    return {
+        "status": "ok",
+        "activation_ref": ref,
+        "store_kind": store_kind,
+        "trajectory": str(state.trajectory),
+        "chains_file": str(state.chains_file),
+        "chains_dir": str(state.chains_dir),
+        "response": child_response,
+    }
 
 
 # ── Main ─────────────────────────────────────────────────────────────────

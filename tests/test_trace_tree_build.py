@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from tools import trace_tree_build as trace_tree_build_module
+from system import trace_tree_build as trace_tree_build_module
 
 
 def example_stepchain() -> dict:
@@ -269,7 +269,7 @@ def test_build_trace_tree_from_skeleton():
 
 def test_trace_tree_cli_outputs_contract():
     proc = subprocess.run(
-        ["python3", str(ROOT / "tools" / "trace_tree_build.py")],
+        ["python3", str(ROOT / "system" / "trace_tree_build.py")],
         input=json.dumps({"artifact_type": "stepchain", "candidate": example_stepchain()}),
         text=True,
         capture_output=True,

@@ -38,14 +38,12 @@ Observe:
 - `hash_resolve_needed`
 - `email_needed`
 - `external_context`
-- `clarify_needed`
 
 Mutate:
 
 - `hash_edit_needed`
 - `stitch_needed`
 - `content_needed`
-- `script_edit_needed`
 - `command_needed`
 - `message_needed`
 - `json_patch_needed`
@@ -54,9 +52,12 @@ Mutate:
 Bridge:
 
 - `reason_needed`
+- `tool_needed`
+- `vocab_reg_needed`
 - `await_needed`
-- `commit_needed`
 - `reprogramme_needed`
+
+`clarify_needed` is still treated as a bounded clarification frontier, not an ordinary mutate/observe tool route.
 
 ## Admission
 
@@ -79,7 +80,7 @@ Cross-turn carry is now conceptually narrower than older docs suggested:
 
 - the compiler can readmit old gaps
 - the loop decides which gaps are even eligible for cross-turn readmission
-- clarify carry is now blocked before re-admission
+- clarify carry is blocked before re-admission
 
 ## Chain Lifecycle
 
@@ -135,7 +136,7 @@ It is used for:
 
 ## Background Tracking
 
-The background surface is real and current:
+The background surface is live and now reason-led:
 
 - `_background_triggers`
 - `_awaited_chains`
@@ -147,8 +148,16 @@ Exposed helpers:
 - `record_await(...)`
 - `needs_heartbeat()`
 - `background_refs()`
+- `manual_await_refs()`
 
-This is what lets the loop persist explicit heartbeat follow-up instead of relying on prompt memory.
+Background triggers now include:
+
+- current form:
+  - `reason_needed` activation with `activation_ref`
+- legacy compatibility:
+  - `reprogramme_needed`
+
+This is what lets the loop persist explicit await checkpoints or async heartbeats without relying on prompt memory.
 
 ## What It Does Not Own
 
@@ -157,9 +166,8 @@ Still outside [compile.py](/Users/k2invested/Desktop/cors/compile.py):
 - `.st` tree policy
 - clarify frontier merging
 - route-mode coercion
-- skeleton compilation
-- semantic-skeleton persistence
-- package activation
+- package persistence
+- tool/vocab registry writes
 - Discord diff notifications
 
 So the accurate summary is unchanged in spirit: `compile.py` is the lawful sequencer, not the planner and not the persistence layer.

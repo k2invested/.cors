@@ -29,8 +29,8 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         allows_post_gap_emission=True,
         tool=None,
         desc="Resolve hashes and observe the resulting context.",
-        target_kind="builtin",
-        target_ref="hash_resolve",
+        target_kind="tool",
+        target_ref="f4f6e4bf8d15",
     ),
     "pattern_needed": VocabSpec(
         name="pattern_needed",
@@ -41,7 +41,7 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         tool="tools/file_grep.py",
         desc="Search for a deterministic pattern in workspace content.",
         target_kind="tool",
-        target_ref="tools/file_grep.py",
+        target_ref="d5b8c72f9e8c",
     ),
     "email_needed": VocabSpec(
         name="email_needed",
@@ -52,7 +52,7 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         tool="tools/email_check.py",
         desc="Inspect email context or mailbox state.",
         target_kind="tool",
-        target_ref="tools/email_check.py",
+        target_ref="d58156396f0a",
     ),
     "external_context": VocabSpec(
         name="external_context",
@@ -71,7 +71,7 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         tool="tools/hash_manifest.py",
         desc="Patch or rewrite a workspace file.",
         target_kind="tool",
-        target_ref="tools/hash_manifest.py",
+        target_ref="da6ab1b8070b",
     ),
     "stitch_needed": VocabSpec(
         name="stitch_needed",
@@ -81,7 +81,7 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         post_observe="ui_output/",
         desc="Generate stitched UI output artifacts.",
         target_kind="tool",
-        target_ref="tools/stitch_generate.py",
+        target_ref="533639db50a2",
     ),
     "content_needed": VocabSpec(
         name="content_needed",
@@ -90,7 +90,7 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         tool="tools/hash_manifest.py",
         desc="Write new content into the workspace through the hash manifest primitive.",
         target_kind="tool",
-        target_ref="tools/hash_manifest.py",
+        target_ref="da6ab1b8070b",
     ),
     "command_needed": VocabSpec(
         name="command_needed",
@@ -100,7 +100,7 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         post_observe="bot.log",
         desc="Execute a shell command to mutate state.",
         target_kind="tool",
-        target_ref="tools/code_exec.py",
+        target_ref="52f151625add",
     ),
     "message_needed": VocabSpec(
         name="message_needed",
@@ -109,16 +109,16 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         tool="tools/email_send.py",
         desc="Send a message or email.",
         target_kind="tool",
-        target_ref="tools/email_send.py",
+        target_ref="0aa81af568e8",
     ),
     "json_patch_needed": VocabSpec(
         name="json_patch_needed",
         category="mutate",
         priority=40,
-        tool="tools/json_patch.py",
-        desc="Apply a structured JSON patch.",
+        tool="tools/hash_manifest.py",
+        desc="Apply a structured JSON patch through the hash manifest primitive.",
         target_kind="tool",
-        target_ref="tools/json_patch.py",
+        target_ref="da6ab1b8070b",
     ),
     "git_revert_needed": VocabSpec(
         name="git_revert_needed",
@@ -127,7 +127,7 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         tool="tools/git_ops.py",
         desc="Revert git state.",
         target_kind="tool",
-        target_ref="tools/git_ops.py",
+        target_ref="7320bac4d41b",
     ),
 }
 # END CONFIGURABLE_VOCABS
@@ -152,14 +152,14 @@ FOUNDATIONAL_BRIDGES: dict[str, VocabSpec] = {
         name="tool_needed",
         category="bridge",
         priority=92,
-        tool="tools/tool_builder.py",
+        tool="system/tool_builder.py",
         desc="Reason-routed tool authoring branch with validated runtime contract metadata.",
     ),
     "vocab_reg_needed": VocabSpec(
         name="vocab_reg_needed",
         category="bridge",
         priority=93,
-        tool="tools/vocab_builder.py",
+        tool="system/vocab_builder.py",
         desc="Reason-routed semantic vocab routing branch for configurable observe/mutate paths.",
     ),
     "await_needed": VocabSpec(
@@ -243,8 +243,8 @@ def validate_tree_policy_targets(policy: dict) -> list[str]:
 def render_configurable_vocab_registry() -> str:
     lines = ["## Configurable Vocab Registry"]
     for name, spec in CONFIGURABLE_VOCABS.items():
-        target = spec.target_ref or spec.tool or "internal"
+        target = spec.target_ref or "internal"
         lines.append(
-            f"- {name} | classifiable={spec.category} | target={target} | {spec.desc}"
+            f"- {name} | classifiable={spec.category} | target_kind={spec.target_kind or 'none'} | target_ref={target} | {spec.desc}"
         )
     return "\n".join(lines)

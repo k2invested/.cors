@@ -20,7 +20,9 @@ from skills.loader import Skill, SkillRegistry
 from tools import st_builder as st_builder_module
 
 ROOT = Path(__file__).resolve().parent
-CHAINS_DIR = ROOT / "chains"
+LEGACY_CHAINS_DIR = ROOT / "chains"
+CHAINS_DIR = ROOT / "trajectory_store" / "command"
+TRAJECTORY_STORE_NAMES = ("command", "subagent", "background_agent")
 
 
 NODE_DEFAULT_RELEVANCE = {
@@ -75,6 +77,19 @@ def chain_package_path(chains_dir: Path, ref: str) -> Path:
     return chains_dir / f"{ref}.json"
 
 
+def _candidate_chain_package_paths(chains_dir: Path, ref: str) -> list[Path]:
+    candidates = [chain_package_path(chains_dir, ref)]
+    if chains_dir.name in TRAJECTORY_STORE_NAMES:
+        for sibling in TRAJECTORY_STORE_NAMES:
+            sibling_dir = chains_dir.parent / sibling
+            if sibling_dir == chains_dir:
+                continue
+            candidates.append(chain_package_path(sibling_dir, ref))
+    if chains_dir != LEGACY_CHAINS_DIR:
+        candidates.append(chain_package_path(LEGACY_CHAINS_DIR, ref))
+    return candidates
+
+
 def persist_chain_package(chains_dir: Path, doc: dict) -> str:
     chains_dir.mkdir(exist_ok=True)
     package_hash = stable_doc_hash(doc)
@@ -86,13 +101,13 @@ def persist_chain_package(chains_dir: Path, doc: dict) -> str:
 
 
 def load_chain_package(chains_dir: Path, ref: str, trajectory: Trajectory | None = None) -> dict | None:
-    path = chain_package_path(chains_dir, ref)
-    if path.exists():
-        try:
-            with open(path) as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            return None
+    for path in _candidate_chain_package_paths(chains_dir, ref):
+        if path.exists():
+            try:
+                with open(path) as f:
+                    return json.load(f)
+            except json.JSONDecodeError:
+                return None
 
     if trajectory:
         chain = trajectory.chains.get(ref)
@@ -1178,12 +1193,21 @@ def activate_chain_reference(chains_dir: Path, chain_ref: str, activation: str, 
                              registry: SkillRegistry, compiler, trajectory: Trajectory,
                              turn_counter: int, task_prompt: str | None = None,
     embedded: bool = False,
-    tool_map: dict[str, dict] | None = None) -> Step | None:
+    tool_map: dict[str, dict] | None = None,
+    await_policy: str = "none",
+    store_kind: str = "background_agent") -> Step | None:
     trigger_refs = _trigger_context_refs(registry)
     if activation == "background":
-        compiler.record_background_trigger(entry_chain_id, refs=trigger_refs + [chain_ref])
+        compiler.record_background_trigger(
+            entry_chain_id,
+            refs=trigger_refs + [chain_ref] + gap.content_refs,
+            activation_ref=chain_ref,
+            await_policy=await_policy,
+            store_kind=store_kind,
+            parent_step=origin_step.hash,
+        )
         return Step.create(
-            desc=f"scheduled background chain:{chain_ref} for {gap.desc}",
+            desc=f"scheduled background chain:{chain_ref} [{await_policy}] for {gap.desc}",
             step_refs=[origin_step.hash],
             content_refs=trigger_refs + [chain_ref] + gap.content_refs,
             chain_id=entry_chain_id,

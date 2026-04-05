@@ -20,8 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from tools.tool_contract import load_tool_contract
-from tools.tool_registry import public_tool_paths
+from system.tool_contract import load_tool_contract
+from system.tool_registry import public_tool_paths
 from vocab_registry import is_bridge, is_mutate, is_observe
 
 

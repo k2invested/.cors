@@ -10,9 +10,12 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(__file__))
-from scan_tree import sandbox_path
-from tool_contract import validate_tool_file
+ROOT = os.path.dirname(os.path.dirname(__file__))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+from tools.scan_tree import sandbox_path
+from system.tool_contract import validate_tool_file
 
 
 def main() -> None:

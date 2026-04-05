@@ -66,7 +66,7 @@ def _render_vocab_table() -> list[str]:
 
 
 def _render_tool_table() -> list[str]:
-    chains_dir = ROOT / "state" / "chains"
+    chains_dir = ROOT / "state" / "trajectory_store" / "command"
     with contextlib.redirect_stdout(io.StringIO()):
         registry = load_all(str(ROOT / "skills"))
     tool_specs = [
