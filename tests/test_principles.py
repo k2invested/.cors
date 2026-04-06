@@ -1974,7 +1974,7 @@ def test_p12_command_needed_commit_postcondition_resolves_bot_log(monkeypatch):
     session = FakeSession()
 
     hooks = execution_engine_module.ExecutionHooks(
-        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "resolved activation context",
         execute_tool=lambda tool, params: ("", 0),
         auto_commit=lambda message, paths=None: ("abc123", None),
         parse_step_output=loop._parse_step_output,
@@ -2048,7 +2048,7 @@ def test_p12_command_needed_without_commit_still_emits_log_postcondition(monkeyp
     session = FakeSession()
 
     hooks = execution_engine_module.ExecutionHooks(
-        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "resolved activation context",
         execute_tool=lambda tool, params: ("", 0),
         auto_commit=lambda message, paths=None: (None, None),
         parse_step_output=loop._parse_step_output,
@@ -2308,7 +2308,7 @@ def test_p12_clarify_iteration_emits_single_merged_step():
     session = FakeSession()
 
     hooks = execution_engine_module.ExecutionHooks(
-        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "resolved activation context",
         execute_tool=lambda tool, params: ("", 0),
         auto_commit=lambda message, paths=None: (None, None),
         parse_step_output=lambda raw, step_refs, content_refs, chain_id=None: (make_step("noop"), []),
@@ -2398,7 +2398,7 @@ def test_p12_reason_needed_runs_inline_and_emits_child_gaps():
     session = FakeSession()
 
     hooks = execution_engine_module.ExecutionHooks(
-        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "resolved activation context",
         execute_tool=lambda tool, params: ("", 0),
         auto_commit=lambda message, paths=None: (None, None),
         parse_step_output=loop._parse_step_output,
@@ -4009,13 +4009,13 @@ def test_p13_runtime_semantic_tree_marks_branch_resolved_after_descendants_close
 
 
 def test_p12_render_skill_package_surfaces_action_tree_details():
-    debug_skill = registry().resolve_command("debug")
+    debug_skill = registry().resolve_by_name("debug")
     assert debug_skill is not None
     rendered = loop._render_skill_package(debug_skill)
 
     assert rendered.startswith(f"semantic_tree:skill_package:{debug_skill.hash}")
-    assert 'package:debug "Self-debug loop. Resolves source, trajectory, and logs — then diagnoses and fixes." (4 steps)' in rendered
-    assert "trigger: command:debug" in rendered
+    assert 'package:debug "Reason-activated debug analysis. Resolves principles, attached source, turn tree, and failed output log, then reasons about fixes and may activate hash_edit." (5 steps)' in rendered
+    assert "trigger: manual" in rendered
     assert "legend: step{o/m/b/c + frontier}; gap{status + surface + ref-counts}" in rendered
     assert "[hash_resolve_needed]" in rendered
     assert "manifestation:" not in rendered
@@ -4024,7 +4024,7 @@ def test_p12_render_skill_package_surfaces_action_tree_details():
 
 
 def test_p12_render_skill_package_uses_refined_semantic_tree_surface():
-    debug_skill = registry().resolve_command("debug")
+    debug_skill = registry().resolve_by_name("debug")
     assert debug_skill is not None
 
     rendered = loop._render_skill_package(debug_skill)
@@ -4041,7 +4041,7 @@ def test_p12_render_skill_package_uses_refined_semantic_tree_surface():
 
 
 def test_p12_build_semantic_tree_from_action_skill_exposes_gap_configuration():
-    debug_skill = registry().resolve_command("debug")
+    debug_skill = registry().resolve_by_name("debug")
     assert debug_skill is not None
 
     tree = manifest_engine_module.build_semantic_tree(
@@ -4201,6 +4201,7 @@ def test_p12_chain_registry_exposes_action_chain_paths():
         "skills/actions/architect.st",
         "skills/actions/debug.st",
         "skills/actions/hash_edit.st",
+        "skills/actions/property_research.st",
     )
 
 
@@ -4222,12 +4223,22 @@ def test_p12_chain_registry_derives_command_action_tools():
     contracts = {contract.name: contract for contract in chain_registry_module.list_public_chain_contracts(ROOT)}
     architect = contracts["architect"]
     debug = contracts["debug"]
+    property_research = contracts["property_research"]
 
     assert architect.activation == "command:architect"
     assert architect.default_gap == "hash_resolve_needed"
     assert architect.tool_paths == ("tools/hash_manifest.py", "tools/code_exec.py")
-    assert debug.activation == "command:debug"
-    assert debug.tool_paths == ("tools/hash_manifest.py", "tools/code_exec.py")
+    assert debug.activation == "name:hash_resolve_needed"
+    assert debug.trigger == "manual"
+    assert debug.step_count == 5
+    assert debug.omo_shape == "observe->bridge"
+    assert debug.tool_paths == ()
+    assert property_research.activation == "command:property_research"
+    assert property_research.step_count == 14
+    assert property_research.omo_shape == "observe->mutate"
+    assert "tools/postcodes_io.py" in property_research.tool_paths
+    assert "tools/land_registry.py" in property_research.tool_paths
+    assert "tools/research_web.py" in property_research.tool_paths
 
 
 def test_p12_render_public_chain_registry_lists_compact_chain_surface():
@@ -4261,6 +4272,41 @@ def test_p12_render_public_tool_registry_lists_public_tools_and_contracts():
     assert "mutate/external | post_observe=log | artifacts=none" in rendered
     assert "tools/hash/doc_read.py" not in rendered
     assert "tools/hash/document_extract_marker.py" not in rendered
+
+
+def test_p12_find_vocab_for_tool_ref_prefers_current_hash_manifest_mapping():
+    hash_manifest_ref = next(
+        ref for ref, path in tool_registry_module.public_tool_ref_map(ROOT).items() if path == "tools/hash_manifest.py"
+    )
+    assert vocab_registry_module.find_vocab_for_tool_ref(hash_manifest_ref) == "hash_edit_needed"
+
+
+def test_p12_semantic_skeleton_from_st_supports_direct_tool_ref_steps():
+    tool_ref = next(
+        ref for ref, path in tool_registry_module.public_tool_ref_map(ROOT).items() if path == "tools/postcodes_io.py"
+    )
+    lowered = st_builder_module.semantic_skeleton_from_st(
+        {
+            "name": "postcode_probe",
+            "desc": "lookup postcode context",
+            "trigger": "manual",
+            "steps": [
+                {
+                    "action": "lookup_postcode",
+                    "desc": "use the postcode tool directly",
+                    "tool_ref": tool_ref,
+                    "post_diff": False,
+                }
+            ],
+        }
+    )
+
+    phase = lowered["phases"][0]
+    assert phase["manifestation"]["execution_mode"] == "curated_step_hash"
+    assert phase["manifestation"]["activation_ref"] == tool_ref
+    assert phase["allowed_vocab"] == []
+    lowered_st, _, _ = st_builder_module.lower_semantic_skeleton(lowered)
+    assert lowered_st["steps"][0]["tool_ref"] == tool_ref
 
 
 def test_p12_action_foundations_hide_internal_hash_handlers():
@@ -4609,6 +4655,80 @@ def test_p12_vocab_reg_needed_injects_registries_before_compose():
     assert any(content.startswith("## Public Chain Registry") for content in session.injected)
     assert any(content.startswith("## Configurable Vocab Registry") for content in session.injected)
     assert session.calls == 1
+
+
+def test_p12_direct_tool_ref_observe_executes_public_tool_by_hash():
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+            self.calls = 0
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            self.calls += 1
+            if self.calls == 1:
+                return json.dumps({"postcode": "M1 1AA"})
+            return json.dumps({"desc": "observed postcode context", "gaps": []})
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    tool_ref = next(
+        ref for ref, path in tool_registry_module.public_tool_ref_map(ROOT).items() if path == "tools/postcodes_io.py"
+    )
+    gap = make_gap(
+        "lookup postcode context for the target property",
+        content_refs=["package_ref", tool_ref],
+    )
+    gap.route_mode = "tool_ref_direct"
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+    executed = []
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "resolved property brief with postcode M1 1AA",
+        execute_tool=lambda tool, params: (executed.append((tool, params)) or True) and ('{"postcode":"M1 1AA","district":"Manchester"}', 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: None,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert executed == [("tools/postcodes_io.py", {"postcode": "M1 1AA"})]
+    assert any(content.startswith("## Tool output (tools/postcodes_io.py)") for content in session.injected)
 
 
 def test_p12_tool_needed_reintegrates_through_reason_needed_after_write():
@@ -4970,6 +5090,244 @@ def test_p12_reason_needed_can_activate_isolated_workflow_with_manual_await():
 
     assert compiler.manual_await_refs() == [skill("hash_edit").hash]
     assert compiler.background_refs() == []
+
+
+def test_p12_reason_needed_can_activate_isolated_workflow_with_attached_refs():
+    class FakeSession:
+        def call(self, user_content: str = None) -> str:
+            return json.dumps(
+                {
+                    "activate_ref": skill("debug").hash,
+                    "prompt": "debug the attached failure",
+                    "await_needed": False,
+                    "content_refs": ["bot.log", "skills/entities/property_brief.st"],
+                    "step_refs": ["deadbeef1234"],
+                }
+            )
+
+        def inject(self, content: str, role: str = "user"):
+            pass
+
+    activated: list[dict] = []
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    compiler.ledger.chain_states["parent_chain"] = ChainState.OPEN
+    origin_step = make_step("origin")
+    gap = make_gap("delegate child debug work", vocab="reason_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="parent_chain")
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "resolved activation context",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        run_isolated_workflow=lambda ref, **kwargs: activated.append({"ref": ref, **kwargs}) or {"status": "ok", "activation_ref": ref, "store_kind": "background_agent"},
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "trajectory_store" / "command",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=FakeSession(),
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert activated == [{
+        "ref": skill("debug").hash,
+        "task_prompt": "debug the attached failure",
+        "store_kind": "background_agent",
+        "await_policy": "none",
+        "content_refs": ["bot.log", "skills/entities/property_brief.st"],
+        "step_refs": ["deadbeef1234"],
+        "activation_context": "resolved activation context",
+    }]
+    assert compiler.background_refs() == [skill("debug").hash, "bot.log", "skills/entities/property_brief.st", "deadbeef1234"]
+
+
+def test_p12_execution_failure_auto_activates_debug(monkeypatch):
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps({"command": "pytest -q"})
+
+    class Result:
+        stdout = ""
+        stderr = "boom"
+        returncode = 1
+
+    monkeypatch.setattr(execution_engine_module.subprocess, "run", lambda *args, **kwargs: Result())
+
+    activated: list[dict] = []
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("run failing test suite", vocab="command_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "resolved failure context",
+        execute_tool=lambda tool, params: ("boom", 1),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: json.loads(raw)["command"],
+        extract_written_path=lambda output: None,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        run_isolated_workflow=lambda ref, **kwargs: activated.append({"ref": ref, **kwargs}) or {"status": "ok", "activation_ref": ref, "store_kind": "background_agent"},
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "trajectory_store" / "command",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert outcome.step_result.rogue is True
+    assert activated
+    assert activated[0]["ref"] == skill("debug").hash
+    assert activated[0]["await_policy"] == "none"
+    assert activated[0]["task_prompt"].startswith("Debug execution failure.")
+    assert activated[0]["activation_context"] == "resolved failure context"
+    assert compiler.background_refs()[0] == skill("debug").hash
+    assert any("## Auto Debug Activation" in content for content in session.injected)
+
+
+def test_p12_protected_path_violation_auto_activates_debug():
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps({"path": "system/tool_registry.py", "old": "x", "new": "y"})
+
+    activated: list[dict] = []
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("edit protected file", vocab="hash_edit_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "policy failure context",
+        execute_tool=lambda tool, params: ("Written: /Users/k2invested/Desktop/cors/system/tool_registry.py", 0),
+        auto_commit=lambda message, paths=None: (None, "reason_needed"),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: "/Users/k2invested/Desktop/cors/system/tool_registry.py",
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "auto-revert: protected path violation",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        run_isolated_workflow=lambda ref, **kwargs: activated.append({"ref": ref, **kwargs}) or {"status": "ok", "activation_ref": ref, "store_kind": "background_agent"},
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "trajectory_store" / "command",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert outcome.step_result.rogue is True
+    assert activated
+    assert activated[0]["ref"] == skill("debug").hash
+    assert "immutable path violation" in activated[0]["task_prompt"]
+
+
+def test_p12_debug_failure_does_not_recursively_activate_debug():
+    origin_step = make_step("origin", content_refs=[skill("debug").hash])
+    rogue_step = make_step("rogue", content_refs=[skill("debug").hash], step_refs=["attempt"])
+    gap = make_gap("run failing debug verification", vocab="command_needed", content_refs=[skill("debug").hash])
+
+    payload = execution_engine_module._debug_activation_payload(
+        registry=registry(),
+        origin_step=origin_step,
+        rogue_step=rogue_step,
+        gap=gap,
+        rogue_kind="tool_failure",
+        failure_source="tools/code_exec.py",
+        failure_detail="boom",
+    )
+
+    assert payload is None
 
 
 def test_p12_existing_action_update_does_not_require_reason():

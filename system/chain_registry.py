@@ -12,8 +12,11 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from system.tool_registry import _working_tree_blob, public_tool_blob_refs
-from vocab_registry import TOOL_MAP, is_bridge, is_mutate, is_observe
+from system.tool_contract import load_tool_contract
+from system.tool_registry import _working_tree_blob, public_tool_blob_refs, public_tool_ref_map
+from vocab_registry import TOOL_MAP, find_vocab_for_tool_ref, is_bridge, is_mutate, is_observe
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 @dataclass(frozen=True)
@@ -107,6 +110,45 @@ def _tool_paths_from_vocabs(vocabs: list[str]) -> tuple[str, ...]:
     return tuple(seen)
 
 
+def _step_effective_vocab(step: dict) -> str | None:
+    vocab = step.get("vocab")
+    if isinstance(vocab, str) and vocab:
+        return vocab
+    tool_ref = step.get("tool_ref")
+    if isinstance(tool_ref, str) and tool_ref:
+        return find_vocab_for_tool_ref(tool_ref)
+    return None
+
+
+def _tool_paths_from_steps(steps: list[dict], *, cors_root: Path) -> tuple[str, ...]:
+    ref_map = public_tool_ref_map(cors_root)
+    seen: list[str] = []
+    for step in steps:
+        vocab = _step_effective_vocab(step)
+        tool = (TOOL_MAP.get(vocab) or {}).get("tool") if vocab else None
+        if not tool:
+            tool_ref = step.get("tool_ref")
+            if isinstance(tool_ref, str):
+                tool = ref_map.get(tool_ref)
+        if isinstance(tool, str) and tool not in seen:
+            seen.append(tool)
+    return tuple(seen)
+
+
+def _step_role(step: dict) -> str:
+    vocab = _step_effective_vocab(step)
+    if vocab:
+        return _vocab_role(vocab)
+    tool_ref = step.get("tool_ref")
+    if isinstance(tool_ref, str) and tool_ref:
+        tool_path = public_tool_ref_map(ROOT).get(tool_ref)
+        if tool_path:
+            contract = load_tool_contract(ROOT / tool_path)
+            if contract is not None:
+                return "mutate" if contract.mode == "mutate" else "observe"
+    return "bridge"
+
+
 def list_public_chain_contracts(cors_root: Path) -> tuple[ChainContract, ...]:
     tool_blobs = public_tool_blob_refs(cors_root)
     contracts: list[ChainContract] = []
@@ -116,10 +158,10 @@ def list_public_chain_contracts(cors_root: Path) -> tuple[ChainContract, ...]:
             continue
         doc = _load_chain_doc(cors_root / rel)
         steps = list(doc.get("steps", []) or [])
-        vocab_sequence = tuple(step.get("vocab") for step in steps if step.get("vocab"))
-        entry_vocab = next((step.get("vocab") for step in steps if step.get("vocab")), None)
+        vocab_sequence = tuple(vocab for step in steps if (vocab := _step_effective_vocab(step)))
+        entry_vocab = next((_step_effective_vocab(step) for step in steps if _step_effective_vocab(step)), None)
         trigger = str(doc.get("trigger", "manual") or "manual")
-        tool_paths = _tool_paths_from_vocabs(list(vocab_sequence))
+        tool_paths = _tool_paths_from_steps(steps, cors_root=cors_root)
         tool_blob_list: list[str] = []
         for path in tool_paths:
             blob = _blob_ref(path, cors_root=cors_root)
@@ -136,7 +178,7 @@ def list_public_chain_contracts(cors_root: Path) -> tuple[ChainContract, ...]:
                 default_gap=_default_gap(trigger, entry_vocab),
                 entry_vocab=entry_vocab,
                 step_count=len(steps),
-                omo_shape=_compress_roles([_vocab_role(step.get("vocab")) for step in steps]),
+                omo_shape=_compress_roles([_step_role(step) for step in steps]),
                 vocab_sequence=vocab_sequence,
                 tool_paths=tool_paths,
                 tool_blob_refs=tuple(tool_blob_list),

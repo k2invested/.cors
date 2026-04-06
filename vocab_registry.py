@@ -71,7 +71,7 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         tool="tools/hash_manifest.py",
         desc="Patch or rewrite a workspace file.",
         target_kind="tool",
-        target_ref="da6ab1b8070b",
+        target_ref="20c7462db20c",
     ),
     "stitch_needed": VocabSpec(
         name="stitch_needed",
@@ -90,7 +90,7 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         tool="tools/hash_manifest.py",
         desc="Write new content into the workspace through the hash manifest primitive.",
         target_kind="tool",
-        target_ref="da6ab1b8070b",
+        target_ref="20c7462db20c",
     ),
     "command_needed": VocabSpec(
         name="command_needed",
@@ -118,7 +118,7 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         tool="tools/hash_manifest.py",
         desc="Apply a structured JSON patch through the hash manifest primitive.",
         target_kind="tool",
-        target_ref="da6ab1b8070b",
+        target_ref="20c7462db20c",
     ),
     "git_revert_needed": VocabSpec(
         name="git_revert_needed",
@@ -248,3 +248,17 @@ def render_configurable_vocab_registry() -> str:
             f"- {name} | classifiable={spec.category} | target_kind={spec.target_kind or 'none'} | target_ref={target} | {spec.desc}"
         )
     return "\n".join(lines)
+
+
+def find_vocab_for_tool_ref(tool_ref: str | None) -> str | None:
+    if not isinstance(tool_ref, str) or not tool_ref:
+        return None
+    best_name: str | None = None
+    best_priority: int | None = None
+    for name, spec in CONFIGURABLE_VOCABS.items():
+        if spec.target_kind != "tool" or spec.target_ref != tool_ref:
+            continue
+        if best_priority is None or spec.priority < best_priority:
+            best_name = name
+            best_priority = spec.priority
+    return best_name

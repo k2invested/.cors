@@ -2751,6 +2751,9 @@ def run_isolated_workflow_ref(
     ref: str,
     *,
     task_prompt: str | None = None,
+    content_refs: list[str] | None = None,
+    step_refs: list[str] | None = None,
+    activation_context: str | None = None,
     store_kind: str = "background_agent",
     await_policy: str = "none",
     contact_id: str = "admin",
@@ -2773,6 +2776,8 @@ def run_isolated_workflow_ref(
 
     registry = load_all(str(SKILLS_DIR))
     _skill_registry = registry
+    activation_content_refs = [str(item).strip() for item in (content_refs or []) if isinstance(item, str) and str(item).strip()]
+    activation_step_refs = [str(item).strip() for item in (step_refs or []) if isinstance(item, str) and str(item).strip()]
     session = Session(model=os.environ.get("KERNEL_COMPOSE_MODEL", "gpt-4.1"))
     session.set_system(PRE_DIFF_SYSTEM)
     session.inject(
@@ -2780,18 +2785,24 @@ def run_isolated_workflow_ref(
         f"activation_ref: {ref}\n"
         f"store_kind: {store_kind}\n"
         f"await_policy: {await_policy}\n"
-        f"task: {task_prompt or '(none)'}"
+        f"task: {task_prompt or '(none)'}\n"
+        f"content_refs: {activation_content_refs or []}\n"
+        f"step_refs: {activation_step_refs or []}"
     )
+    if activation_context:
+        session.inject(f"## Activation Context\n{activation_context}")
 
     origin_gap = Gap.create(
         desc=task_prompt or f"run isolated workflow {ref}",
-        content_refs=[ref],
+        content_refs=[ref] + activation_content_refs,
+        step_refs=activation_step_refs,
     )
     origin_gap.resolved = True
     origin_gap.turn_id = current_turn
     origin = Step.create(
         desc=f"child activation:{ref}",
-        content_refs=[ref],
+        step_refs=activation_step_refs,
+        content_refs=[ref] + activation_content_refs,
         gaps=[origin_gap],
     )
     trajectory.append(origin)
@@ -2815,6 +2826,8 @@ def run_isolated_workflow_ref(
             chain.hash,
             current_turn,
             task_prompt=task_prompt,
+            activation_content_refs=activation_content_refs,
+            activation_step_refs=activation_step_refs,
             registry=registry,
             chains_dir=state.chains_dir,
             cors_root=CORS_ROOT,
@@ -2835,6 +2848,8 @@ def run_isolated_workflow_ref(
             trajectory,
             current_turn,
             task_prompt=task_prompt,
+            activation_content_refs=activation_content_refs,
+            activation_step_refs=activation_step_refs,
             tool_map=TOOL_MAP,
         )
         package = me.load_chain_package(state.chains_dir, ref, trajectory)

@@ -67,6 +67,7 @@ BASE_STEP_FIELDS = {
     "terminal",
     "requires_postcondition",
     "activation_key",
+    "tool_ref",
 }
 
 
@@ -97,6 +98,7 @@ class SkillStep:
     terminal: bool = False
     requires_postcondition: bool = False
     activation_key: str | None = None
+    tool_ref: str | None = None
     extra: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -136,6 +138,8 @@ class SkillStep:
             data["requires_postcondition"] = True
         if self.activation_key is not None:
             data["activation_key"] = self.activation_key
+        if self.tool_ref is not None:
+            data["tool_ref"] = self.tool_ref
         data.update(self.extra)
         return data
 
@@ -326,6 +330,7 @@ def _normalize_step(data: dict) -> SkillStep:
         terminal=bool(data.get("terminal", False)),
         requires_postcondition=bool(data.get("requires_postcondition", False)),
         activation_key=data.get("activation_key"),
+        tool_ref=data.get("tool_ref"),
         extra=extra,
     )
 

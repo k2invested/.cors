@@ -26,7 +26,14 @@ if str(ROOT) not in sys.path:
 
 from compile import OBSERVE_VOCAB, MUTATE_VOCAB, BRIDGE_VOCAB
 from skills.loader import compute_skill_hash
-from system.tool_registry import internal_tool_blob_refs, is_public_tool_path, public_tool_blob_refs
+from system.tool_contract import load_tool_contract
+from system.tool_registry import (
+    internal_tool_blob_refs,
+    is_public_tool_path,
+    public_tool_blob_refs,
+    public_tool_ref_map,
+)
+from vocab_registry import find_vocab_for_tool_ref
 
 SKILLS_DIR = str(ROOT / "skills")
 ENTITY_SKILLS_DIR = str(ROOT / "skills" / "entities")
@@ -71,6 +78,19 @@ ENTITY_STEP_FIELDS = [
 
 def _object_or_empty(value: object) -> dict:
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _public_tool_path_for_ref(tool_ref: str | None) -> str | None:
+    if not isinstance(tool_ref, str) or not tool_ref:
+        return None
+    return public_tool_ref_map(ROOT).get(tool_ref)
+
+
+def _tool_contract_for_ref(tool_ref: str | None):
+    tool_path = _public_tool_path_for_ref(tool_ref)
+    if not tool_path:
+        return None
+    return load_tool_contract(ROOT / tool_path)
 
 
 def slugify(text: str) -> str:
@@ -401,6 +421,11 @@ def validate_st(data: dict,
             vocab = step.get("vocab")
             if vocab is not None and vocab not in VALID_RUNTIME_VOCAB:
                 errors.append(f"step {i}: invalid runtime vocab '{vocab}'")
+            tool_ref = step.get("tool_ref")
+            if tool_ref is not None and not isinstance(tool_ref, str):
+                errors.append(f"step {i}: 'tool_ref' must be a public tool blob hash string")
+            elif isinstance(tool_ref, str) and tool_ref and tool_ref not in public_tool_blob_refs(ROOT):
+                errors.append(f"step {i}: invalid public tool ref '{tool_ref}'")
             if "post_diff" in step and not isinstance(step["post_diff"], bool):
                 errors.append(f"step {i}: 'post_diff' must be true or false")
             if "resolve" in step and not isinstance(step["resolve"], list):
@@ -469,6 +494,8 @@ def normalize_step(raw_step: dict) -> dict:
 
     if "vocab" in raw_step:
         step["vocab"] = raw_step["vocab"]
+    if "tool_ref" in raw_step:
+        step["tool_ref"] = raw_step["tool_ref"]
 
     if "post_diff" in raw_step:
         step["post_diff"] = raw_step["post_diff"]
@@ -524,6 +551,7 @@ def _default_generation(kind: str, post_diff: bool) -> dict:
 
 def _phase_kind_for_step(step: dict) -> str:
     vocab = step.get("vocab")
+    tool_ref = step.get("tool_ref")
     refs = step.get("resolve", []) or []
     if vocab == "clarify_needed":
         return "clarify"
@@ -537,6 +565,10 @@ def _phase_kind_for_step(step: dict) -> str:
         return "mutate"
     if vocab in OBSERVE_VOCAB:
         return "observe"
+    if tool_ref:
+        contract = _tool_contract_for_ref(tool_ref)
+        if contract is not None:
+            return "mutate" if contract.mode == "mutate" else "observe"
     if refs:
         return "observe"
     return "higher_order"
@@ -544,6 +576,7 @@ def _phase_kind_for_step(step: dict) -> str:
 
 def _manifestation_for_phase(kind: str, step: dict) -> dict:
     vocab = step.get("vocab")
+    tool_ref = step.get("tool_ref")
     if kind == "clarify":
         return {
             "kernel_class": "clarify",
@@ -567,6 +600,18 @@ def _manifestation_for_phase(kind: str, step: dict) -> dict:
             "execution_mode": "runtime_vocab",
             "runtime_vocab": vocab,
         }
+    if tool_ref:
+        mapped_vocab = find_vocab_for_tool_ref(tool_ref)
+        if mapped_vocab:
+            return _manifestation_for_phase(kind, {**step, "vocab": mapped_vocab, "tool_ref": None})
+        kernel_class = "mutate" if kind == "mutate" else "observe"
+        dispersal = "action" if kind == "mutate" else "context"
+        return {
+            "kernel_class": kernel_class,
+            "dispersal": dispersal,
+            "execution_mode": "curated_step_hash",
+            "activation_ref": tool_ref,
+        }
     if kind in {"observe", "verify"}:
         return {
             "kernel_class": "observe",
@@ -582,8 +627,12 @@ def _manifestation_for_phase(kind: str, step: dict) -> dict:
 
 def _allowed_vocab_for_phase(kind: str, step: dict) -> list[str]:
     vocab = step.get("vocab")
+    tool_ref = step.get("tool_ref")
     if vocab:
         return [vocab]
+    if tool_ref:
+        mapped_vocab = find_vocab_for_tool_ref(tool_ref)
+        return [mapped_vocab] if mapped_vocab else []
     if kind == "clarify":
         return ["clarify_needed"]
     if kind == "await":
@@ -612,6 +661,8 @@ def _step_to_phase(step: dict, index: int, total: int) -> dict:
         "allowed_vocab": _allowed_vocab_for_phase(kind, step),
         "post_diff": bool(step.get("post_diff", False)),
     }
+    if step.get("tool_ref"):
+        phase["tool_ref"] = step["tool_ref"]
     if "inject" in step:
         phase["inject"] = step["inject"]
     if kind == "clarify":
@@ -652,6 +703,9 @@ def _step_chain_step_to_phase(raw_step: dict, index: int, total: int) -> dict:
     post_diff = bool(step.get("post_diff", False))
     manifestation = _object_or_empty(step.get("manifestation", {}) or {})
     runtime_vocab = manifestation.get("runtime_vocab") or step.get("vocab")
+    tool_ref = manifestation.get("activation_ref") or step.get("tool_ref")
+    if tool_ref not in public_tool_blob_refs(ROOT):
+        tool_ref = None
     step_like = {
         "action": action,
         "desc": goal,
@@ -659,6 +713,8 @@ def _step_chain_step_to_phase(raw_step: dict, index: int, total: int) -> dict:
     }
     if runtime_vocab:
         step_like["vocab"] = runtime_vocab
+    if tool_ref:
+        step_like["tool_ref"] = tool_ref
     if gap_template.get("content_refs"):
         step_like["resolve"] = list(gap_template.get("content_refs") or [])
     kind = step.get("kind") or _phase_kind_for_step(step_like)
@@ -677,6 +733,8 @@ def _step_chain_step_to_phase(raw_step: dict, index: int, total: int) -> dict:
         "allowed_vocab": list(step.get("allowed_vocab", []) or []) or _allowed_vocab_for_phase(kind, step_like),
         "post_diff": post_diff,
     }
+    if tool_ref:
+        phase["tool_ref"] = tool_ref
     if "relevance" in step:
         phase["relevance"] = step.get("relevance")
     if isinstance(step.get("embedding"), dict):
@@ -751,6 +809,9 @@ def _normalize_semantic_flow(root: str | None, phases: list[dict] | None, closur
         post_diff = bool(phase.get("post_diff", False))
         manifestation = _object_or_empty(phase.get("manifestation", {}) or {})
         runtime_vocab = manifestation.get("runtime_vocab")
+        tool_ref = manifestation.get("activation_ref") or phase.get("tool_ref")
+        if tool_ref not in public_tool_blob_refs(ROOT):
+            tool_ref = None
         step_like = {
             "action": action,
             "desc": goal,
@@ -758,6 +819,8 @@ def _normalize_semantic_flow(root: str | None, phases: list[dict] | None, closur
         }
         if runtime_vocab:
             step_like["vocab"] = runtime_vocab
+        if tool_ref:
+            step_like["tool_ref"] = tool_ref
         if gap_template.get("content_refs"):
             step_like["resolve"] = list(gap_template.get("content_refs") or [])
         kind = phase.get("kind") or _phase_kind_for_step(step_like)
@@ -798,6 +861,10 @@ def _phase_to_step(phase: dict, refs: dict[str, str]) -> dict | None:
     manifestation = effective.get("manifestation", {}) or {}
     if manifestation.get("execution_mode") == "runtime_vocab" and manifestation.get("runtime_vocab"):
         step["vocab"] = manifestation["runtime_vocab"]
+    elif manifestation.get("execution_mode") == "curated_step_hash" and manifestation.get("activation_ref"):
+        tool_ref = manifestation["activation_ref"]
+        if tool_ref in public_tool_blob_refs(ROOT):
+            step["tool_ref"] = tool_ref
     if "post_diff" in effective:
         step["post_diff"] = effective["post_diff"]
     refs_list = [

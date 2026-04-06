@@ -18,6 +18,7 @@ import action_foundations as foundations
 from step import Step, Gap, Epistemic, Trajectory, absolute_time, vocab_class
 from skills.loader import Skill, SkillRegistry
 from tools import st_builder as st_builder_module
+from vocab_registry import find_vocab_for_tool_ref
 
 ROOT = Path(__file__).resolve().parent
 LEGACY_CHAINS_DIR = ROOT / "chains"
@@ -194,6 +195,10 @@ def _merged_refs(*groups: list[str]) -> list[str]:
             if isinstance(ref, str) and ref not in merged:
                 merged.append(ref)
     return merged
+
+
+def _dedupe_runtime_refs(*groups: list[str]) -> list[str]:
+    return _merged_refs(*groups)
 
 
 def _semantic_fields(doc: dict) -> dict:
@@ -1052,6 +1057,11 @@ def _node_relevance(node: dict, index: int) -> float:
 def _effective_skill_step_vocab(skill: Skill, st_step: Any, foundation_contract: dict | None) -> str | None:
     if getattr(st_step, "vocab", None):
         return st_step.vocab
+    tool_ref = getattr(st_step, "tool_ref", None)
+    if isinstance(tool_ref, str):
+        mapped_vocab = find_vocab_for_tool_ref(tool_ref)
+        if mapped_vocab:
+            return mapped_vocab
     default_gap = (foundation_contract or {}).get("default_gap")
     if len(getattr(skill, "steps", []) or []) == 1 and default_gap not in {None, "", "internal_only"}:
         return default_gap
@@ -1070,6 +1080,8 @@ def _trigger_context_refs(registry: SkillRegistry | None) -> list[str]:
 def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
                            origin_step: Step, entry_chain_id: str,
                            turn_counter: int, task_prompt: str | None = None,
+                           activation_content_refs: list[str] | None = None,
+                           activation_step_refs: list[str] | None = None,
                            embedded: bool = False,
                            registry: SkillRegistry | None = None,
                            chains_dir: Path = CHAINS_DIR,
@@ -1087,7 +1099,7 @@ def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
     step = Step.create(
         desc=activation_desc,
         step_refs=[origin_step.hash],
-        content_refs=trigger_refs + [package_ref] + gap.content_refs,
+        content_refs=_dedupe_runtime_refs(trigger_refs, [package_ref], gap.content_refs, activation_content_refs or []),
         chain_id=entry_chain_id,
     )
     foundation_contract = foundations.resolve_default_contract(
@@ -1099,7 +1111,16 @@ def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
         git=git,
     )
     for st_step in skill.steps:
-        child_refs = [package_ref] + gap.content_refs + list(st_step.resolve) + list(st_step.content_refs)
+        tool_ref = getattr(st_step, "tool_ref", None)
+        child_refs = _dedupe_runtime_refs(
+            [package_ref],
+            gap.content_refs,
+            activation_content_refs or [],
+            list(st_step.resolve),
+            list(st_step.content_refs),
+        )
+        if isinstance(tool_ref, str) and tool_ref and tool_ref not in child_refs:
+            child_refs.append(tool_ref)
         child_desc = st_step.desc if not task_prompt else f"{st_step.desc}\n\nActivation task: {task_prompt}"
         effective_vocab = _effective_skill_step_vocab(skill, st_step, foundation_contract)
         if not child_desc and foundation_contract and foundation_contract.get("default_gap") not in {None, "", "internal_only"}:
@@ -1107,7 +1128,7 @@ def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
         child_gap = Gap.create(
             desc=child_desc,
             content_refs=child_refs,
-            step_refs=list(st_step.step_refs),
+            step_refs=_dedupe_runtime_refs(activation_step_refs or [], list(st_step.step_refs)),
         )
         child_gap.scores = Epistemic(
             relevance=st_step.relevance if st_step.relevance is not None else 0.8,
@@ -1115,6 +1136,8 @@ def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
             grounded=0.0,
         )
         child_gap.vocab = effective_vocab
+        if isinstance(tool_ref, str) and tool_ref and not effective_vocab:
+            child_gap.route_mode = "tool_ref_direct"
         child_gap.turn_id = turn_counter
         step.gaps.append(child_gap)
     return step
@@ -1123,6 +1146,8 @@ def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
 def activate_stepchain_package(package: dict, package_ref: str, gap: Gap,
                                origin_step: Step, entry_chain_id: str,
                                turn_counter: int, task_prompt: str | None = None,
+                               activation_content_refs: list[str] | None = None,
+                               activation_step_refs: list[str] | None = None,
                                embedded: bool = False,
                                registry: SkillRegistry | None = None,
                                chains_dir: Path = CHAINS_DIR,
@@ -1140,7 +1165,7 @@ def activate_stepchain_package(package: dict, package_ref: str, gap: Gap,
     step = Step.create(
         desc=activation_desc,
         step_refs=[origin_step.hash],
-        content_refs=trigger_refs + [package_ref] + gap.content_refs,
+        content_refs=_dedupe_runtime_refs(trigger_refs, [package_ref], gap.content_refs, activation_content_refs or []),
         chain_id=entry_chain_id,
     )
     nodes_by_id = {node["id"]: node for node in package.get("nodes", [])}
@@ -1160,7 +1185,12 @@ def activate_stepchain_package(package: dict, package_ref: str, gap: Gap,
             git=git,
         )
         gap_template = dict(effective_node.get("gap_template", {}) or {})
-        child_refs = [package_ref] + gap.content_refs + _runtime_ref_list(gap_template.get("content_refs", []))
+        child_refs = _dedupe_runtime_refs(
+            [package_ref],
+            gap.content_refs,
+            activation_content_refs or [],
+            _runtime_ref_list(gap_template.get("content_refs", [])),
+        )
         activation_ref = effective_node.get("manifestation", {}).get("activation_ref")
         if activation_ref:
             child_refs.append(activation_ref)
@@ -1175,7 +1205,7 @@ def activate_stepchain_package(package: dict, package_ref: str, gap: Gap,
         child_gap = Gap.create(
             desc=child_desc,
             content_refs=child_refs,
-            step_refs=_runtime_ref_list(gap_template.get("step_refs", [])),
+            step_refs=_dedupe_runtime_refs(activation_step_refs or [], _runtime_ref_list(gap_template.get("step_refs", []))),
         )
         child_gap.scores = Epistemic(
             relevance=_node_relevance(effective_node, index),
@@ -1192,6 +1222,8 @@ def activate_chain_reference(chains_dir: Path, chain_ref: str, activation: str, 
                              origin_step: Step, entry_chain_id: str,
                              registry: SkillRegistry, compiler, trajectory: Trajectory,
                              turn_counter: int, task_prompt: str | None = None,
+    activation_content_refs: list[str] | None = None,
+    activation_step_refs: list[str] | None = None,
     embedded: bool = False,
     tool_map: dict[str, dict] | None = None,
     await_policy: str = "none",
@@ -1200,7 +1232,7 @@ def activate_chain_reference(chains_dir: Path, chain_ref: str, activation: str, 
     if activation == "background":
         compiler.record_background_trigger(
             entry_chain_id,
-            refs=trigger_refs + [chain_ref] + gap.content_refs,
+            refs=_dedupe_runtime_refs(trigger_refs, [chain_ref], gap.content_refs, activation_content_refs or [], activation_step_refs or []),
             activation_ref=chain_ref,
             await_policy=await_policy,
             store_kind=store_kind,
@@ -1209,7 +1241,7 @@ def activate_chain_reference(chains_dir: Path, chain_ref: str, activation: str, 
         return Step.create(
             desc=f"scheduled background chain:{chain_ref} [{await_policy}] for {gap.desc}",
             step_refs=[origin_step.hash],
-            content_refs=trigger_refs + [chain_ref] + gap.content_refs,
+            content_refs=_dedupe_runtime_refs(trigger_refs, [chain_ref], gap.content_refs, activation_content_refs or []),
             chain_id=entry_chain_id,
         )
 
@@ -1217,7 +1249,7 @@ def activate_chain_reference(chains_dir: Path, chain_ref: str, activation: str, 
     if skill:
         return activate_skill_package(
             skill, chain_ref, gap, origin_step, entry_chain_id, turn_counter,
-            task_prompt=task_prompt, embedded=embedded,
+            task_prompt=task_prompt, activation_content_refs=activation_content_refs, activation_step_refs=activation_step_refs, embedded=embedded,
             registry=registry, chains_dir=chains_dir, cors_root=ROOT, tool_map=tool_map or {}, git=_git_text,
         )
 
@@ -1225,7 +1257,7 @@ def activate_chain_reference(chains_dir: Path, chain_ref: str, activation: str, 
     if package and package.get("version") == "stepchain.v1":
         return activate_stepchain_package(
             package, chain_ref, gap, origin_step, entry_chain_id, turn_counter,
-            task_prompt=task_prompt, embedded=embedded,
+            task_prompt=task_prompt, activation_content_refs=activation_content_refs, activation_step_refs=activation_step_refs, embedded=embedded,
             registry=registry, chains_dir=chains_dir, cors_root=ROOT, tool_map=tool_map or {}, git=_git_text,
         )
 

@@ -28,8 +28,8 @@ from step import Epistemic, Gap, Step
 from system.chain_registry import render_public_chain_registry
 from tools import st_builder as st_builder_module
 from system.tool_contract import ToolContract, load_tool_contract
-from system.tool_registry import render_public_tool_registry
-from vocab_registry import FOUNDATIONAL_BRIDGE_POST_OBSERVE, render_configurable_vocab_registry
+from system.tool_registry import public_tool_ref_map, render_public_tool_registry
+from vocab_registry import FOUNDATIONAL_BRIDGE_POST_OBSERVE, find_vocab_for_tool_ref, render_configurable_vocab_registry
 
 
 @dataclass
@@ -87,15 +87,85 @@ def _extract_reason_activation_intent(raw: str, hooks: ExecutionHooks) -> dict[s
     await_needed = data.get("await_needed")
     if not isinstance(await_needed, bool):
         return None
+    content_refs = data.get("content_refs")
+    if content_refs is None:
+        content_refs = []
+    if not isinstance(content_refs, list) or any(not isinstance(ref, str) or not ref.strip() for ref in content_refs):
+        return None
+    step_refs = data.get("step_refs")
+    if step_refs is None:
+        step_refs = []
+    if not isinstance(step_refs, list) or any(not isinstance(ref, str) or not ref.strip() for ref in step_refs):
+        return None
     return {
         "activate_ref": activate_ref.strip(),
         "prompt": prompt.strip() if isinstance(prompt, str) and prompt.strip() else None,
         "await_needed": await_needed,
+        "content_refs": [ref.strip() for ref in content_refs if ref.strip()],
+        "step_refs": [ref.strip() for ref in step_refs if ref.strip()],
     }
 
 
 def _render_public_tool_registry(cors_root: Path) -> str:
     return render_public_tool_registry(cors_root)
+
+
+def _merge_dedupe_refs(*groups: list[str] | tuple[str, ...] | None) -> list[str]:
+    refs: list[str] = []
+    for group in groups:
+        if not group:
+            continue
+        for ref in group:
+            if isinstance(ref, str) and ref and ref not in refs:
+                refs.append(ref)
+    return refs
+
+
+def _public_tool_path_for_ref(tool_ref: str | None, cors_root: Path) -> str | None:
+    if not isinstance(tool_ref, str) or not tool_ref:
+        return None
+    return public_tool_ref_map(cors_root).get(tool_ref)
+
+
+def _direct_tool_ref_from_gap(gap: Gap, cors_root: Path) -> str | None:
+    if gap.route_mode == "tool_ref_direct":
+        for ref in gap.content_refs:
+            if _public_tool_path_for_ref(ref, cors_root):
+                return ref
+    if gap.vocab:
+        return None
+    for ref in gap.content_refs:
+        if _public_tool_path_for_ref(ref, cors_root):
+            return ref
+    return None
+
+
+def _tool_input_surface(tool_path: str, cors_root: Path) -> str:
+    path = cors_root / tool_path
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    match = re.search(r'"""(.*?)"""', text, re.S)
+    if not match:
+        return ""
+    doc = match.group(1).strip()
+    if not doc:
+        return ""
+    return doc[:1600]
+
+
+def _compose_direct_tool_prompt(*, gap: Gap, tool_ref: str, tool_path: str, contract: ToolContract, cors_root: Path) -> str:
+    doc_surface = _tool_input_surface(tool_path, cors_root)
+    prompt = (
+        f"Compose JSON params for public tool {tool_path} (ref={tool_ref}) to resolve this gap:\n"
+        f"  gap:{gap.hash} \"{gap.desc}\"\n\n"
+        f"Tool contract: mode={contract.mode} scope={contract.scope} post_observe={contract.post_observe}\n"
+        "Return JSON params only. Use supported input keys only. Infer concrete params from the resolved context when possible.\n"
+    )
+    if doc_surface:
+        prompt += f"\nTool interface:\n{doc_surface}\n"
+    return prompt
 
 
 def _record_step(step_result: Step, *, entry: Any, trajectory: Any, compiler: Any) -> None:
@@ -320,6 +390,103 @@ def _make_failure_attempt_step(
         content_refs=gap.content_refs,
         chain_id=chain_id,
         assessment=assessment,
+    )
+
+
+def _debug_activation_payload(
+    *,
+    registry: Any,
+    origin_step: Step,
+    rogue_step: Step,
+    gap: Gap,
+    rogue_kind: str,
+    failure_source: str,
+    failure_detail: str | None = None,
+) -> dict[str, Any] | None:
+    debug_skill = registry.resolve_by_name("debug")
+    if debug_skill is None:
+        return None
+    if debug_skill.hash in gap.content_refs or debug_skill.hash in origin_step.content_refs or debug_skill.hash in rogue_step.content_refs:
+        return None
+    content_refs = _merge_dedupe_refs(gap.content_refs, rogue_step.content_refs)
+    step_refs = _merge_dedupe_refs([origin_step.hash], rogue_step.step_refs, [rogue_step.hash])
+    prompt = (
+        f"Debug execution failure. rogue_kind={rogue_kind}; source={failure_source}; "
+        f"original_gap={gap.hash} \"{gap.desc}\"."
+    )
+    if failure_detail:
+        first_line = failure_detail.strip().splitlines()[0]
+        if first_line:
+            prompt += f" failure_detail={first_line[:300]}"
+    return {
+        "activate_ref": debug_skill.hash,
+        "task_prompt": prompt,
+        "content_refs": content_refs,
+        "step_refs": step_refs,
+        "await_policy": "none",
+        "store_kind": "background_agent",
+    }
+
+
+def _auto_activate_debug_for_rogue(
+    *,
+    registry: Any,
+    origin_step: Step,
+    rogue_step: Step,
+    gap: Gap,
+    chain_id: str | None,
+    rogue_kind: str,
+    failure_source: str,
+    failure_detail: str | None,
+    trajectory: Any,
+    hooks: ExecutionHooks,
+    compiler: Any,
+    session: Any,
+) -> None:
+    activation = _debug_activation_payload(
+        registry=registry,
+        origin_step=origin_step,
+        rogue_step=rogue_step,
+        gap=gap,
+        rogue_kind=rogue_kind,
+        failure_source=failure_source,
+        failure_detail=failure_detail,
+    )
+    if not activation:
+        return
+    activate_ref = activation["activate_ref"]
+    run_kwargs = {
+        "task_prompt": activation["task_prompt"],
+        "store_kind": activation["store_kind"],
+        "await_policy": activation["await_policy"],
+        "content_refs": activation["content_refs"],
+        "step_refs": activation["step_refs"],
+    }
+    activation_context = hooks.resolve_all_refs(
+        activation["step_refs"],
+        activation["content_refs"],
+        trajectory,
+    )
+    if activation_context:
+        run_kwargs["activation_context"] = activation_context
+    child_result = hooks.run_isolated_workflow(activate_ref, **run_kwargs)
+    if chain_id:
+        compiler.record_background_trigger(
+            chain_id,
+            refs=[activate_ref] + activation["content_refs"] + activation["step_refs"],
+            activation_ref=activate_ref,
+            await_policy=activation["await_policy"],
+            store_kind=activation["store_kind"],
+            parent_step=origin_step.hash,
+        )
+    session.inject(
+        "## Auto Debug Activation\n"
+        f"activation_ref: {activate_ref}\n"
+        f"status: {child_result.get('status', 'unknown')}\n"
+        f"store_kind: {child_result.get('store_kind', activation['store_kind'])}\n"
+        f"task: {activation['task_prompt']}\n"
+        f"content_refs: {activation['content_refs']}\n"
+        f"step_refs: {activation['step_refs']}"
     )
 
 
@@ -775,6 +942,13 @@ def execute_iteration(
 
     resolved_data = hooks.resolve_all_refs(gap.step_refs, gap.content_refs, trajectory)
     vocab = gap.vocab
+    direct_tool_ref = _direct_tool_ref_from_gap(gap, config.cors_root)
+    if not vocab and direct_tool_ref:
+        mapped_vocab = find_vocab_for_tool_ref(direct_tool_ref)
+        if mapped_vocab:
+            vocab = mapped_vocab
+            gap.vocab = mapped_vocab
+            direct_tool_ref = None
     step_result: Step | None = None
     session_context_block = hooks.render_session_context(
         trajectory,
@@ -786,7 +960,191 @@ def execute_iteration(
     if session_context_block:
         session.inject(session_context_block)
 
-    if vocab in config.observation_only_vocab:
+    if not vocab and direct_tool_ref:
+        tool_path = _public_tool_path_for_ref(direct_tool_ref, config.cors_root)
+        tool_contract = load_tool_contract(config.cors_root / tool_path) if tool_path else None
+        if not tool_path or tool_contract is None:
+            compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
+            step_result = _emit_rogue_with_diagnosis(
+                desc=f"FAILED: {gap.desc}",
+                origin_step=origin_step,
+                gap=gap,
+                chain_id=entry.chain_id,
+                rogue_kind="tool_failure",
+                failure_source="tool_ref_direct",
+                trajectory=trajectory,
+                compiler=compiler,
+                failure_detail=f"unresolved public tool ref: {direct_tool_ref}",
+            )
+            _auto_activate_debug_for_rogue(
+                registry=registry,
+                origin_step=origin_step,
+                rogue_step=step_result,
+                gap=gap,
+                chain_id=entry.chain_id,
+                rogue_kind="tool_failure",
+                failure_source="tool_ref_direct",
+                failure_detail=f"unresolved public tool ref: {direct_tool_ref}",
+                trajectory=trajectory,
+                hooks=hooks,
+                compiler=compiler,
+                session=session,
+            )
+            return ExecutionOutcome(control="continue", step_result=step_result)
+
+        print(f"  → direct tool ({tool_contract.mode}) [{direct_tool_ref}]")
+        if tool_contract.mode == "mutate" and not compiler.validate_omo("content_needed"):
+            print("  → OMO violation: need observation first")
+
+        compose_prompt = _compose_direct_tool_prompt(
+            gap=gap,
+            tool_ref=direct_tool_ref,
+            tool_path=tool_path,
+            contract=tool_contract,
+            cors_root=config.cors_root,
+        )
+        raw = session.call(compose_prompt)
+        print(f"  LLM compose: {raw[:150]}...")
+        intent = hooks.extract_json(raw)
+        if not intent:
+            compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
+            step_result = _emit_rogue_with_diagnosis(
+                desc=f"FAILED: {gap.desc}",
+                origin_step=origin_step,
+                gap=gap,
+                chain_id=entry.chain_id,
+                rogue_kind="tool_failure",
+                failure_source=tool_path,
+                trajectory=trajectory,
+                compiler=compiler,
+                failure_detail="no valid JSON params extracted for direct tool execution",
+            )
+            _auto_activate_debug_for_rogue(
+                registry=registry,
+                origin_step=origin_step,
+                rogue_step=step_result,
+                gap=gap,
+                chain_id=entry.chain_id,
+                rogue_kind="tool_failure",
+                failure_source=tool_path,
+                failure_detail="no valid JSON params extracted for direct tool execution",
+                trajectory=trajectory,
+                hooks=hooks,
+                compiler=compiler,
+                session=session,
+            )
+            return ExecutionOutcome(control="continue", step_result=step_result)
+
+        output, code = hooks.execute_tool(tool_path, intent)
+        session.inject(f"## Tool output ({tool_path})\n{output}")
+        if code != 0:
+            compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
+            step_result = _emit_rogue_with_diagnosis(
+                desc=f"FAILED: {gap.desc}",
+                origin_step=origin_step,
+                gap=gap,
+                chain_id=entry.chain_id,
+                rogue_kind="tool_failure",
+                failure_source=tool_path,
+                trajectory=trajectory,
+                compiler=compiler,
+                failure_detail=output[:500] if output else None,
+            )
+            _auto_activate_debug_for_rogue(
+                registry=registry,
+                origin_step=origin_step,
+                rogue_step=step_result,
+                gap=gap,
+                chain_id=entry.chain_id,
+                rogue_kind="tool_failure",
+                failure_source=tool_path,
+                failure_detail=output[:500] if output else None,
+                trajectory=trajectory,
+                hooks=hooks,
+                compiler=compiler,
+                session=session,
+            )
+            return ExecutionOutcome(control="continue", step_result=step_result)
+
+        runtime_refs, runtime_commit = _collect_contract_artifact_refs(
+            contract=tool_contract,
+            intent=intent,
+            output=output,
+            hooks=hooks,
+        )
+        if tool_contract.mode == "observe":
+            raw = session.call(f"You resolved gap:{gap.hash} \"{gap.desc}\". What do you observe? Articulate any new gaps.")
+            print(f"  LLM: {raw[:150]}...")
+            step_result, child_gaps = hooks.parse_step_output(
+                raw,
+                step_refs=[origin_step.hash],
+                content_refs=gap.content_refs,
+                chain_id=entry.chain_id,
+            )
+            compiler.record_execution("hash_resolve_needed", False)
+            if child_gaps:
+                compiler.emit(step_result)
+            else:
+                compiler.resolve_current_gap(gap.hash)
+        else:
+            written_path = hooks.extract_written_path(output)
+            if not written_path:
+                for ref in runtime_refs:
+                    if "/" in ref or "." in Path(ref).name:
+                        written_path = ref
+                        break
+            commit_sha = runtime_commit
+            on_reject = None
+            if not commit_sha:
+                commit_paths = [written_path] if written_path else None
+                commit_sha, on_reject = hooks.auto_commit(f"step: {gap.desc[:50]}", paths=commit_paths)
+            if commit_sha:
+                print(f"  → committed: {commit_sha}")
+                step_result = Step.create(
+                    desc=f"executed: {gap.desc}",
+                    step_refs=[origin_step.hash],
+                    content_refs=gap.content_refs,
+                    commit=commit_sha,
+                    chain_id=entry.chain_id,
+                )
+                compiler.record_execution("content_needed", True)
+                postcond_refs, postcond_desc = _post_observe_resolution(
+                    vocab=None,
+                    tool_conf={"post_observe": tool_contract.post_observe},
+                    commit_sha=commit_sha,
+                    runtime_refs=runtime_refs,
+                    hooks=hooks,
+                    config=config,
+                )
+                if postcond_refs and postcond_desc:
+                    postcond = Gap.create(
+                        desc=postcond_desc,
+                        content_refs=postcond_refs,
+                        step_refs=[step_result.hash],
+                    )
+                    postcond.scores = Epistemic(relevance=1.0, confidence=1.0, grounded=0.0)
+                    postcond.vocab = "hash_resolve_needed"
+                    postcond_step = Step.create(
+                        desc=f"postcondition: {gap.desc}",
+                        step_refs=[step_result.hash],
+                        content_refs=postcond_refs,
+                        gaps=[postcond],
+                        chain_id=entry.chain_id,
+                        assessment=hooks.commit_assessment(commit_sha),
+                    )
+                    trajectory.append(postcond_step)
+                    compiler.emit(postcond_step)
+                compiler.resolve_current_gap(gap.hash)
+            else:
+                compiler.resolve_current_gap(gap.hash)
+                step_result = Step.create(
+                    desc=f"executed: {gap.desc}",
+                    step_refs=[origin_step.hash],
+                    content_refs=gap.content_refs,
+                    chain_id=entry.chain_id,
+                )
+
+    elif vocab in config.observation_only_vocab:
         print(f"  → observation-only ({vocab})")
         if resolved_data:
             session.inject(f"## Resolved hash data for gap:{gap.hash}\n{resolved_data}")
@@ -1074,6 +1432,20 @@ def execute_iteration(
                 compiler=compiler,
                 failure_detail=output[:500] if output else None,
             )
+            _auto_activate_debug_for_rogue(
+                registry=registry,
+                origin_step=origin_step,
+                rogue_step=step_result,
+                gap=gap,
+                chain_id=entry.chain_id,
+                rogue_kind="tool_failure",
+                failure_source=vocab or "mutation",
+                failure_detail=output[:500] if output else None,
+                trajectory=trajectory,
+                hooks=hooks,
+                compiler=compiler,
+                session=session,
+            )
             compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
             return ExecutionOutcome(control="continue", step_result=step_result)
 
@@ -1180,6 +1552,20 @@ def execute_iteration(
                             failure_detail=f"immutable path violation → {on_reject}",
                             assessment=_policy_drift_assessment("tree_policy", f"immutable path violation → {on_reject}"),
                         )
+                        _auto_activate_debug_for_rogue(
+                            registry=registry,
+                            origin_step=origin_step,
+                            rogue_step=diagnose_step,
+                            gap=gap,
+                            chain_id=entry.chain_id,
+                            rogue_kind="auto_reverted_mutation",
+                            failure_source="tree_policy",
+                            failure_detail=f"immutable path violation → {on_reject}",
+                            trajectory=trajectory,
+                            hooks=hooks,
+                            compiler=compiler,
+                            session=session,
+                        )
                         compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
                         return ExecutionOutcome(control="continue", step_result=diagnose_step)
                     session.inject(
@@ -1200,6 +1586,20 @@ def execute_iteration(
                         compiler=compiler,
                         failure_detail=output[:500] if output else "protected path violation",
                         assessment=_policy_drift_assessment("tree_policy", output[:500] if output else "protected path violation"),
+                    )
+                    _auto_activate_debug_for_rogue(
+                        registry=registry,
+                        origin_step=origin_step,
+                        rogue_step=step_result,
+                        gap=gap,
+                        chain_id=entry.chain_id,
+                        rogue_kind="policy_violation",
+                        failure_source="tree_policy",
+                        failure_detail=output[:500] if output else "protected path violation",
+                        trajectory=trajectory,
+                        hooks=hooks,
+                        compiler=compiler,
+                        session=session,
                     )
                     compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
                     return ExecutionOutcome(control="continue", step_result=step_result)
@@ -1302,7 +1702,7 @@ def execute_iteration(
             f"Reason inline about: gap:{gap.hash} \"{gap.desc}\".\n"
             "Choose the next lawful move in the current turn.\n"
             "If a child workflow should run, you may respond with JSON only:\n"
-            '{"activate_ref": "<workflow-hash>", "prompt": "task for the child workflow", "await_needed": true}\n'
+            '{"activate_ref": "<workflow-hash>", "prompt": "task for the child workflow", "await_needed": true, "content_refs": ["relevant content hash or path"], "step_refs": ["relevant step hash"]}\n'
             "or the same shape with await_needed=false.\n"
             "Use only public workflow hashes.\n"
             "- If judgment is enough, emit the next clarified gap(s) or no gaps.\n"
@@ -1318,17 +1718,28 @@ def execute_iteration(
             activate_ref = activation_intent["activate_ref"]
             await_needed = activation_intent["await_needed"]
             task_prompt = activation_intent["prompt"] or gap.desc
+            activation_content_refs = activation_intent["content_refs"]
+            activation_step_refs = activation_intent["step_refs"]
             await_policy = "manual" if await_needed else "none"
             print(f"  → activate isolated workflow:{activate_ref} [{await_policy}]")
-            child_result = hooks.run_isolated_workflow(
-                activate_ref,
-                task_prompt=task_prompt,
-                store_kind="background_agent",
-                await_policy=await_policy,
-            )
+            activation_context = None
+            if activation_content_refs or activation_step_refs:
+                activation_context = hooks.resolve_all_refs(activation_step_refs, activation_content_refs, trajectory)
+            run_kwargs = {
+                "task_prompt": task_prompt,
+                "store_kind": "background_agent",
+                "await_policy": await_policy,
+            }
+            if activation_content_refs:
+                run_kwargs["content_refs"] = activation_content_refs
+            if activation_step_refs:
+                run_kwargs["step_refs"] = activation_step_refs
+            if activation_context:
+                run_kwargs["activation_context"] = activation_context
+            child_result = hooks.run_isolated_workflow(activate_ref, **run_kwargs)
             compiler.record_background_trigger(
                 entry.chain_id,
-                refs=[activate_ref],
+                refs=[activate_ref] + activation_content_refs + activation_step_refs,
                 activation_ref=activate_ref,
                 await_policy=await_policy,
                 store_kind="background_agent",
@@ -1340,12 +1751,14 @@ def execute_iteration(
                 f"await_needed: {str(await_needed).lower()}\n"
                 f"status: {child_result.get('status', 'unknown')}\n"
                 f"store_kind: {child_result.get('store_kind', 'background_agent')}\n"
-                f"task: {task_prompt}"
+                f"task: {task_prompt}\n"
+                f"content_refs: {activation_content_refs or []}\n"
+                f"step_refs: {activation_step_refs or []}"
             )
             step_result = Step.create(
                 desc=f"activated child workflow:{activate_ref}",
                 step_refs=[origin_step.hash],
-                content_refs=[activate_ref],
+                content_refs=[activate_ref] + activation_content_refs,
                 chain_id=entry.chain_id,
             )
             compiler.resolve_current_gap(gap.hash)
@@ -1674,6 +2087,20 @@ def execute_iteration(
                     compiler=compiler,
                     failure_detail=output[:500] if output else None,
                     assessment=assessment_lines,
+                )
+                _auto_activate_debug_for_rogue(
+                    registry=registry,
+                    origin_step=origin_step,
+                    rogue_step=step_result,
+                    gap=gap,
+                    chain_id=entry.chain_id,
+                    rogue_kind="validation_error" if code != 0 else "manifest_failure",
+                    failure_source="st_builder",
+                    failure_detail=output[:500] if output else None,
+                    trajectory=trajectory,
+                    hooks=hooks,
+                    compiler=compiler,
+                    session=session,
                 )
                 compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
         else:
