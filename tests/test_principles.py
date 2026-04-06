@@ -4105,7 +4105,7 @@ def test_p12_build_semantic_tree_from_realized_chain_preserves_causal_links():
 
 def test_p12_resolve_hash_renders_action_packages_as_semantic_tree(monkeypatch):
     monkeypatch.setattr(loop, "_skill_registry", registry())
-    architect_skill = registry().resolve_command("architect")
+    architect_skill = registry().resolve_by_name("architect")
     assert architect_skill is not None
 
     rendered = loop.resolve_hash(architect_skill.hash, Trajectory())
@@ -4113,7 +4113,7 @@ def test_p12_resolve_hash_renders_action_packages_as_semantic_tree(monkeypatch):
     assert rendered is not None
     assert rendered.startswith(f"semantic_tree:skill_package:{architect_skill.hash}")
     assert 'package:architect "' in rendered
-    assert 'step:phase_resolve_source_and_docs_1 "resolve_source_and_docs"' in rendered
+    assert 'step:phase_resolve_source_1 "resolve_source"' in rendered
     assert "next: on_close->" in rendered
 
 
@@ -4225,9 +4225,12 @@ def test_p12_chain_registry_derives_command_action_tools():
     debug = contracts["debug"]
     property_research = contracts["property_research"]
 
-    assert architect.activation == "command:architect"
-    assert architect.default_gap == "hash_resolve_needed"
-    assert architect.tool_paths == ("tools/hash_manifest.py", "tools/code_exec.py")
+    assert architect.activation == "name:architect_needed"
+    assert architect.trigger == "on_vocab:architect_needed"
+    assert architect.default_gap == "architect_needed"
+    assert architect.step_count == 5
+    assert architect.omo_shape == "observe->bridge"
+    assert architect.tool_paths == ()
     assert debug.activation == "name:hash_resolve_needed"
     assert debug.trigger == "manual"
     assert debug.step_count == 5
@@ -4239,6 +4242,16 @@ def test_p12_chain_registry_derives_command_action_tools():
     assert "tools/postcodes_io.py" in property_research.tool_paths
     assert "tools/land_registry.py" in property_research.tool_paths
     assert "tools/research_web.py" in property_research.tool_paths
+
+
+def test_p12_architect_needed_routes_to_architect_chain_ref():
+    architect_ref = next(
+        contract.ref for contract in chain_registry_module.list_public_chain_contracts(ROOT) if contract.name == "architect"
+    )
+    spec = vocab_registry_module.get_vocab("architect_needed")
+    assert spec is not None
+    assert spec.target_kind == "chain"
+    assert spec.target_ref == architect_ref
 
 
 def test_p12_render_public_chain_registry_lists_compact_chain_surface():

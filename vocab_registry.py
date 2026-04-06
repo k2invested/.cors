@@ -64,6 +64,14 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         tool=None,
         desc="Inject external context as passive observation only.",
     ),
+    "architect_needed": VocabSpec(
+        name="architect_needed",
+        category="mutate",
+        priority=40,
+        desc="Run the architect workflow to analyse source/doc/test drift and hand off exact edits if syncing is warranted.",
+        target_kind="chain",
+        target_ref="69ff0998ff94",
+    ),
     "hash_edit_needed": VocabSpec(
         name="hash_edit_needed",
         category="mutate",
