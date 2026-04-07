@@ -444,6 +444,8 @@ P3_CASES = [
     ("priority_await_before_reprogramme", lambda: vocab_priority("await_needed") < vocab_priority("reprogramme_needed")),
     ("pre_diff_prompt_says_actions_are_reason_domain", lambda: "Anything involving skills/actions/*.st is reason_needed's domain." in loop.PRE_DIFF_SYSTEM),
     ("pre_diff_prompt_routes_tooling_and_chain_building_to_reason", lambda: "Anything involving tooling/tool-script authoring, workflow building/editing, or chain/stepchain building/editing should route to reason_needed first." in loop.PRE_DIFF_SYSTEM),
+    ("pre_diff_prompt_routes_vocab_trigger_work_to_reason", lambda: "Anything involving adding, removing, renaming, or assigning a public vocab trigger should route to reason_needed first." in loop.PRE_DIFF_SYSTEM),
+    ("pre_diff_prompt_routes_vocab_registry_mapping_to_reason", lambda: "If a request is about mapping a public tool or chain onto a semantic path in vocab_registry.py, surface reason_needed first so it can hand off to vocab_reg_needed lawfully." in loop.PRE_DIFF_SYSTEM),
     ("tree_policy_skills_reroutes_reprogramme", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),
     ("tree_policy_admin_sets_entity_editor_mode", lambda: loop._match_policy("skills/admin.st", loop._load_tree_policy())["reprogramme_mode"] == "entity_editor"),
     ("tree_policy_entities_reroutes_reprogramme", lambda: loop._match_policy("skills/entities/clinton.st", loop._load_tree_policy())["on_mutate"] == "reprogramme_needed"),

@@ -1191,6 +1191,8 @@ Action/workflow ownership:
   - Anything involving skills/actions/*.st is reason_needed's domain.
   - Anything involving tooling/tool-script authoring, workflow building/editing, or chain/stepchain building/editing should route to reason_needed first.
   - New action/workflow creation, repair, restructuring, or schema alignment stays under reason_needed.
+  - Anything involving adding, removing, renaming, or assigning a public vocab trigger should route to reason_needed first.
+  - If a request is about mapping a public tool or chain onto a semantic path in vocab_registry.py, surface reason_needed first so it can hand off to vocab_reg_needed lawfully.
   - Do not surface reprogramme_needed for skills/actions/*.st work.
   - reprogramme_needed is for semantic persistence in admin/entity trees and other entity-like state, not action-package authoring.
   - Foundational Python tools under tools/*.py are real lower-order action blocks. reason_needed may surface tool_needed for a new tool, vocab_reg_needed for semantic routing over a public tool/chain, or hash_edit_needed for an existing file edit before authoring the higher-order .st layer.
@@ -1484,13 +1486,14 @@ def run_turn(
         "    - A user states a stable first-person preference but has not explicitly asked you to persist it yet\n"
         "    - Ambiguity may be reducible by traversing available context rather than asking the user immediately\n"
         "    - A commitment needs activation, reintegration, or reorientation\n"
+        "    - A public vocab trigger needs to be added, changed, or mapped onto a tool or chain\n"
         "    This is the primitive for stateful judgment and structure. It reasons over semantic trees, entity space, executable structure, and persistence judgment.\n\n"
         "  clarify_needed — USER-ONLY BLOCKER. Do not activate directly unless reason_needed has already exhausted available context.\n"
         "    - If available context, history, semantic trees, .st packages, or workflow structure can reduce ambiguity, use reason_needed first.\n"
         "    - Reserve clarify_needed for genuinely user-only information or for cases where multiple plausible paths would waste effort or create real risk.\n\n"
         "  tool_needed — TOOL AUTHORING BRANCH. Use this only as a reason-routed follow-on when the missing capability is a new public tool under tools/*.py.\n"
         "    Post-observe returns to reason_needed for reintegration.\n\n"
-        "  vocab_reg_needed — VOCAB ROUTING BRANCH. Use this only as a reason-routed follow-on when a public tool or chain needs a configurable semantic path in vocab_registry.py.\n"
+        "  vocab_reg_needed — VOCAB ROUTING BRANCH. Use this only as a reason-routed follow-on when a public tool or chain needs a configurable semantic path in vocab_registry.py, including assigning or updating public on_vocab triggers.\n"
         "    Post-observe returns to reason_needed for reintegration.\n\n"
         "  await_needed — PAUSE CODON. Synchronization checkpoint.\n"
         "    Use this when background work must explicitly rejoin the parent chain.\n"
