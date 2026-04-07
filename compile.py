@@ -55,6 +55,8 @@ MAX_CHAIN_DEPTH = 15            # maximum steps in a single chain before force-c
 SATURATION_THRESHOLD = 0.05     # information gain below this = perception saturated
 STAGNATION_WINDOW = 3           # N steps with no movement = stagnation
 CHAIN_EXTRACT_LENGTH = 8        # chains longer than this get extracted to file
+REVERT_CONFIDENCE_FLOOR = 0.2   # only very low-confidence states can trigger revert
+REVERT_CONFIDENCE_DROP = 0.4    # revert only on a large confidence collapse
 
 
 # ── Vocab ─────────────────────────────────────────────────────────────────
@@ -220,11 +222,12 @@ class GovernorState:
         return all(g < SATURATION_THRESHOLD for g in gains)
 
     def is_diverging(self) -> bool:
-        """Confidence dropped after the last step."""
+        """Confidence dropped sharply into a genuinely low-confidence state."""
         if len(self.vectors) < 2:
             return False
-        # Confidence is index 1 in the vector
-        return self.vectors[-1][1] < self.vectors[-2][1] - 0.15
+        prev_conf = self.vectors[-2][1]
+        curr_conf = self.vectors[-1][1]
+        return curr_conf < REVERT_CONFIDENCE_FLOOR and (prev_conf - curr_conf) > REVERT_CONFIDENCE_DROP
 
     def is_oscillating(self) -> bool:
         """Confidence alternating up/down."""
