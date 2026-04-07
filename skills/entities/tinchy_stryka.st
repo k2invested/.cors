@@ -39,7 +39,12 @@
       "sports": [
         "football"
       ],
-      "favourite_team": "Tottenham"
+      "favourite_team": "Tottenham",
+      "football_engagement": [
+        "play",
+        "watch"
+      ],
+      "football_attendance": "never_attended_in_person"
     }
   },
   "access_rules": {
