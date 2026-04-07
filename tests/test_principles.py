@@ -5177,6 +5177,8 @@ def test_p12_reason_needed_can_activate_inline_workflow_with_attached_refs():
     injected_gaps = outcome.step_result.gaps
     assert injected_gaps
     assert any("Activation task: debug the attached failure" in g.desc for g in injected_gaps)
+    assert any("Activation content refs:" in g.desc for g in injected_gaps)
+    assert any("Activation step refs:" in g.desc for g in injected_gaps)
     assert any("bot.log" in g.content_refs for g in injected_gaps)
     assert any("skills/entities/property_brief.st" in g.content_refs for g in injected_gaps)
     assert any("deadbeef1234" in g.step_refs for g in injected_gaps)
@@ -5256,6 +5258,82 @@ def test_p12_chain_backed_vocab_injects_workflow_inline():
     assert compiler.background_refs() == []
     assert any(entry.gap.vocab == "hash_resolve_needed" for entry in compiler.ledger.stack)
     assert any("## Chain workflow activation" in content for content in session.injected)
+
+
+def test_p12_hash_edit_compose_prompt_includes_targeting_rules_and_refs():
+    class FakeSession:
+        def __init__(self):
+            self.prompts = []
+
+        def inject(self, content: str, role: str = "user"):
+            pass
+
+        def call(self, user_content: str = None) -> str:
+            self.prompts.append(user_content or "")
+            return json.dumps({
+                "action": "write",
+                "path": "docs/ARCHITECTURE.md",
+                "content": "updated",
+            })
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap(
+        "Update the stale architecture doc using the attached context.",
+        vocab="hash_edit_needed",
+        content_refs=["docs/ARCHITECTURE.md"],
+        step_refs=["deadbeef1234"],
+    )
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "resolved architecture context",
+        execute_tool=lambda tool, params: ("Written: /Users/k2invested/Desktop/cors/docs/ARCHITECTURE.md", 0),
+        auto_commit=lambda message, paths=None: ("abc123", None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "trajectory_store" / "command",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert session.prompts
+    prompt = session.prompts[0]
+    assert "Available content refs: ['docs/ARCHITECTURE.md']" in prompt
+    assert "Available step refs: ['deadbeef1234']" in prompt
+    assert "Prefer concrete non-.st workspace files" in prompt
+    assert "Treat workflow/entity .st refs as context only" in prompt
 
 
 def test_p12_execution_failure_auto_activates_debug(monkeypatch):

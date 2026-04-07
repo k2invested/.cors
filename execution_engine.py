@@ -1354,6 +1354,13 @@ def execute_iteration(
             compose_prompt = (
                 f"Compose a file edit to resolve this gap:\n"
                 f"  gap:{gap.hash} \"{gap.desc}\"\n\n"
+                f"Available content refs: {gap.content_refs or []}\n"
+                f"Available step refs: {gap.step_refs or []}\n\n"
+                "Targeting rules:\n"
+                "- Use the carried refs and resolved context to choose the exact files that need mutation.\n"
+                "- Prefer concrete non-.st workspace files when they are present.\n"
+                "- Treat workflow/entity .st refs as context only unless the task explicitly asks to edit a workflow or entity file.\n"
+                "- If multiple refs are present, mutate only the files that actually require change.\n\n"
                 f"Respond with JSON params for hash_manifest.py:\n"
                 f'{{"action": "patch", "path": "relative/file/path", '
                 f'"patch": {{"old": "exact text to replace", "new": "replacement text"}}}}\n\n'

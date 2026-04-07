@@ -1110,6 +1110,14 @@ def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
         tool_map=tool_map or {},
         git=git,
     )
+    activation_suffix_parts: list[str] = []
+    if task_prompt:
+        activation_suffix_parts.append(f"Activation task: {task_prompt}")
+    if activation_content_refs:
+        activation_suffix_parts.append(f"Activation content refs: {list(activation_content_refs)}")
+    if activation_step_refs:
+        activation_suffix_parts.append(f"Activation step refs: {list(activation_step_refs)}")
+    activation_suffix = f"\n\n" + "\n".join(activation_suffix_parts) if activation_suffix_parts else ""
     for st_step in skill.steps:
         tool_ref = getattr(st_step, "tool_ref", None)
         child_refs = _dedupe_runtime_refs(
@@ -1121,7 +1129,7 @@ def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
         )
         if isinstance(tool_ref, str) and tool_ref and tool_ref not in child_refs:
             child_refs.append(tool_ref)
-        child_desc = st_step.desc if not task_prompt else f"{st_step.desc}\n\nActivation task: {task_prompt}"
+        child_desc = f"{st_step.desc}{activation_suffix}" if activation_suffix else st_step.desc
         effective_vocab = _effective_skill_step_vocab(skill, st_step, foundation_contract)
         if not child_desc and foundation_contract and foundation_contract.get("default_gap") not in {None, "", "internal_only"}:
             child_desc = f"activate foundation {foundation_contract['ref']} via {foundation_contract['default_gap']}"
@@ -1171,6 +1179,14 @@ def activate_stepchain_package(package: dict, package_ref: str, gap: Gap,
     nodes_by_id = {node["id"]: node for node in package.get("nodes", [])}
     refs = dict(package.get("refs", {}) or {})
     phase_order = package.get("phase_order", [])
+    activation_suffix_parts: list[str] = []
+    if task_prompt:
+        activation_suffix_parts.append(f"Activation task: {task_prompt}")
+    if activation_content_refs:
+        activation_suffix_parts.append(f"Activation content refs: {list(activation_content_refs)}")
+    if activation_step_refs:
+        activation_suffix_parts.append(f"Activation step refs: {list(activation_step_refs)}")
+    activation_suffix = f"\n\n" + "\n".join(activation_suffix_parts) if activation_suffix_parts else ""
     for index, node_id in enumerate(phase_order):
         node = nodes_by_id.get(node_id)
         if not node or node.get("terminal"):
@@ -1200,8 +1216,8 @@ def activate_stepchain_package(package: dict, package_ref: str, gap: Gap,
         child_desc = gap_template.get("desc", effective_node.get("goal", node.get("goal", "")))
         if not child_desc and foundation_contract and foundation_contract.get("default_gap") not in {None, "", "internal_only"}:
             child_desc = f"activate foundation {foundation_contract['ref']} via {foundation_contract['default_gap']}"
-        if task_prompt:
-            child_desc = f"{child_desc}\n\nActivation task: {task_prompt}"
+        if activation_suffix:
+            child_desc = f"{child_desc}{activation_suffix}"
         child_gap = Gap.create(
             desc=child_desc,
             content_refs=child_refs,

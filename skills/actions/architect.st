@@ -147,10 +147,10 @@
     {
       "id": "phase_analyse_and_handoff_fix_5",
       "kind": "higher_order",
-      "goal": "analyse architectural drift, identify which docs or tests actually need syncing, consider dependencies, failure modes, and mitigations, and if edits are warranted activate hash_edit with those exact file refs and an explicit await_needed choice",
+      "goal": "analyse architectural drift, identify which docs or tests actually need syncing, consider dependencies, failure modes, and mitigations, and if edits are warranted activate hash_edit with those exact file refs; default to inline activation with await_needed=false, and select await_needed=true only when true isolation or deferred synchronization is necessary",
       "action": "analyse_and_handoff_fix",
       "gap_template": {
-        "desc": "analyse architectural drift, identify which docs or tests actually need syncing, consider dependencies, failure modes, and mitigations, and if edits are warranted activate hash_edit with those exact file refs and an explicit await_needed choice",
+        "desc": "analyse architectural drift, identify which docs or tests actually need syncing, consider dependencies, failure modes, and mitigations, and if edits are warranted activate hash_edit with those exact file refs; default to inline activation with await_needed=false, and select await_needed=true only when true isolation or deferred synchronization is necessary",
         "content_refs": [],
         "step_refs": []
       },
@@ -220,7 +220,7 @@
     },
     {
       "action": "analyse_and_handoff_fix",
-      "desc": "analyse architectural drift, identify which docs or tests actually need syncing, consider dependencies, failure modes, and mitigations, and if edits are warranted activate hash_edit with those exact file refs and an explicit await_needed choice",
+      "desc": "analyse architectural drift, identify which docs or tests actually need syncing, consider dependencies, failure modes, and mitigations, and if edits are warranted activate hash_edit with those exact file refs; default to inline activation with await_needed=false, and select await_needed=true only when true isolation or deferred synchronization is necessary",
       "post_diff": true
     }
   ],
