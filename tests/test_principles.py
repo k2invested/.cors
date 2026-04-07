@@ -551,7 +551,9 @@ P5_CASES = [
     ("render_entity_has_identity_block", lambda: "identity:" in loop._render_entity(skill("admin"))),
     ("render_entity_has_steps_summary", lambda: "steps:" in loop._render_entity(skill("admin"))),
     ("find_identity_skill_returns_admin", lambda: loop._find_identity_skill("discord:784778107013431296", registry()) == skill("admin")),
-    ("render_identity_has_preferences", lambda: "## Preferences" in loop._render_identity(skill("admin"))),
+    ("render_identity_has_mutable_preferences_surface", lambda: "## Mutable Preferences Surface" in loop._render_identity(skill("admin"))),
+    ("render_identity_has_immutable_environment_surface", lambda: "## Immutable Environment Surface" in loop._render_identity(skill("admin"))),
+    ("render_identity_has_available_workflows", lambda: "## Available Workflows" in loop._render_identity(skill("admin"))),
     ("render_identity_has_access_rules_when_present", lambda: "## Access Rules" in loop._render_identity(skill("admin")) if "access_rules" in skill_data("admin") else True),
     ("render_identity_pending_bootstrap_shows_initiation", lambda: "## Initiation" in render_bootstrap_identity()),
     ("reprogramme_skill_trigger_is_vocab", lambda: skill("reprogramme").trigger == "on_vocab:reprogramme_needed"),
@@ -996,6 +998,7 @@ P12_CASES = [
     ("find_identity_skill_admin", lambda: loop._find_identity_skill("discord:784778107013431296", registry()) == skill("admin")),
     ("render_identity_has_username", lambda: "username:" in loop._render_identity(skill("admin"))),
     ("render_identity_has_communication_pref", lambda: "communication:" in loop._render_identity(skill("admin"))),
+    ("admin_load_order_matches_split_surfaces", lambda: [s.action for s in skill("admin").steps] == ["load_preferences", "load_environment"]),
     ("validate_st_accepts_command_trigger", lambda: st_builder_module.validate_st({"name": "cmd", "desc": "d", "trigger": "command:demo", "steps": []}) == []),
     ("load_skill_detects_command_flag", lambda: (lambda path: load_skill(str(path)).is_command)(
         (lambda p: (p.write_text(json.dumps({"name": "cmd", "desc": "d", "trigger": "command:test", "steps": []})), p)[1])(Path(ROOT / "tests" / "_tmp_command.st"))

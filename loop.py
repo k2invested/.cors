@@ -52,7 +52,9 @@ from system.chain_registry import public_chain_ref_map
 from system.hash_registry import HASH_RESOLVE_ROUTES
 from vocab_registry import (
     BRIDGE_VOCAB,
+    CONFIGURABLE_VOCABS,
     DETERMINISTIC_VOCAB,
+    FOUNDATIONAL_BRIDGES,
     OBSERVATION_ONLY_VOCAB,
     TOOL_MAP,
     validate_tree_policy_targets,
@@ -1453,27 +1455,6 @@ def run_turn(
 
     session = Session(model=os.environ.get("KERNEL_COMPOSE_MODEL", "gpt-4.1"))
 
-    # Build dynamic system prompt with actual available entities
-    entity_list_lines = "\n".join(
-        f"    {s.display_name}:{s.hash} ({Path(s.source).name}) — {s.desc[:60]}"
-        for s in registry.all_skills()
-    )
-    trigger_vocab_lines = "\n".join(
-        f"    {term} -> {', '.join(f'{skill.name}:{skill.hash}' for skill in skills)}"
-        for term, skills in registry.vocab_triggers().items()
-    ) or "    (none)"
-    trigger_owner_lines = "\n".join(
-        f"    {term} -> {owner.kind}:{owner.ref} surface={owner.surface} default_gap={owner.default_gap}"
-        for term in sorted(registry.vocab_triggers())
-        if (owner := action_foundations_module.resolve_trigger_owner(
-            term,
-            registry=registry,
-            chains_dir=CHAINS_DIR,
-            cors_root=CORS_ROOT,
-            tool_map=TOOL_MAP,
-            git=git_show,
-        )) is not None
-    ) or "    (none)"
     dynamic_bridge = (
         "BRIDGE (foundational control surfaces):\n"
         "  These are primitives, not configurable semantic paths. Use them whenever the turn crosses a structural boundary.\n\n"
@@ -1512,12 +1493,8 @@ def run_turn(
         "  Do not edit vocab_registry.py just to introduce or wire a workflow trigger term.\n"
         "  vocab_registry.py is for kernel/runtime vocab semantics, not for every action trigger.\n"
         "  If a new skills/actions/*.st package uses trigger on_vocab:<term>, that trigger becomes discoverable from the loaded package itself.\n\n"
-        "  Known trigger vocab (derived from loaded skills):\n"
-        f"{trigger_vocab_lines}\n\n"
-        "  Canonical trigger owners (deterministic bridge from public vocab to owning hash block):\n"
-        f"{trigger_owner_lines}\n\n"
-        "  Known entities (reference by hash in content_refs):\n"
-        f"{entity_list_lines}"
+        "  The detailed semantic control surface for entities, public workflows, and public vocab routes is injected deterministically through admin hydration.\n"
+        "  Use that immutable hydrated surface to choose lawful semantic paths; do not invent low-level tool routes on your own."
     )
     system_prompt = PRE_DIFF_SYSTEM.replace("BRIDGE_VOCAB_PLACEHOLDER", dynamic_bridge)
     session.set_system(system_prompt)
@@ -1530,7 +1507,7 @@ def run_turn(
     identity_skill = _find_identity_skill(contact_id, registry)
     if identity_skill:
         print(f"\n── IDENTITY HYDRATE: {identity_skill.display_name}:{identity_skill.hash} ──")
-        identity_block = _render_identity(identity_skill)
+        identity_block = _render_identity(identity_skill, registry=registry)
         session.inject(identity_block)
         identity_step = Step.create(
             desc=f"identity hydrated: {identity_skill.display_name}",
@@ -2604,11 +2581,96 @@ def _run_no_gap_discord_profile_sync(
     return step_result
 
 
-def _render_identity(skill: Skill) -> str:
-    """Render a skill's identity, preferences, and init state for session injection."""
+def _render_admin_control_surface(skill: Skill, registry: SkillRegistry) -> str:
+    data = skill.payload or {}
+
+    lines = [f"## Identity: {skill.display_name}:{skill.hash}"]
     try:
-        with open(skill.source) as f:
-            data = json.load(f)
+        rel_source = Path(skill.source).resolve().relative_to(CORS_ROOT)
+        lines.append(f"  source: {rel_source}")
+    except ValueError:
+        lines.append(f"  source: {skill.source}")
+
+    identity = data.get("identity", {}) or {}
+    for field_name in ("name", "role", "username", "context"):
+        value = identity.get(field_name)
+        if value not in ("", None, {}, []):
+            lines.append(f"  {field_name}: {value}")
+
+    preferences = data.get("preferences", {}) or {}
+    if preferences:
+        lines.append("## Mutable Preferences Surface")
+        lines.append("  This surface may be updated through reprogramme when stable operator preferences change.")
+        for category, prefs in preferences.items():
+            lines.append(f"  {category}:")
+            if isinstance(prefs, dict):
+                for k, v in prefs.items():
+                    lines.append(f"    {k}: {v}")
+            else:
+                lines.append(f"    {prefs}")
+
+    lines.append("## Immutable Environment Surface")
+    lines.append("  This surface is deterministic runtime context, not mutable operator preference state.")
+    lines.append("  Use entities, workflows, vocab routes, and system structure from this injected surface to justify gaps.")
+    lines.append("  The runtime executes the chosen path; do not invent low-level tool routing outside the lawful vocab/workflow surfaces.")
+
+    entities = sorted(
+        (
+            s for s in registry.all_skills()
+            if Path(s.source).name == "admin.st" or "entities" in Path(s.source).parts or s.artifact_kind == "entity"
+        ),
+        key=lambda s: (s.display_name.lower(), s.hash),
+    )
+    lines.append("## Available Entities")
+    if entities:
+        for entity in entities:
+            lines.append(f"  - {entity.display_name}:{entity.hash} ({Path(entity.source).name}) — {entity.desc}")
+    else:
+        lines.append("  - none")
+
+    workflows = sorted(
+        (
+            s for s in registry.by_hash.values()
+            if "actions" in Path(s.source).parts or getattr(s, "is_command", False)
+        ),
+        key=lambda s: (s.name.lower(), s.hash),
+    )
+    lines.append("## Available Workflows")
+    if workflows:
+        for workflow in workflows:
+            trigger = workflow.trigger or "manual"
+            lines.append(f"  - {workflow.name}:{workflow.hash} | trigger={trigger} | {workflow.desc}")
+    else:
+        lines.append("  - none")
+
+    lines.append("## Configurable Vocab Routes")
+    for name, spec in sorted(CONFIGURABLE_VOCABS.items()):
+        target_kind = spec.target_kind or "none"
+        lines.append(f"  - {name} | class={spec.category} | target={target_kind} | {spec.desc}")
+
+    lines.append("## Foundational Bridge Codons")
+    for name, spec in sorted(FOUNDATIONAL_BRIDGES.items()):
+        lines.append(f"  - {name} | {spec.desc}")
+
+    trigger_map = registry.vocab_triggers()
+    lines.append("## Trigger Vocab")
+    if trigger_map:
+        for term, skills in trigger_map.items():
+            owners = ", ".join(f"{s.name}:{s.hash}" for s in skills)
+            lines.append(f"  - {term} -> {owners}")
+    else:
+        lines.append("  - none")
+    return "\n".join(lines)
+
+
+def _render_identity(skill: Skill, registry: SkillRegistry | None = None) -> str:
+    """Render a skill's identity, preferences, and init state for session injection."""
+    registry = registry or _skill_registry or load_all(str(SKILLS_DIR))
+    if skill.name == "admin" and registry is not None:
+        return _render_admin_control_surface(skill, registry)
+
+    try:
+        data = skill.payload or json.loads(Path(skill.source).read_text())
     except (json.JSONDecodeError, FileNotFoundError):
         return ""
 
