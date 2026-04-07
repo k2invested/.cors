@@ -170,9 +170,13 @@ def _chain_specs(*, chains_dir: Path) -> list[FoundationSpec]:
     if not chains_dir.exists():
         return specs
     for path in sorted(chains_dir.glob("*.json")):
+        if path.name.endswith(".trajectory.json") or path.name.endswith(".chains.json"):
+            continue
         try:
             doc = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(doc, dict):
             continue
         ref = str(doc.get("hash") or path.stem)
         trigger = doc.get("trigger", "manual")

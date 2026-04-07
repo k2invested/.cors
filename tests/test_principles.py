@@ -3375,6 +3375,43 @@ def test_p12_action_foundations_enrich_extracted_chain_contract():
         chain_path.unlink(missing_ok=True)
 
 
+def test_p12_action_foundations_ignore_aggregate_background_json_files(tmp_path):
+    chain_doc = {
+        "version": "stepchain.v1",
+        "hash": "feedfacecafe",
+        "name": "test_chain_contract",
+        "desc": "test chain",
+        "trigger": "on_vocab:research_needed",
+        "root": "phase_root",
+        "nodes": [
+            {
+                "id": "phase_root",
+                "action": "observe_request",
+                "goal": "Observe request",
+                "kind": "observe",
+                "gap_template": {"desc": "Observe request", "content_refs": [], "step_refs": []},
+                "manifestation": {"runtime_vocab": "hash_resolve_needed"},
+                "allowed_vocab": ["hash_resolve_needed"],
+            },
+            {"id": "phase_done", "kind": "terminal", "terminal": True},
+        ],
+    }
+    (tmp_path / "feedfacecafe.json").write_text(json.dumps(chain_doc))
+    (tmp_path / "background_run.chains.json").write_text(json.dumps([{"hash": "abc123"}]))
+    (tmp_path / "background_run.trajectory.json").write_text(json.dumps([{"desc": "step"}]))
+
+    rendered = action_foundations_module.render_action_foundations(
+        registry=registry(),
+        chains_dir=tmp_path,
+        cors_root=ROOT,
+        tool_map=loop.TOOL_MAP,
+        git=lambda cmd, cwd=None: "0123456789abcdef0123456789abcdef01234567",
+    )
+
+    assert "feedfacecafe kind=extracted_chain surface=semantic_tree" in rendered
+    assert "background_run" not in rendered
+
+
 def test_p12_action_foundations_resolve_trigger_owner_prefers_semantic_top_level_block():
     owner = action_foundations_module.resolve_trigger_owner(
         "hash_edit_needed",
