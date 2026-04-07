@@ -602,6 +602,14 @@ P5_CASES = [
         "refs": {},
         "semantics": {},
     })),
+    ("reprogramme_intent_rejects_action_semantic_skeleton", lambda: loop._is_reprogramme_intent({
+        "version": "semantic_skeleton.v1",
+        "artifact": {"kind": "action", "protected_kind": "action"},
+        "name": "hash_edit",
+        "desc": "workflow",
+        "trigger": "manual",
+        "refs": {},
+    }) is False),
 ]
 
 
@@ -910,8 +918,6 @@ P10_CASES += [
     ("route_mode_for_entity_source_is_entity_editor", lambda: execution_engine_module._reprogramme_mode_for_source("skills/entities/clinton.st") == "entity_editor"),
     ("route_mode_for_action_source_is_action_editor", lambda: execution_engine_module._reprogramme_mode_for_source("skills/actions/hash_edit.st") == "action_editor"),
     ("new_action_origination_requires_reason", lambda: execution_engine_module._new_action_origination_requires_reason(make_gap("create research workflow", vocab="content_needed"), route_mode="action_editor", target_entity=None)),
-    ("existing_action_update_does_not_require_reason", lambda: execution_engine_module._new_action_origination_requires_reason(make_gap("update hash_edit", vocab="reprogramme_needed"), route_mode="action_editor", target_entity=skill("hash_edit")) is False),
-    ("new_action_reprogramme_does_not_rebounce_to_reason", lambda: execution_engine_module._new_action_origination_requires_reason(make_gap("actualize research workflow", vocab="reprogramme_needed"), route_mode="action_editor", target_entity=None) is False),
     ("reason_judgment_required_for_public_trigger_assignment", lambda: execution_engine_module._requires_reason_judgment(
         make_gap("Assign on_vocab:research_needed as the public trigger for the highest-order research workflow in skills/actions/research.st.", vocab="content_needed"),
         registry=registry(),
@@ -1510,6 +1516,10 @@ def test_p12_reprogramme_intent_rejects_gap_payload():
 
 def test_p12_reprogramme_intent_accepts_entity_payload():
     assert loop._is_reprogramme_intent({"name": "admin", "desc": "prefs", "artifact_kind": "entity"}) is True
+
+
+def test_p12_reprogramme_intent_rejects_action_payload():
+    assert loop._is_reprogramme_intent({"name": "hash_edit", "desc": "workflow", "artifact_kind": "action_update"}) is False
 
 
 def test_p12_bootstrap_contact_entity_skips_known_contact(monkeypatch):
@@ -2728,7 +2738,7 @@ def test_p12_reprogramme_trigger_assignment_reroutes_to_reason_needed():
 
     assert outcome.control == "continue"
     assert compiler.ledger.stack[-1].gap.vocab == "reason_needed"
-    assert compiler.ledger.stack[-1].gap.route_mode == "action_editor"
+    assert compiler.ledger.stack[-1].gap.route_mode is None
 
 
 def test_p12_st_builder_cli_reports_malformed_skeleton_as_validation_error():
@@ -3507,36 +3517,6 @@ def test_p12_entity_tree_reprogramme_mode_coerces_frame_to_entity():
     assert "root" not in coerced
     assert "phases" not in coerced
     assert "closure" not in coerced
-
-
-def test_p12_action_tree_reprogramme_mode_preserves_flow_fields():
-    frame = {
-        "version": "semantic_skeleton.v1",
-        "artifact": {"kind": "hybrid", "protected_kind": "action"},
-        "name": "workflow",
-        "root": "phase_root",
-        "phases": [{"id": "phase_root"}],
-        "closure": {"success": {}},
-    }
-
-    preserved = execution_engine_module._coerce_semantic_frame_for_mode(frame, "action_editor")
-
-    assert preserved is not None
-    assert preserved["artifact"]["kind"] == "hybrid"
-    assert preserved["artifact"]["protected_kind"] == "action"
-    assert preserved["root"] == "phase_root"
-    assert preserved["phases"] == [{"id": "phase_root"}]
-    assert preserved["closure"] == {"success": {}}
-
-
-def test_p12_new_action_origination_allows_reason_authored_reprogramme():
-    gap = make_gap("build research workflow", vocab="reprogramme_needed")
-    gap.route_mode = "action_editor"
-    assert execution_engine_module._new_action_origination_requires_reason(
-        gap,
-        route_mode="action_editor",
-        target_entity=None,
-    ) is False
 
 
 def test_p12_new_action_gap_ignores_example_action_refs_for_target_resolution():
@@ -5902,14 +5882,55 @@ def test_p12_debug_failure_does_not_recursively_activate_debug():
     assert payload is None
 
 
-def test_p12_existing_action_update_does_not_require_reason():
-    gap = make_gap("update hash_edit", vocab="reprogramme_needed")
-    gap.route_mode = "action_editor"
-    assert execution_engine_module._new_action_origination_requires_reason(
-        gap,
-        route_mode="action_editor",
-        target_entity=skill("hash_edit"),
-    ) is False
+def test_p12_run_no_gap_discord_profile_sync_coerces_entity_shape(monkeypatch):
+    captured: dict[str, dict] = {}
+
+    class FakeSession:
+        def set_system(self, content: str):
+            pass
+
+        def inject(self, content: str, role: str = "user"):
+            pass
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps({
+                "version": "semantic_skeleton.v1",
+                "artifact": {"kind": "hybrid", "protected_kind": "action"},
+                "name": "courtney",
+                "desc": "courtney profile",
+                "trigger": "on_contact:discord:123",
+                "root": "phase_root",
+                "phases": [{"id": "phase_root"}],
+                "closure": {"success": {}},
+                "semantics": {
+                    "identity": {"username": "courtney"},
+                    "preferences": {"football": True},
+                },
+            })
+
+    def fake_execute_tool(tool: str, intent: dict):
+        captured["intent"] = intent
+        return ("Written: /Users/k2invested/Desktop/cors/skills/entities/courtney.st", 0)
+
+    monkeypatch.setattr(loop, "Session", lambda model=None: FakeSession())
+    monkeypatch.setattr(loop, "execute_tool", fake_execute_tool)
+    monkeypatch.setattr(loop, "auto_commit", lambda message, paths=None: ("sync123", None))
+
+    step = loop._run_no_gap_discord_profile_sync(
+        "discord:123",
+        "i like football, my favourite team is tottenham",
+        identity_skill=bootstrap_identity_skill(),
+        registry=registry(),
+        trajectory=Trajectory(),
+        origin_step=make_step("origin"),
+    )
+
+    assert step is not None
+    assert captured["intent"]["artifact"]["kind"] == "entity"
+    assert captured["intent"]["artifact"]["protected_kind"] == "entity"
+    assert "root" not in captured["intent"]
+    assert "phases" not in captured["intent"]
+    assert "closure" not in captured["intent"]
 
 
 def test_p12_st_builder_reuses_existing_contact_trigger_path(tmp_path):

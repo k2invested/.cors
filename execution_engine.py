@@ -2070,16 +2070,22 @@ def execute_iteration(
         policy = hooks.load_tree_policy()
         target_entity = _entity_target_for_reprogramme(gap, registry)
         route_mode = _determine_reprogramme_mode(gap, target_entity, policy)
+        if route_mode != "entity_editor":
+            print("  → reprogramme is entity-only; rerouting to reason_needed")
+            gap.vocab = "reason_needed"
+            gap.route_mode = None
+            compiler.ledger.stack.append(entry)
+            return ExecutionOutcome(control="continue")
         if _requires_reason_judgment(
             gap,
             registry=registry,
             policy=policy,
             route_mode=route_mode,
             target_entity=target_entity,
-        ) and route_mode == "action_editor":
+        ):
             print("  → structural boundary requires reason_needed first")
             gap.vocab = "reason_needed"
-            gap.route_mode = route_mode
+            gap.route_mode = None
             compiler.ledger.stack.append(entry)
             return ExecutionOutcome(control="continue")
         entity_data = hooks.resolve_entity(gap.content_refs, registry, trajectory)
@@ -2121,12 +2127,11 @@ def execute_iteration(
                 existing_ref=target_entity.hash,
             )
         else:
-            inferred_kind = "entity" if route_mode == "entity_editor" else "hybrid"
             frame = st_builder_module.blank_semantic_skeleton(
                 name=(target_entity.name if target_entity is not None else "entity_name"),
                 desc=gap.desc,
                 trigger=(target_entity.trigger if target_entity is not None else "manual"),
-                artifact_kind=inferred_kind,
+                artifact_kind="entity",
             )
         frame = _coerce_semantic_frame_for_mode(frame, route_mode)
         session.inject(
@@ -2150,10 +2155,6 @@ def execute_iteration(
             "- Return an entity frame only.\n"
             "- Do not include root, phases, or closure.\n"
             "- Preserve or restore deterministic context-injection steps; do not manifest workflow scaffolding.\n\n"
-            if route_mode == "entity_editor" else
-            "- This target lives in the action/workflow tree.\n"
-            "- Preserve executable or hybrid flow shape.\n"
-            "- root, phases, and closure are allowed when they already belong to the package.\n\n"
         )
         raw = session.call(
             f"You need to reprogramme your knowledge: gap:{gap.hash} \"{gap.desc}\"\n\n"
@@ -2169,18 +2170,14 @@ def execute_iteration(
             f"{route_mode_guidance}"
             "### Structural distinction\n"
             "- entity.st: manifests primarily as semantic/context injection.\n"
-            "- action.st: manifests primarily as executable step flow.\n"
             "- In this branch you may create or update entity state directly.\n"
-            "- You may only edit an existing action package if the user explicitly asked.\n"
-            "- You may not originate a new action workflow here.\n\n"
+            "- Action/workflow authoring belongs to reason-controlled structural primitives, not reprogramme.\n\n"
             "### Frame contract\n"
             "- Return JSON only.\n"
             "- Use semantic_skeleton.v1 as the author-time frame.\n"
-            "- This uses the same primitive flow shape as reason-built chains: root + phases + closure.\n"
-            "- For semantic-only entity updates, edit semantics and keep artifact.kind = entity.\n"
-            "- For plain entity or admin preference updates, do not include root, phases, or closure in the returned frame.\n"
-            "- For packages that also carry flow, edit root/phases/closure rather than freehand step blobs.\n"
-            "- The persistence layer will lower this frame back into the current .st runtime format.\n\n"
+            "- Keep artifact.kind = entity.\n"
+            "- Do not include root, phases, or closure in the returned frame.\n"
+            "- The persistence layer will lower this frame back into the current entity .st runtime format.\n\n"
             "### What reprogramme is for\n"
             "Use this branch to persist:\n"
             "- people, identities, preferences, communication style\n"
@@ -2192,7 +2189,7 @@ def execute_iteration(
             "- People: identity + preferences\n"
             "- Domain/compliance: constraints + sources + scope\n"
             "- Concepts: refs linking to related entity or chain hashes\n"
-            "- Existing action updates: preserve explicit steps and refs; do not invent new workflow vocab\n\n"
+            "- Keep executable flow concerns out of this branch\n\n"
             "### Entity format continuity\n"
             "When updating an existing entity, preserve its established file shape unless the user explicitly asked to change structure.\n"
             "- Preserve trigger, refs, and deterministic steps by default.\n"
@@ -2213,11 +2210,9 @@ def execute_iteration(
             "- Limit admin.st changes to additive semantic updates unless the user explicitly requested a structural rewrite.\n\n"
             "### Composition rule\n"
             "Compose from existing entities and workflows first. Reuse known hashes where possible.\n"
-            "If you need executable structure, reference an existing action or chain package by hash.\n"
-            "Only include steps when updating an already existing executable package.\n\n"
+            "If you need executable structure, surface reason_needed so a structural primitive can own it.\n\n"
             "### Runtime note\n"
             "Entity-like packages usually manifest as semantic injection when resolved.\n"
-            "Action-like packages belong to the structural workflow side of the system.\n"
             "Current persistence path writes JSON .st files through st_builder after lowering the semantic frame.\n\n"
             "### Entity references\n"
             "Reference other entities by hash, not name.\n"
@@ -2228,16 +2223,15 @@ def execute_iteration(
             "- command:X: hidden from LLM, triggered via /X command only\n\n"
             "```json\n"
             '{"version": "semantic_skeleton.v1",\n'
-            ' "artifact": {"kind": "entity | action | hybrid", "protected_kind": "entity | action", "lineage": "stable_name", "version_strategy": "hash_pinned"},\n'
+            ' "artifact": {"kind": "entity", "protected_kind": "entity", "lineage": "stable_name", "version_strategy": "hash_pinned"},\n'
             ' "name": "entity_name", "desc": "what this semantic package is",\n'
             ' "trigger": "manual | on_contact:X | command:X",\n'
             ' "refs": {"entity_name": "entity_hash", "chain_name": "chain_hash"},\n'
             ' "existing_ref": "include when updating a known entity",\n'
-            ' "semantics": {"identity": {}, "preferences": {}, "constraints": {}, "sources": [], "scope": ""},\n'
-            ' "root": "phase_root", "phases": [], "closure": {}}\n'
+            ' "semantics": {"identity": {}, "preferences": {}, "constraints": {}, "sources": [], "scope": ""}}\n'
             "```\n"
             "Only include fields relevant to this semantic package. Omit empty fields.\n"
-            "Do not invent new action workflows here. For executable updates, include existing_ref and edit the existing flow."
+            "Do not invent or edit action workflows here."
         )
         print(f"  LLM compose: {raw[:150]}...")
         intent = hooks.extract_json(raw)

@@ -1795,13 +1795,27 @@ def _is_reprogramme_intent(intent: dict | None) -> bool:
         return False
     if intent.get("version") == "semantic_skeleton.v1":
         artifact = intent.get("artifact", {}) or {}
-        return artifact.get("kind") in {"entity", "action", "hybrid"}
+        return artifact.get("kind") == "entity"
     if "version" in intent:
         return False
     if "name" not in intent or "desc" not in intent:
         return False
     artifact_kind = intent.get("artifact_kind", "entity")
-    return artifact_kind in {"entity", "action_update", "hybrid_update"}
+    return artifact_kind == "entity"
+
+
+def _coerce_entity_reprogramme_intent(intent: dict | None) -> dict | None:
+    if not isinstance(intent, dict):
+        return intent
+    artifact = dict(intent.get("artifact", {}) or {})
+    artifact["kind"] = "entity"
+    artifact["protected_kind"] = "entity"
+    intent["artifact"] = artifact
+    intent["artifact_kind"] = "entity"
+    intent.pop("root", None)
+    intent.pop("phases", None)
+    intent.pop("closure", None)
+    return intent
 
 
 def _resolve_entity(content_refs: list[str], registry: SkillRegistry,
@@ -2498,6 +2512,7 @@ def _run_no_gap_discord_profile_sync(
         print("  → no durable profile update warranted")
         return None
 
+    intent = _coerce_entity_reprogramme_intent(intent)
     intent.setdefault("existing_ref", identity_skill.hash)
     intent.setdefault("trigger", identity_skill.trigger)
     if not _is_reprogramme_intent(intent):

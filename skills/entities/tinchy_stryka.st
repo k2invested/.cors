@@ -4,8 +4,8 @@
   "trigger": "on_contact:discord:719157451496357949",
   "refs": {},
   "artifact": {
-    "kind": "hybrid",
-    "protected_kind": "action",
+    "kind": "entity",
+    "protected_kind": "entity",
     "lineage": "tinchy.stryka",
     "version_strategy": "hash_pinned"
   },
@@ -54,51 +54,6 @@
     "activate_existing": false,
     "mutate": false
   },
-  "root": "phase_initiate_entity_1",
-  "phases": [
-    {
-      "id": "phase_initiate_entity_1",
-      "kind": "observe",
-      "goal": "This is a newly bound contact entity. Ask a small number of concise get-to-know-you questions when useful, learn stable facts and preferences over time, and surface reprogramme_needed when new durable knowledge should be written back to this entity.",
-      "action": "initiate_entity",
-      "gap_template": {
-        "desc": "This is a newly bound contact entity. Ask a small number of concise get-to-know-you questions when useful, learn stable facts and preferences over time, and surface reprogramme_needed when new durable knowledge should be written back to this entity.",
-        "content_refs": [
-          "identity",
-          "preferences",
-          "access_rules",
-          "init"
-        ],
-        "step_refs": []
-      },
-      "manifestation": {
-        "kernel_class": "observe",
-        "dispersal": "context",
-        "execution_mode": "inline"
-      },
-      "generation": {
-        "spawn_mode": "none",
-        "spawn_trigger": "none",
-        "branch_policy": "depth_first_to_parent",
-        "sibling_policy": "after_descendants",
-        "return_policy": "resume_transition"
-      },
-      "allowed_vocab": [
-        "hash_resolve_needed"
-      ],
-      "post_diff": false,
-      "transitions": {
-        "on_close": "phase_done"
-      }
-    },
-    {
-      "id": "phase_done",
-      "kind": "terminal",
-      "goal": "done",
-      "action": "close_loop",
-      "terminal": true
-    }
-  ],
   "steps": [
     {
       "action": "initiate_entity",
@@ -111,19 +66,5 @@
         "init"
       ]
     }
-  ],
-  "closure": {
-    "success": {
-      "requires_terminal": "phase_done",
-      "requires_no_active_gaps": true
-    },
-    "failure": {
-      "allow_force_close": true,
-      "allow_clarify_terminal": true
-    },
-    "limits": {
-      "max_chain_depth": 15,
-      "max_redirects": 4
-    }
-  }
+  ]
 }
