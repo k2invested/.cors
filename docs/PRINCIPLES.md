@@ -643,7 +643,7 @@ Gaps do not change identity after emission.
 Successful mutation always yields a verification surface.
 
 **9. Loop always closes**  
-Every activated background workflow must reintegrate with the parent trajectory.
+Every activated workflow must close back into the parent trajectory through lawful reintegration.
 
 ### Refined Law 9
 
@@ -654,10 +654,13 @@ The current primary model is:
   - `prompt`
   - `await_needed`
 - if `await_needed=true`
+  - child work runs in isolated/background runtime
   - parent gets an `await_needed` checkpoint before synthesis
 - if `await_needed=false`
-  - parent gets a post-synth `reason_needed` heartbeat after child completion
-- child workflow closes through `commit.st`
+  - child work runs inline as a real child chain
+  - the activation handoff becomes the first step of that child chain
+  - when the child chain closes, the parent receives a post-observe `reason_needed` review gap
+- child workflow outcome re-enters as structure, not just as final prose
 - parent inspects the child semantic tree and decides what to do next
 
 Legacy `reprogramme_needed` background closure still exists in compatibility paths, but it is not the preferred activation model anymore.
@@ -667,9 +670,9 @@ So the reintegration layer now unwraps like this:
 ```text
 reason step
   -> emits child activation
-  -> child runs in isolated store
-  -> child closes through commit.st
-  -> parent resumes through await_needed or reason_needed
+  -> child runs inline or isolated depending on await_needed
+  -> child closes as a lawful chain
+  -> parent resumes through await_needed checkpoint or post-observe reason review
 ```
 
 ### Workflow validation
@@ -704,8 +707,8 @@ compiler law layer
 │  └─ force-close
 ├─ reintegration law
 │  ├─ await checkpoint
-│  ├─ reason heartbeat
-│  └─ commit-based child closure
+│  ├─ inline child-chain closure
+│  └─ parent-side post-observe reason review
 └─ validator surface
    ├─ validate_chain.py
    └─ compiler bookkeeping
@@ -728,6 +731,15 @@ This is the persistence layer of the same system, not a separate mechanism famil
 
 ### Chain lifecycle
 
+The runtime now separates two identities that older versions of cors collapsed together:
+
+- stable chain identity
+  - the runtime lineage id of the chain
+- chain signature
+  - the evolving derived signature of the chain contents as steps accumulate
+
+This matters because execution lineage must stay stable while the chain grows.
+
 When chains exceed `CHAIN_EXTRACT_LENGTH`, the full resolved chain is extracted from the hot trajectory into dedicated storage.
 
 Current storage model:
@@ -748,10 +760,13 @@ The parent trajectory carries the hash reference. The full chain body moves to e
 ```text
 chain extraction
 ├─ hot runtime chain
+│  ├─ stable chain id
 │  ├─ open
 │  ├─ active
 │  ├─ suspended
 │  └─ closed
+├─ derived chain signature
+│  └─ updated as steps accumulate
 ├─ extraction threshold
 │  └─ CHAIN_EXTRACT_LENGTH
 ├─ index layer
@@ -790,7 +805,7 @@ This is the section where the system becomes visibly recursive:
 reason step
   -> may emit ordinary executable gap
   -> may emit structural authoring gap
-  -> may activate another workflow
+  -> may activate another workflow as a child chain
 ```
 
 ### Minimal activation payload
@@ -807,33 +822,49 @@ The current child-activation contract is:
 
 or the same with `await_needed=false`.
 
-### `await.st`
+### Runtime distinction
 
-`await_needed` is a synchronization checkpoint, not the reintegration primitive itself.
+`await_needed` now determines whether child work is isolated or inline.
 
-It means:
+- `await_needed=false`
+  - activate workflow inline
+  - create a real child chain under the parent reasoning chain
+  - when the child closes, emit a parent-side post-observe `reason_needed` review
+- `await_needed=true`
+  - activate workflow in isolated/background runtime
+  - parent gets an explicit await checkpoint before synthesis
 
-- parent chooses to pause before synthesis
-- child result should be reintegrated at that checkpoint
+So `await_needed` is no longer just a sync marker. It is also the runtime split between inline and isolated child work.
 
-### `commit.st`
+### Child-chain origin
 
-`commit.st` is the child-flow reintegration codon.
+The activation handoff step is the first step of the child chain.
 
-At the end of a child `.st` flow, it exposes the child semantic tree back to the parent context. The parent sees not just the final answer, but how the child trajectory unfolded.
+This matters because phases injected by the activated workflow are not unrelated origin gaps. They belong to the same child chain lineage, and that lineage branches off the activating reason step.
 
-That detail matters because the system does not only compound outputs. It compounds trajectories.
+That means:
 
-### Async heartbeat
+- one activation
+  - one child chain
+- later phases in that workflow
+  - stay in that child chain
+- child workflows of child workflows
+  - become grandchildren in the same family tree
 
-If the parent did not choose `await_needed`, reintegration happens through a post-synth `reason_needed` heartbeat.
+The system compounds trajectories, not just outputs.
 
-That heartbeat is the parent-side review point:
+### Parent-side review
+
+Inline child closure now reintegrates through a parent-side post-observe `reason_needed` review.
+
+That review point is where the parent:
 
 - inspect child tree
 - synthesize if complete
 - reopen if needed
 - trigger further work if needed
+
+Background/isolated child work still reintegrates through explicit await checkpoints.
 
 ### Storage separation
 
@@ -855,20 +886,25 @@ reason_needed
    ├─ activate_ref
    ├─ prompt
    └─ await_needed
-      ├─ true  -> await_needed checkpoint before synthesis
-      └─ false -> post-synth reason_needed heartbeat
+      ├─ true
+      │  ├─ isolated/background runtime
+      │  └─ await_needed checkpoint before synthesis
+      └─ false
+         ├─ inline child chain
+         └─ parent-side post-observe reason review
 
-child workflow
-└─ closes through commit.st
-   └─ injects child semantic tree back to parent
+child workflow lineage
+├─ activation handoff step
+├─ child chain phases
+└─ child closure
+   └─ semantic tree exposed back to parent review
 ```
 
 ### Code mechanisms
 
 - [execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py)
 - [loop.py](/Users/k2invested/Desktop/cors/loop.py)
-- [skills/codons/await.st](/Users/k2invested/Desktop/cors/skills/codons/await.st)
-- [skills/codons/commit.st](/Users/k2invested/Desktop/cors/skills/codons/commit.st)
+- [compile.py](/Users/k2invested/Desktop/cors/compile.py)
 
 ## §11. Temporal Signatures and Semantic Trees
 
@@ -902,6 +938,8 @@ The tree should show:
 - refs
 - causality
 - reintegration points
+- child-chain branching
+- stable runtime lineage
 
 without reintroducing verbose legacy gap config noise.
 
@@ -912,6 +950,7 @@ So the semantic tree is not just a renderer. It is the compressed interface wher
 - activation
 - reintegration
 - temporal progress
+- parent/child workflow family shape
 
 all become simultaneously legible.
 
@@ -920,7 +959,8 @@ all become simultaneously legible.
 ```text
 semantic tree surface
 ├─ identity
-│  ├─ chain/package ref
+│  ├─ stable chain/package ref
+│  ├─ derived signature
 │  ├─ step ids
 │  └─ gap ids
 ├─ compact structure
@@ -931,7 +971,8 @@ semantic tree surface
 │  ├─ state
 │  ├─ refs
 │  ├─ timestamps
-│  └─ reintegration markers
+│  ├─ reintegration markers
+│  └─ parent/child chain lineage
 └─ render consumers
    ├─ main agent context
    ├─ await/reason review
