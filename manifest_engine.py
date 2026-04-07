@@ -293,6 +293,8 @@ def _node_contract_from_phase(phase: dict, refs: dict[str, str] | None = None) -
 
 
 def _runtime_gap_status(gap: dict) -> str:
+    if gap.get("phase_state") == "planned":
+        return "planned"
     if gap.get("dormant"):
         return "dormant"
     if gap.get("resolved"):
@@ -324,6 +326,10 @@ def _semantic_gap_from_runtime_gap(gap: dict, *, fallback_desc: str = "", post_d
         expression["origin"] = gap["origin"]
     if gap.get("route_mode"):
         expression["route_mode"] = gap["route_mode"]
+    if gap.get("phase_id"):
+        expression["phase_id"] = gap["phase_id"]
+    if gap.get("phase_state"):
+        expression["phase_state"] = gap["phase_state"]
     return expression
 
 
@@ -1077,6 +1083,22 @@ def _trigger_context_refs(registry: SkillRegistry | None) -> list[str]:
     return [trigger_skill.hash]
 
 
+def _activation_suffix(
+    *,
+    task_prompt: str | None,
+    activation_content_refs: list[str] | None,
+    activation_step_refs: list[str] | None,
+) -> str:
+    activation_suffix_parts: list[str] = []
+    if task_prompt:
+        activation_suffix_parts.append(f"Activation task: {task_prompt}")
+    if activation_content_refs:
+        activation_suffix_parts.append(f"Activation content refs: {list(activation_content_refs)}")
+    if activation_step_refs:
+        activation_suffix_parts.append(f"Activation step refs: {list(activation_step_refs)}")
+    return f"\n\n" + "\n".join(activation_suffix_parts) if activation_suffix_parts else ""
+
+
 def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
                            origin_step: Step, entry_chain_id: str,
                            turn_counter: int, task_prompt: str | None = None,
@@ -1110,14 +1132,69 @@ def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
         tool_map=tool_map or {},
         git=git,
     )
-    activation_suffix_parts: list[str] = []
-    if task_prompt:
-        activation_suffix_parts.append(f"Activation task: {task_prompt}")
-    if activation_content_refs:
-        activation_suffix_parts.append(f"Activation content refs: {list(activation_content_refs)}")
-    if activation_step_refs:
-        activation_suffix_parts.append(f"Activation step refs: {list(activation_step_refs)}")
-    activation_suffix = f"\n\n" + "\n".join(activation_suffix_parts) if activation_suffix_parts else ""
+    activation_suffix = _activation_suffix(
+        task_prompt=task_prompt,
+        activation_content_refs=activation_content_refs,
+        activation_step_refs=activation_step_refs,
+    )
+    package_doc = _skill_package_tree_doc(skill)
+    if package_doc.get("root") and isinstance(package_doc.get("phases"), list):
+        refs = dict(package_doc.get("refs", {}) or {})
+        root_id = package_doc.get("root")
+        for index, phase in enumerate(package_doc.get("phases", []) or []):
+            if not isinstance(phase, dict) or phase.get("terminal"):
+                continue
+            phase_id = phase.get("id")
+            if not isinstance(phase_id, str) or not phase_id:
+                continue
+            effective_phase, phase_foundation = _apply_foundation_default_contract(
+                phase,
+                refs=refs,
+                registry=registry,
+                chains_dir=chains_dir,
+                cors_root=cors_root,
+                tool_map=tool_map,
+                git=git,
+            )
+            gap_template = dict(effective_phase.get("gap_template", {}) or {})
+            child_refs = _dedupe_runtime_refs(
+                [package_ref],
+                gap.content_refs,
+                activation_content_refs or [],
+                _runtime_ref_list(gap_template.get("content_refs", [])),
+            )
+            activation_ref = effective_phase.get("manifestation", {}).get("activation_ref")
+            if activation_ref:
+                child_refs.append(activation_ref)
+            block_ref = _resolved_embedding_ref(phase, refs)
+            if block_ref:
+                child_refs.append(block_ref)
+            child_desc = gap_template.get("desc", effective_phase.get("goal", phase.get("goal", "")))
+            if not child_desc and phase_foundation and phase_foundation.get("default_gap") not in {None, "", "internal_only"}:
+                child_desc = f"activate foundation {phase_foundation['ref']} via {phase_foundation['default_gap']}"
+            if activation_suffix:
+                child_desc = f"{child_desc}{activation_suffix}"
+            child_gap = Gap.create(
+                desc=child_desc,
+                content_refs=child_refs,
+                step_refs=_dedupe_runtime_refs(activation_step_refs or [], _runtime_ref_list(gap_template.get("step_refs", []))),
+            )
+            child_gap.scores = Epistemic(
+                relevance=_node_relevance(effective_phase, index),
+                confidence=0.8,
+                grounded=0.0,
+            )
+            child_gap.vocab = _node_runtime_vocab(effective_phase)
+            if activation_ref and not child_gap.vocab:
+                child_gap.route_mode = "tool_ref_direct"
+            child_gap.turn_id = turn_counter
+            child_gap.package_ref = package_ref
+            child_gap.package_step_ref = step.hash
+            child_gap.phase_id = phase_id
+            child_gap.phase_state = "active" if phase_id == root_id else "planned"
+            child_gap.transitions = dict(effective_phase.get("transitions", {}) or {})
+            step.gaps.append(child_gap)
+        return step
     for st_step in skill.steps:
         tool_ref = getattr(st_step, "tool_ref", None)
         child_refs = _dedupe_runtime_refs(
@@ -1147,6 +1224,11 @@ def activate_skill_package(skill: Skill, package_ref: str, gap: Gap,
         if isinstance(tool_ref, str) and tool_ref and not effective_vocab:
             child_gap.route_mode = "tool_ref_direct"
         child_gap.turn_id = turn_counter
+        child_gap.package_ref = package_ref
+        child_gap.package_step_ref = step.hash
+        child_gap.phase_id = st_step.action
+        child_gap.phase_state = "active" if not step.gaps else "planned"
+        child_gap.transitions = {"on_done": skill.steps[len(step.gaps) + 1].action} if len(step.gaps) + 1 < len(skill.steps) else {}
         step.gaps.append(child_gap)
     return step
 
@@ -1179,14 +1261,12 @@ def activate_stepchain_package(package: dict, package_ref: str, gap: Gap,
     nodes_by_id = {node["id"]: node for node in package.get("nodes", [])}
     refs = dict(package.get("refs", {}) or {})
     phase_order = package.get("phase_order", [])
-    activation_suffix_parts: list[str] = []
-    if task_prompt:
-        activation_suffix_parts.append(f"Activation task: {task_prompt}")
-    if activation_content_refs:
-        activation_suffix_parts.append(f"Activation content refs: {list(activation_content_refs)}")
-    if activation_step_refs:
-        activation_suffix_parts.append(f"Activation step refs: {list(activation_step_refs)}")
-    activation_suffix = f"\n\n" + "\n".join(activation_suffix_parts) if activation_suffix_parts else ""
+    activation_suffix = _activation_suffix(
+        task_prompt=task_prompt,
+        activation_content_refs=activation_content_refs,
+        activation_step_refs=activation_step_refs,
+    )
+    root_id = package.get("root")
     for index, node_id in enumerate(phase_order):
         node = nodes_by_id.get(node_id)
         if not node or node.get("terminal"):
@@ -1230,6 +1310,11 @@ def activate_stepchain_package(package: dict, package_ref: str, gap: Gap,
         )
         child_gap.vocab = _node_runtime_vocab(effective_node)
         child_gap.turn_id = turn_counter
+        child_gap.package_ref = package_ref
+        child_gap.package_step_ref = step.hash
+        child_gap.phase_id = node_id
+        child_gap.phase_state = "active" if node_id == root_id else "planned"
+        child_gap.transitions = dict(effective_node.get("transitions", {}) or {})
         step.gaps.append(child_gap)
     return step
 

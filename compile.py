@@ -354,6 +354,8 @@ class Compiler:
         not from the LLM's self-assessment. Relevance is the primary driver.
         """
         for gap in step.gaps:
+            if getattr(gap, "phase_state", None) == "planned":
+                continue
             combined = self._admission_score(gap)
             threshold = self._admission_threshold(gap)
 
@@ -509,6 +511,41 @@ class Compiler:
 
     # ── 4. Chain Management ──
 
+    def _promote_planned_successors(self, gap: Gap) -> None:
+        package_step_ref = getattr(gap, "package_step_ref", None)
+        if not package_step_ref:
+            return
+        package_step = self.trajectory.resolve(package_step_ref)
+        if package_step is None:
+            return
+        transitions = dict(getattr(gap, "transitions", {}) or {})
+        target_ids: list[str] = []
+        for key in ("on_done", "on_close"):
+            target = transitions.get(key)
+            if isinstance(target, str) and target:
+                target_ids.append(target)
+        if not target_ids:
+            return
+        siblings = {
+            getattr(candidate, "phase_id", None): candidate
+            for candidate in package_step.gaps
+            if getattr(candidate, "package_step_ref", None) == package_step_ref
+        }
+        for target_id in target_ids:
+            successor = siblings.get(target_id)
+            if successor is None or successor.resolved or successor.dormant:
+                continue
+            if getattr(successor, "phase_state", None) == "active":
+                continue
+            successor.phase_state = "active"
+            if self.active_chain:
+                self.ledger.push_child(
+                    gap=successor,
+                    chain_id=self.active_chain.hash,
+                    parent_gap=gap.hash,
+                    depth=self.active_chain.length(),
+                )
+
     def resolve_current_gap(self, gap_hash: str, *, resolution_kind: str | None = None):
         """Mark the current gap as resolved. Check chain completion.
         If chain is complete and exceeds extract length, mark for extraction."""
@@ -518,6 +555,7 @@ class Compiler:
             gap.resolved = True
             if resolution_kind:
                 gap.resolution_kind = resolution_kind
+            self._promote_planned_successors(gap)
 
         if self.active_chain:
             chain_id = self.active_chain.hash

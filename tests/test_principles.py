@@ -5260,6 +5260,89 @@ def test_p12_chain_backed_vocab_injects_workflow_inline():
     assert any("## Chain workflow activation" in content for content in session.injected)
 
 
+def test_p12_inline_skill_activation_only_admits_root_phase():
+    reg = registry()
+    architect = skill("architect")
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    parent_origin = make_step("parent origin")
+    parent_gap = make_gap("activate architect", vocab="architect_needed")
+    parent_chain = Chain.create(origin_gap=parent_gap.hash, first_step=parent_origin.hash)
+    traj.add_chain(parent_chain)
+    compiler.active_chain = parent_chain
+
+    activation_step = manifest_engine_module.activate_skill_package(
+        architect,
+        architect.hash,
+        parent_gap,
+        parent_origin,
+        parent_chain.hash,
+        0,
+        task_prompt="run architect",
+        activation_content_refs=[architect.hash],
+        registry=reg,
+        chains_dir=ROOT / "trajectory_store" / "command",
+        cors_root=ROOT,
+        tool_map=loop.TOOL_MAP,
+    )
+
+    compiler.emit(activation_step)
+    traj.append(activation_step)
+
+    assert len(compiler.ledger.stack) == 1
+    assert compiler.ledger.stack[-1].gap.phase_id == "phase_resolve_source_1"
+    assert compiler.ledger.stack[-1].gap.phase_state == "active"
+    planned = [gap for gap in activation_step.gaps if gap.phase_state == "planned"]
+    assert planned
+    assert {gap.phase_id for gap in planned} >= {
+        "phase_resolve_principles_2",
+        "phase_resolve_docs_3",
+        "phase_resolve_tests_4",
+        "phase_analyse_and_handoff_fix_5",
+    }
+
+
+def test_p12_inline_skill_activation_promotes_successor_phase_on_resolution():
+    reg = registry()
+    architect = skill("architect")
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    parent_origin = make_step("parent origin")
+    parent_gap = make_gap("activate architect", vocab="architect_needed")
+    parent_chain = Chain.create(origin_gap=parent_gap.hash, first_step=parent_origin.hash)
+    traj.add_chain(parent_chain)
+    compiler.active_chain = parent_chain
+
+    activation_step = manifest_engine_module.activate_skill_package(
+        architect,
+        architect.hash,
+        parent_gap,
+        parent_origin,
+        parent_chain.hash,
+        0,
+        task_prompt="run architect",
+        activation_content_refs=[architect.hash],
+        registry=reg,
+        chains_dir=ROOT / "trajectory_store" / "command",
+        cors_root=ROOT,
+        tool_map=loop.TOOL_MAP,
+    )
+
+    compiler.emit(activation_step)
+    traj.append(activation_step)
+
+    entry, signal = compiler.next()
+    assert signal == GovernorSignal.ALLOW
+    assert entry is not None
+    assert entry.gap.phase_id == "phase_resolve_source_1"
+
+    compiler.resolve_current_gap(entry.gap.hash)
+
+    assert len(compiler.ledger.stack) == 1
+    assert compiler.ledger.stack[-1].gap.phase_id == "phase_resolve_principles_2"
+    assert compiler.ledger.stack[-1].gap.phase_state == "active"
+
+
 def test_p12_hash_edit_compose_prompt_includes_targeting_rules_and_refs():
     class FakeSession:
         def __init__(self):

@@ -159,6 +159,11 @@ class Gap:
     turn_id:     Optional[int] = None  # which turn created this gap (for cross-turn threshold)
     carry_forward: bool = False        # True when explicitly persisted for cross-turn resume
     route_mode: Optional[str] = None   # deterministic routing hint for execution branches
+    package_ref: Optional[str] = None
+    package_step_ref: Optional[str] = None
+    phase_id: Optional[str] = None
+    phase_state: Optional[str] = None
+    transitions: dict = field(default_factory=dict)
 
     @staticmethod
     def create(desc: str,
@@ -205,6 +210,16 @@ class Gap:
             d["carry_forward"] = True
         if self.route_mode:
             d["route_mode"] = self.route_mode
+        if self.package_ref:
+            d["package_ref"] = self.package_ref
+        if self.package_step_ref:
+            d["package_step_ref"] = self.package_step_ref
+        if self.phase_id:
+            d["phase_id"] = self.phase_id
+        if self.phase_state:
+            d["phase_state"] = self.phase_state
+        if self.transitions:
+            d["transitions"] = dict(self.transitions)
         return d
 
 
@@ -290,7 +305,10 @@ class Step:
         return any(not g.resolved and not g.dormant for g in self.gaps)
 
     def active_gaps(self) -> list[Gap]:
-        return [g for g in self.gaps if not g.resolved and not g.dormant]
+        return [
+            g for g in self.gaps
+            if not g.resolved and not g.dormant and g.phase_state != "planned"
+        ]
 
     def dormant_gaps(self) -> list[Gap]:
         return [g for g in self.gaps if g.dormant]
@@ -353,6 +371,11 @@ class Step:
                 turn_id=g.get("turn_id"),
                 carry_forward=g.get("carry_forward", False),
                 route_mode=g.get("route_mode"),
+                package_ref=g.get("package_ref"),
+                package_step_ref=g.get("package_step_ref"),
+                phase_id=g.get("phase_id"),
+                phase_state=g.get("phase_state"),
+                transitions=dict(g.get("transitions", {}) or {}),
             )
             gaps.append(gap)
 
