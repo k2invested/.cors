@@ -303,7 +303,8 @@ P1_CASES = [
     ("step_roundtrip_rogue", lambda: (lambda restored: restored.rogue and restored.rogue_kind == "policy_violation")(
         Step.from_dict(Step.create("rogue", rogue=True, rogue_kind="policy_violation", failure_source="tree_policy").to_dict())
     )),
-    ("chain_rehashes_on_add", lambda: (lambda c: (c.add_step("b"), c.hash)[1] != chain_hash(["gap", "a"]))(Chain.create("gap", "a"))),
+    ("chain_hash_stable_on_add", lambda: (lambda c: (lambda initial: (c.add_step("b"), c.hash == initial)[1])(c.hash))(Chain.create("gap", "a"))),
+    ("chain_signature_updates_on_add", lambda: (lambda c: (lambda initial: (c.add_step("b"), c.signature != initial)[1])(c.signature))(Chain.create("gap", "a"))),
     ("trajectory_resolves_step_and_gap", lambda: (lambda t, s, g: t.resolve(s.hash) == s and t.resolve_gap(g.hash) == g)(
         *(lambda gap: (lambda step, traj: (traj.append(step), traj, step, gap)[1:])(make_step("origin", gaps=[gap]), Trajectory()))(make_gap("g"))
     )),
@@ -830,6 +831,7 @@ P9_CASES = [
     ("chain_starts_at_length_one", lambda: Chain.create("gap", "step").length() == 1),
     ("chain_add_step_increments_length", lambda: (lambda c: (c.add_step("step2"), c.length())[1] == 2)(Chain.create("gap", "step1"))),
     ("chain_roundtrip_preserves_hash", lambda: Chain.from_dict(Chain.create("gap", "step").to_dict()).hash == Chain.create("gap", "step").hash),
+    ("chain_roundtrip_preserves_signature", lambda: (lambda c: (c.add_step("step2"), Chain.from_dict(c.to_dict()).signature == c.signature)[1])(Chain.create("gap", "step1"))),
     ("trajectory_add_chain_find_chain", lambda: (lambda traj, c: (traj.add_chain(c), traj.find_chain(c.origin_gap) == c)[1])(Trajectory(), Chain.create("gap", "step"))),
     ("append_to_passive_chain_true_when_open", lambda: (lambda traj, c, s: (traj.add_chain(c), traj.append_to_passive_chain(c.hash, s))[1])(Trajectory(), Chain.create("gap", "step1"), make_step("step2"))),
     ("append_to_passive_chain_false_when_resolved", lambda: (lambda traj, c, s: (setattr(c, "resolved", True), traj.add_chain(c), traj.append_to_passive_chain(c.hash, s))[2] is False)(Trajectory(), Chain.create("gap", "step1"), make_step("step2"))),
@@ -5038,7 +5040,14 @@ def test_p12_reason_needed_can_activate_inline_workflow_without_await():
     assert outcome.step_result is not None
     assert activated == []
     assert outcome.step_result.desc.startswith(f"activated workflow:{skill('hash_edit').hash}")
+    assert outcome.step_result.chain_id is not None
+    child_chain = traj.chains.get(outcome.step_result.chain_id)
+    assert child_chain is not None
+    assert child_chain.parent_chain_id == "parent_chain"
+    assert child_chain.activation_ref == skill("hash_edit").hash
+    assert child_chain.steps[0] == outcome.step_result.hash
     assert any(entry.gap.vocab == "hash_resolve_needed" for entry in compiler.ledger.stack)
+    assert all(entry.chain_id == child_chain.hash for entry in compiler.ledger.stack)
     assert compiler.background_refs() == []
     assert compiler.manual_await_refs() == []
 
@@ -5254,10 +5263,15 @@ def test_p12_chain_backed_vocab_injects_workflow_inline():
     assert outcome.step_result is not None
     assert activated == []
     assert outcome.step_result.desc.startswith(f"activated workflow:{skill('architect').hash}")
+    assert outcome.step_result.chain_id is not None
+    child_chain = traj.chains.get(outcome.step_result.chain_id)
+    assert child_chain is not None
+    assert child_chain.parent_chain_id == "parent_chain"
+    assert child_chain.activation_ref == skill("architect").hash
     assert any(g.vocab == "hash_resolve_needed" for g in outcome.step_result.gaps)
     assert compiler.manual_await_refs() == []
     assert compiler.background_refs() == []
-    assert any(entry.gap.vocab == "hash_resolve_needed" for entry in compiler.ledger.stack)
+    assert any(entry.gap.vocab == "hash_resolve_needed" and entry.chain_id == child_chain.hash for entry in compiler.ledger.stack)
     assert any("## Chain workflow activation" in content for content in session.injected)
 
 

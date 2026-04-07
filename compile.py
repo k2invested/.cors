@@ -373,14 +373,21 @@ class Compiler:
             # Admitted — place on ledger
             gap.dormant = False
 
-            if self.active_chain:
+            target_chain = None
+            if step.chain_id and step.chain_id in self.trajectory.chains:
+                target_chain = self.trajectory.chains.get(step.chain_id)
+            elif self.active_chain:
+                target_chain = self.active_chain
+
+            if target_chain:
                 # Child gap — push on top, depth-first
                 self.ledger.push_child(
                     gap=gap,
-                    chain_id=self.active_chain.hash,
+                    chain_id=target_chain.hash,
                     parent_gap=step.hash,
-                    depth=self.active_chain.length(),
+                    depth=target_chain.length(),
                 )
+                self.ledger.chain_states.setdefault(target_chain.hash, ChainState.OPEN)
             else:
                 # Origin gap — create new chain
                 chain = Chain.create(origin_gap=gap.hash, first_step=step.hash)
@@ -541,13 +548,17 @@ class Compiler:
             if getattr(successor, "phase_state", None) == "active":
                 continue
             successor.phase_state = "active"
-            if self.active_chain:
+            target_chain = self.trajectory.chains.get(package_step.chain_id) if package_step.chain_id else None
+            if target_chain is None:
+                target_chain = self.active_chain
+            if target_chain:
                 self.ledger.push_child(
                     gap=successor,
-                    chain_id=self.active_chain.hash,
+                    chain_id=target_chain.hash,
                     parent_gap=gap.hash,
-                    depth=self.active_chain.length(),
+                    depth=target_chain.length(),
                 )
+                self.ledger.chain_states.setdefault(target_chain.hash, ChainState.OPEN)
 
     def resolve_current_gap(self, gap_hash: str, *, resolution_kind: str | None = None):
         """Mark the current gap as resolved. Check chain completion.
@@ -570,10 +581,11 @@ class Compiler:
                     self.active_chain.extracted = True
                 self.active_chain = None
 
-    def add_step_to_chain(self, step_hash: str):
+    def add_step_to_chain(self, step_hash: str, chain_id: str | None = None):
         """Record a step in the active chain."""
-        if self.active_chain:
-            self.active_chain.add_step(step_hash)
+        target_chain = self.trajectory.chains.get(chain_id) if chain_id else self.active_chain
+        if target_chain:
+            target_chain.add_step(step_hash)
 
     def force_close_chain(self, chain_id: str):
         """Force-close a chain (too deep or pathological)."""

@@ -23,9 +23,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from compile import GovernorSignal, is_mutate, is_observe
+from compile import ChainState, GovernorSignal, is_mutate, is_observe
 import manifest_engine as me
-from step import Epistemic, Gap, Step
+from step import Chain, Epistemic, Gap, Step
 from system.chain_registry import public_chain_ref_map, render_public_chain_registry
 from tools import st_builder as st_builder_module
 from system.tool_contract import ToolContract, load_tool_contract
@@ -184,6 +184,12 @@ def _compose_direct_tool_prompt(*, gap: Gap, tool_ref: str, tool_path: str, cont
 
 
 def _record_step(step_result: Step, *, entry: Any, trajectory: Any, compiler: Any) -> None:
+    if step_result.chain_id:
+        trajectory.append(step_result)
+        compiler.add_step_to_chain(step_result.hash, chain_id=step_result.chain_id)
+        print(f"  step:{step_result.hash}" + (f" commit:{step_result.commit}" if step_result.commit else ""))
+        return
+
     passive_appended = False
     for ref in step_result.content_refs:
         passive_chains = trajectory.find_passive_chains(ref)
@@ -1213,11 +1219,20 @@ def execute_iteration(
             cors_root=config.cors_root,
             tool_map=config.tool_map,
         )
+        child_chain = Chain.create(origin_gap=gap.hash, first_step=step_result.hash)
+        child_chain.parent_chain_id = entry.chain_id
+        child_chain.activation_ref = skill.hash
+        child_chain.await_policy = "none"
+        trajectory.add_chain(child_chain)
+        compiler.ledger.chain_states[child_chain.hash] = ChainState.OPEN
+        step_result.chain_id = child_chain.hash
         session.inject(
             "## Chain workflow activation\n"
             f"vocab: {vocab}\n"
             f"activation_ref: {skill.hash}\n"
             "mode: inline\n"
+            f"chain_id: {child_chain.hash}\n"
+            f"parent_chain_id: {entry.chain_id}\n"
             f"task: {gap.desc}\n"
             f"content_refs: {gap.content_refs or []}\n"
             f"step_refs: {gap.step_refs or []}"
@@ -1896,11 +1911,20 @@ def execute_iteration(
                     cors_root=config.cors_root,
                     tool_map=config.tool_map,
                 )
+                child_chain = Chain.create(origin_gap=gap.hash, first_step=step_result.hash)
+                child_chain.parent_chain_id = entry.chain_id
+                child_chain.activation_ref = skill.hash
+                child_chain.await_policy = "none"
+                trajectory.add_chain(child_chain)
+                compiler.ledger.chain_states[child_chain.hash] = ChainState.OPEN
+                step_result.chain_id = child_chain.hash
                 session.inject(
                     "## Child workflow activation\n"
                     f"activation_ref: {skill.hash}\n"
                     "await_needed: false\n"
                     "mode: inline\n"
+                    f"chain_id: {child_chain.hash}\n"
+                    f"parent_chain_id: {entry.chain_id}\n"
                     f"task: {task_prompt}\n"
                     f"content_refs: {activation_content_refs or []}\n"
                     f"step_refs: {activation_step_refs or []}"

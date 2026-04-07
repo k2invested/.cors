@@ -419,6 +419,7 @@ class Chain:
     activation_ref: str | None = None
     parent_chain_id: str | None = None
     await_policy: str | None = None
+    signature: str | None = None
 
     @staticmethod
     def create(origin_gap: str, first_step: str) -> "Chain":
@@ -427,12 +428,12 @@ class Chain:
             hash=h,
             origin_gap=origin_gap,
             steps=[first_step],
+            signature=h,
         )
 
     def add_step(self, step_hash: str):
         self.steps.append(step_hash)
-        # Rehash with new member
-        self.hash = chain_hash([self.origin_gap] + self.steps)
+        self.signature = chain_hash([self.origin_gap] + self.steps)
 
     def length(self) -> int:
         return len(self.steps)
@@ -453,6 +454,8 @@ class Chain:
             data["parent_chain_id"] = self.parent_chain_id
         if self.await_policy:
             data["await_policy"] = self.await_policy
+        if self.signature:
+            data["signature"] = self.signature
         return data
 
     @staticmethod
@@ -468,6 +471,7 @@ class Chain:
             activation_ref=d.get("activation_ref"),
             parent_chain_id=d.get("parent_chain_id"),
             await_policy=d.get("await_policy"),
+            signature=d.get("signature"),
         )
 
 
@@ -585,6 +589,7 @@ class Trajectory:
                     continue  # already extracted
                 chain_data = {
                     "hash": chain.hash,
+                    "signature": chain.signature,
                     "origin_gap": chain.origin_gap,
                     "desc": chain.desc,
                     "store_kind": chain.store_kind,
