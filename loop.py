@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from env_loader import load_env
-from step import Step, Gap, Epistemic, Trajectory, Chain, TREE_LANGUAGE_KEY
+from step import Step, Gap, Epistemic, Trajectory, Chain
 from compile import (
     ChainState, Compiler, GovernorSignal, is_mutate, is_observe,
 )
@@ -78,6 +78,8 @@ TRAJECTORY_WINDOW = 10   # how many recent chains to render for LLM
 _turn_counter = 0        # increments each turn — used for cross-turn gap threshold
 LOG_RESOLVE_MAX_LINES = 120
 LOG_RESOLVE_MAX_CHARS = 12000
+USER_TURN_PREFIX = "user_turn: "
+RESPONSE_TURN_PREFIX = "response_turn: "
 
 load_env()
 
@@ -1388,6 +1390,9 @@ def run_turn(
     # Surface them in the trajectory so the LLM can see what was left dangling.
     # The LLM selects which are still relevant — non-selection = dropped.
 
+    user_turn_step = Step.create(desc=f"{USER_TURN_PREFIX}{user_message}")
+    trajectory.append(user_turn_step)
+
     dangling = _find_dangling_gaps(trajectory)
     if dangling:
         print(f"\n── RESUME: {len(dangling)} unresolved gap(s) from prior turn ──")
@@ -1400,22 +1405,14 @@ def run_turn(
     # It produces: pre-diff reasoning + gap articulations (post-diff)
     # This is the origin step — the root of this turn's causal chain
 
-    traj_tree = trajectory.render_recent(TRAJECTORY_WINDOW, registry=registry)
-
     session_context = _render_session_context(trajectory, registry, user_message)
 
-    first_input = f"""## Tree Language
-{TREE_LANGUAGE_KEY}
-
-{session_context}
-
-## Trajectory
-{traj_tree}
+    first_input = f"""{session_context}
 
 ## HEAD: commit:{head}
 {head_tree}
 
-## Message from {contact_id}
+## Current User Message
 "{user_message}"
 """
 
@@ -1508,6 +1505,7 @@ def run_turn(
         # No gaps → auto-synthesize
         print("\n── AUTO-SYNTH (no gaps) ──")
         response = _synthesize(session, user_message, turn_facts)
+        trajectory.append(Step.create(desc=f"{RESPONSE_TURN_PREFIX}{response}"))
         _save_turn(trajectory, state)
         return response
 
@@ -1616,6 +1614,7 @@ def run_turn(
     if clarify_frontier_step is not None:
         session.inject(_render_clarify_synthesis_guidance(clarify_frontier_step), role="system")
     response = _synthesize(session, user_message, turn_facts)
+    trajectory.append(Step.create(desc=f"{RESPONSE_TURN_PREFIX}{response}"))
 
     # ── 7. HEARTBEAT ─────────────────────────────────────────────────
     #
@@ -1869,16 +1868,12 @@ def _render_session_context(
     active_gap: str | None = None,
 ) -> str:
     lines = ["## Session Context"]
-    if user_message:
-        lines.append("### Current Message")
-        lines.append(f"\"{user_message}\"")
+    lines.append("### Conversation History")
+    lines.append(_render_conversation_history(trajectory, registry, current_user_message=user_message))
 
     if active_chain_id:
-        lines.append("### Active Chain")
+        lines.append("### Active Branch")
         lines.append(trajectory.render_chain(active_chain_id, registry=registry, highlight_gap=active_gap, mode="collapsed"))
-    else:
-        lines.append("### Recent Session Tree")
-        lines.append(trajectory.render_recent(TRAJECTORY_WINDOW, registry=registry, mode="collapsed"))
 
     attempts = _recent_structural_attempts(trajectory)
     if attempts:
@@ -1892,6 +1887,71 @@ def _render_session_context(
             lines.append(f"- step:{step.hash} \"{step.desc}\"{commit}{rogue}")
 
     return "\n".join(lines)
+
+
+def _is_user_turn_step(step: Step) -> bool:
+    return step.desc.startswith(USER_TURN_PREFIX)
+
+
+def _is_response_turn_step(step: Step) -> bool:
+    return step.desc.startswith(RESPONSE_TURN_PREFIX)
+
+
+def _turn_text(step: Step, prefix: str) -> str:
+    return step.desc[len(prefix):].strip()
+
+
+def _render_conversation_history(
+    trajectory: Trajectory,
+    registry: SkillRegistry,
+    *,
+    current_user_message: str | None = None,
+    turns: int = 4,
+) -> str:
+    ordered_steps = [trajectory.steps[h] for h in trajectory.order if h in trajectory.steps]
+    user_indices = [idx for idx, step in enumerate(ordered_steps) if _is_user_turn_step(step)]
+    if not user_indices:
+        return "(no prior conversation)"
+
+    rendered_turns: list[str] = []
+    for pos, start_idx in enumerate(user_indices):
+        end_idx = user_indices[pos + 1] if pos + 1 < len(user_indices) else len(ordered_steps)
+        segment = ordered_steps[start_idx:end_idx]
+        if not segment:
+            continue
+        user_step = segment[0]
+        user_text = _turn_text(user_step, USER_TURN_PREFIX)
+        response_steps = [step for step in segment if _is_response_turn_step(step)]
+        if not response_steps and current_user_message and user_text == current_user_message.strip():
+            continue
+        response_text = _turn_text(response_steps[-1], RESPONSE_TURN_PREFIX) if response_steps else "(no response recorded)"
+
+        start_t = user_step.t
+        end_t = ordered_steps[end_idx].t if end_idx < len(ordered_steps) else float("inf")
+        turn_chains = []
+        for chain in trajectory.chains.values():
+            if not chain.steps:
+                continue
+            first_step = trajectory.steps.get(chain.steps[0])
+            if first_step is None:
+                continue
+            if start_t <= first_step.t < end_t:
+                turn_chains.append((first_step.t, chain.hash))
+        turn_chains.sort()
+
+        lines = [f"User: {user_text}"]
+        lines.append("Semantic Tree:")
+        if turn_chains:
+            for _t, chain_id in turn_chains:
+                lines.append(trajectory.render_chain(chain_id, registry=registry, mode="collapsed"))
+        else:
+            lines.append("(no semantic tree recorded)")
+        lines.append(f"Response: {response_text}")
+        rendered_turns.append("\n".join(lines))
+
+    if not rendered_turns:
+        return "(no prior conversation)"
+    return "\n\n".join(rendered_turns[-turns:])
 
 
 def _execution_hooks(chains_dir: Path | None = None) -> ExecutionHooks:

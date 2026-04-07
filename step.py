@@ -910,7 +910,6 @@ class Trajectory:
             lines = [f"chain:{tree.get('source_ref')}  \"{desc}\" ({status}){time_str}"]
             origin_marker = " [focus]" if highlight_gap and tree.get("origin_gap") == highlight_gap else ""
             lines.append(f"  origin: {tree.get('origin_gap')}{origin_marker}")
-            lines.append(f"  {self._runtime_tree_legend()}")
             if mode == "collapsed" and nodes:
                 lines.append(f"  {self._collapsed_chain_summary(nodes)}")
                 active_nodes = [node for node in nodes if any(g.get("status") == "active" for g in (node.get("gaps", []) or []))]
