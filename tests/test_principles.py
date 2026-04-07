@@ -4204,6 +4204,8 @@ def test_p12_chain_registry_exposes_action_chain_paths():
         "skills/actions/architect.st",
         "skills/actions/debug.st",
         "skills/actions/hash_edit.st",
+        "skills/actions/principles.st",
+        "skills/actions/principles_edit.st",
         "skills/actions/property_research.st",
     )
 
@@ -4222,10 +4224,25 @@ def test_p12_chain_registry_derives_hash_edit_contract():
     assert contract.tool_paths == ("tools/hash_manifest.py",)
 
 
+def test_p12_chain_registry_derives_principles_edit_contract():
+    contracts = {contract.name: contract for contract in chain_registry_module.list_public_chain_contracts(ROOT)}
+    contract = contracts["principles_edit"]
+
+    assert contract.source == "skills/actions/principles_edit.st"
+    assert contract.trigger == "manual"
+    assert contract.activation == "name:hash_resolve_needed"
+    assert contract.default_gap == "hash_resolve_needed"
+    assert contract.entry_vocab == "hash_resolve_needed"
+    assert contract.step_count == 3
+    assert contract.omo_shape == "observe->bridge->mutate"
+    assert contract.tool_paths == ("tools/hash_manifest.py",)
+
+
 def test_p12_chain_registry_derives_command_action_tools():
     contracts = {contract.name: contract for contract in chain_registry_module.list_public_chain_contracts(ROOT)}
     architect = contracts["architect"]
     debug = contracts["debug"]
+    principles = contracts["principles"]
     property_research = contracts["property_research"]
 
     assert architect.activation == "name:architect_needed"
@@ -4239,6 +4256,11 @@ def test_p12_chain_registry_derives_command_action_tools():
     assert debug.step_count == 5
     assert debug.omo_shape == "observe->bridge"
     assert debug.tool_paths == ()
+    assert principles.activation == "name:hash_resolve_needed"
+    assert principles.trigger == "manual"
+    assert principles.step_count == 3
+    assert principles.omo_shape == "observe->bridge"
+    assert principles.tool_paths == ()
     assert property_research.activation == "command:property_research"
     assert property_research.step_count == 14
     assert property_research.omo_shape == "observe->mutate"
@@ -5193,6 +5215,41 @@ def test_p12_reason_needed_can_activate_inline_workflow_with_attached_refs():
     assert any("skills/entities/property_brief.st" in g.content_refs for g in injected_gaps)
     assert any("deadbeef1234" in g.step_refs for g in injected_gaps)
     assert compiler.background_refs() == []
+
+
+def test_p12_inline_child_chain_close_emits_parent_post_observe_reason():
+    traj = Trajectory()
+    compiler = Compiler(traj, current_turn=7)
+
+    parent_origin = make_step("parent origin")
+    traj.append(parent_origin)
+    parent_chain = Chain.create(origin_gap="parent_gap", first_step=parent_origin.hash)
+    traj.add_chain(parent_chain)
+    compiler.ledger.chain_states[parent_chain.hash] = ChainState.OPEN
+
+    child_gap = make_gap("resolve child branch", vocab="hash_resolve_needed")
+    child_step = make_step("child resolve", gaps=[child_gap])
+    traj.append(child_step)
+    child_chain = Chain.create(origin_gap="child_gap", first_step=child_step.hash)
+    child_chain.parent_chain_id = parent_chain.hash
+    child_chain.activation_ref = skill("debug").hash
+    child_chain.await_policy = "none"
+    child_step.chain_id = child_chain.hash
+    traj.add_chain(child_chain)
+    compiler.ledger.chain_states[child_chain.hash] = ChainState.ACTIVE
+    compiler.active_chain = child_chain
+
+    compiler.resolve_current_gap(child_gap.hash)
+
+    assert child_chain.resolved is True
+    assert child_chain.post_observe_review_emitted is True
+    assert compiler.ledger.stack
+    review_entry = compiler.ledger.stack[-1]
+    assert review_entry.chain_id == parent_chain.hash
+    assert review_entry.gap.vocab == "reason_needed"
+    assert "post-observe review" in review_entry.gap.desc
+    assert skill("debug").hash in review_entry.gap.content_refs
+    assert child_step.hash in review_entry.gap.step_refs
 
 
 def test_p12_chain_backed_vocab_injects_workflow_inline():

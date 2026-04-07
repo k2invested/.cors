@@ -420,6 +420,7 @@ class Chain:
     parent_chain_id: str | None = None
     await_policy: str | None = None
     signature: str | None = None
+    post_observe_review_emitted: bool = False
 
     @staticmethod
     def create(origin_gap: str, first_step: str) -> "Chain":
@@ -456,6 +457,8 @@ class Chain:
             data["await_policy"] = self.await_policy
         if self.signature:
             data["signature"] = self.signature
+        if self.post_observe_review_emitted:
+            data["post_observe_review_emitted"] = True
         return data
 
     @staticmethod
@@ -472,6 +475,7 @@ class Chain:
             parent_chain_id=d.get("parent_chain_id"),
             await_policy=d.get("await_policy"),
             signature=d.get("signature"),
+            post_observe_review_emitted=d.get("post_observe_review_emitted", False),
         )
 
 

@@ -560,6 +560,47 @@ class Compiler:
                 )
                 self.ledger.chain_states.setdefault(target_chain.hash, ChainState.OPEN)
 
+    def _emit_inline_post_observe_review(self, chain: Chain) -> None:
+        if (
+            chain.post_observe_review_emitted
+            or chain.await_policy not in (None, "none")
+            or not chain.parent_chain_id
+            or not chain.activation_ref
+        ):
+            return
+        parent_chain = self.trajectory.chains.get(chain.parent_chain_id)
+        if parent_chain is None or not chain.steps:
+            return
+
+        review_gap = Gap.create(
+            desc=(
+                "post-observe review: inspect the completed inline workflow branch, "
+                "review the child workflow outcome through the attached step lineage, "
+                "and decide the next lawful move in the parent flow. Either surface "
+                "correcting or continuing gaps if more work is needed, or emit no gaps "
+                "if the workflow outcome is sound and synthesis may proceed."
+            ),
+            content_refs=[chain.activation_ref],
+            step_refs=list(chain.steps),
+            origin=chain.steps[-1],
+        )
+        review_gap.vocab = "reason_needed"
+        review_gap.scores = Epistemic(relevance=0.92, confidence=0.88, grounded=0.0)
+        review_gap.turn_id = self.current_turn
+
+        review_step = Step.create(
+            desc=f"post-observe review for inline workflow:{chain.activation_ref}",
+            step_refs=[chain.steps[-1]],
+            content_refs=[chain.activation_ref],
+            gaps=[review_gap],
+            chain_id=parent_chain.hash,
+            parent=chain.steps[-1],
+        )
+        self.trajectory.append(review_step)
+        parent_chain.add_step(review_step.hash)
+        self.emit(review_step)
+        chain.post_observe_review_emitted = True
+
     def resolve_current_gap(self, gap_hash: str, *, resolution_kind: str | None = None):
         """Mark the current gap as resolved. Check chain completion.
         If chain is complete and exceeds extract length, mark for extraction."""
@@ -574,11 +615,13 @@ class Compiler:
         if self.active_chain:
             chain_id = self.active_chain.hash
             if self.ledger.chain_is_complete(chain_id):
+                closing_chain = self.active_chain
                 self.ledger.close_chain(chain_id)
-                self.active_chain.resolved = True
+                closing_chain.resolved = True
                 # Mark for extraction if long enough
-                if self.active_chain.length() >= CHAIN_EXTRACT_LENGTH:
-                    self.active_chain.extracted = True
+                if closing_chain.length() >= CHAIN_EXTRACT_LENGTH:
+                    closing_chain.extracted = True
+                self._emit_inline_post_observe_review(closing_chain)
                 self.active_chain = None
 
     def add_step_to_chain(self, step_hash: str, chain_id: str | None = None):
