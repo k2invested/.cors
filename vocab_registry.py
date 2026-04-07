@@ -70,7 +70,7 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         priority=40,
         desc="Run the architect workflow to analyse source/doc/test drift and hand off exact edits if syncing is warranted.",
         target_kind="chain",
-        target_ref="69ff0998ff94",
+        target_ref="0f7c8c71ef3e",
     ),
     "hash_edit_needed": VocabSpec(
         name="hash_edit_needed",

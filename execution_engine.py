@@ -24,12 +24,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 from compile import GovernorSignal, is_mutate, is_observe
+import manifest_engine as me
 from step import Epistemic, Gap, Step
-from system.chain_registry import render_public_chain_registry
+from system.chain_registry import public_chain_ref_map, render_public_chain_registry
 from tools import st_builder as st_builder_module
 from system.tool_contract import ToolContract, load_tool_contract
 from system.tool_registry import public_tool_ref_map, render_public_tool_registry
-from vocab_registry import FOUNDATIONAL_BRIDGE_POST_OBSERVE, find_vocab_for_tool_ref, render_configurable_vocab_registry
+from vocab_registry import FOUNDATIONAL_BRIDGE_POST_OBSERVE, find_vocab_for_tool_ref, get_vocab, render_configurable_vocab_registry
 
 
 @dataclass
@@ -125,6 +126,20 @@ def _public_tool_path_for_ref(tool_ref: str | None, cors_root: Path) -> str | No
     if not isinstance(tool_ref, str) or not tool_ref:
         return None
     return public_tool_ref_map(cors_root).get(tool_ref)
+
+
+def _resolve_workflow_skill(registry: Any, activate_ref: str, cors_root: Path) -> Any | None:
+    skill = registry.resolve(activate_ref)
+    if skill is not None:
+        return skill
+    chain_path = public_chain_ref_map(cors_root).get(activate_ref)
+    if not chain_path:
+        return None
+    expected_source = str((cors_root / chain_path).resolve())
+    for candidate in getattr(registry, "by_hash", {}).values():
+        if str(Path(candidate.source).resolve()) == expected_source:
+            return candidate
+    return None
 
 
 def _direct_tool_ref_from_gap(gap: Gap, cors_root: Path) -> str | None:
@@ -1144,6 +1159,72 @@ def execute_iteration(
                     chain_id=entry.chain_id,
                 )
 
+    elif (
+        vocab
+        and (spec := get_vocab(vocab)) is not None
+        and spec.target_kind == "chain"
+        and isinstance(spec.target_ref, str)
+        and spec.target_ref
+    ):
+        triggered_skills = registry.resolve_vocab_trigger(vocab)
+        skill = triggered_skills[0] if triggered_skills else None
+        if skill is None:
+            print(f"  → missing inline chain trigger for {vocab}")
+            compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
+            step_result = _emit_rogue_with_diagnosis(
+                desc=f"FAILED: {gap.desc}",
+                origin_step=origin_step,
+                gap=gap,
+                chain_id=entry.chain_id,
+                rogue_kind="tool_failure",
+                failure_source=vocab,
+                trajectory=trajectory,
+                compiler=compiler,
+                failure_detail=f"no loaded on_vocab trigger skill for {vocab}",
+            )
+            _auto_activate_debug_for_rogue(
+                registry=registry,
+                origin_step=origin_step,
+                rogue_step=step_result,
+                gap=gap,
+                chain_id=entry.chain_id,
+                rogue_kind="tool_failure",
+                failure_source=vocab,
+                failure_detail=f"no loaded on_vocab trigger skill for {vocab}",
+                trajectory=trajectory,
+                hooks=hooks,
+                compiler=compiler,
+                session=session,
+            )
+            return ExecutionOutcome(control="continue", step_result=step_result)
+        print(f"  → activate chain-backed vocab:{vocab} [inline]")
+        step_result = me.activate_skill_package(
+            skill,
+            skill.hash,
+            gap,
+            origin_step,
+            entry.chain_id,
+            current_turn,
+            task_prompt=gap.desc,
+            activation_content_refs=list(gap.content_refs),
+            activation_step_refs=list(gap.step_refs),
+            registry=registry,
+            chains_dir=config.chains_dir,
+            cors_root=config.cors_root,
+            tool_map=config.tool_map,
+        )
+        session.inject(
+            "## Chain workflow activation\n"
+            f"vocab: {vocab}\n"
+            f"activation_ref: {skill.hash}\n"
+            "mode: inline\n"
+            f"task: {gap.desc}\n"
+            f"content_refs: {gap.content_refs or []}\n"
+            f"step_refs: {gap.step_refs or []}"
+        )
+        compiler.emit(step_result)
+        compiler.resolve_current_gap(gap.hash)
+
     elif vocab in config.observation_only_vocab:
         print(f"  → observation-only ({vocab})")
         if resolved_data:
@@ -1721,46 +1802,103 @@ def execute_iteration(
             activation_content_refs = activation_intent["content_refs"]
             activation_step_refs = activation_intent["step_refs"]
             await_policy = "manual" if await_needed else "none"
-            print(f"  → activate isolated workflow:{activate_ref} [{await_policy}]")
             activation_context = None
             if activation_content_refs or activation_step_refs:
                 activation_context = hooks.resolve_all_refs(activation_step_refs, activation_content_refs, trajectory)
-            run_kwargs = {
-                "task_prompt": task_prompt,
-                "store_kind": "background_agent",
-                "await_policy": await_policy,
-            }
-            if activation_content_refs:
-                run_kwargs["content_refs"] = activation_content_refs
-            if activation_step_refs:
-                run_kwargs["step_refs"] = activation_step_refs
-            if activation_context:
-                run_kwargs["activation_context"] = activation_context
-            child_result = hooks.run_isolated_workflow(activate_ref, **run_kwargs)
-            compiler.record_background_trigger(
-                entry.chain_id,
-                refs=[activate_ref] + activation_content_refs + activation_step_refs,
-                activation_ref=activate_ref,
-                await_policy=await_policy,
-                store_kind="background_agent",
-                parent_step=origin_step.hash,
-            )
-            session.inject(
-                "## Child workflow activation\n"
-                f"activation_ref: {activate_ref}\n"
-                f"await_needed: {str(await_needed).lower()}\n"
-                f"status: {child_result.get('status', 'unknown')}\n"
-                f"store_kind: {child_result.get('store_kind', 'background_agent')}\n"
-                f"task: {task_prompt}\n"
-                f"content_refs: {activation_content_refs or []}\n"
-                f"step_refs: {activation_step_refs or []}"
-            )
-            step_result = Step.create(
-                desc=f"activated child workflow:{activate_ref}",
-                step_refs=[origin_step.hash],
-                content_refs=[activate_ref] + activation_content_refs,
-                chain_id=entry.chain_id,
-            )
+            if await_needed:
+                print(f"  → activate isolated workflow:{activate_ref} [{await_policy}]")
+                run_kwargs = {
+                    "task_prompt": task_prompt,
+                    "store_kind": "background_agent",
+                    "await_policy": await_policy,
+                }
+                if activation_content_refs:
+                    run_kwargs["content_refs"] = activation_content_refs
+                if activation_step_refs:
+                    run_kwargs["step_refs"] = activation_step_refs
+                if activation_context:
+                    run_kwargs["activation_context"] = activation_context
+                child_result = hooks.run_isolated_workflow(activate_ref, **run_kwargs)
+                compiler.record_background_trigger(
+                    entry.chain_id,
+                    refs=[activate_ref] + activation_content_refs + activation_step_refs,
+                    activation_ref=activate_ref,
+                    await_policy=await_policy,
+                    store_kind="background_agent",
+                    parent_step=origin_step.hash,
+                )
+                session.inject(
+                    "## Child workflow activation\n"
+                    f"activation_ref: {activate_ref}\n"
+                    f"await_needed: {str(await_needed).lower()}\n"
+                    f"status: {child_result.get('status', 'unknown')}\n"
+                    f"store_kind: {child_result.get('store_kind', 'background_agent')}\n"
+                    f"task: {task_prompt}\n"
+                    f"content_refs: {activation_content_refs or []}\n"
+                    f"step_refs: {activation_step_refs or []}"
+                )
+                step_result = Step.create(
+                    desc=f"activated child workflow:{activate_ref}",
+                    step_refs=[origin_step.hash],
+                    content_refs=[activate_ref] + activation_content_refs,
+                    chain_id=entry.chain_id,
+                )
+            else:
+                skill = _resolve_workflow_skill(registry, activate_ref, config.cors_root)
+                if skill is None:
+                    compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
+                    step_result = _emit_rogue_with_diagnosis(
+                        desc=f"FAILED: {gap.desc}",
+                        origin_step=origin_step,
+                        gap=gap,
+                        chain_id=entry.chain_id,
+                        rogue_kind="tool_failure",
+                        failure_source="reason_needed",
+                        trajectory=trajectory,
+                        compiler=compiler,
+                        failure_detail=f"unresolved workflow activation ref: {activate_ref}",
+                    )
+                    _auto_activate_debug_for_rogue(
+                        registry=registry,
+                        origin_step=origin_step,
+                        rogue_step=step_result,
+                        gap=gap,
+                        chain_id=entry.chain_id,
+                        rogue_kind="tool_failure",
+                        failure_source="reason_needed",
+                        failure_detail=f"unresolved workflow activation ref: {activate_ref}",
+                        trajectory=trajectory,
+                        hooks=hooks,
+                        compiler=compiler,
+                        session=session,
+                    )
+                    return ExecutionOutcome(control="continue", step_result=step_result)
+                print(f"  → activate inline workflow:{activate_ref}")
+                step_result = me.activate_skill_package(
+                    skill,
+                    skill.hash,
+                    gap,
+                    origin_step,
+                    entry.chain_id,
+                    current_turn,
+                    task_prompt=task_prompt,
+                    activation_content_refs=activation_content_refs,
+                    activation_step_refs=activation_step_refs,
+                    registry=registry,
+                    chains_dir=config.chains_dir,
+                    cors_root=config.cors_root,
+                    tool_map=config.tool_map,
+                )
+                session.inject(
+                    "## Child workflow activation\n"
+                    f"activation_ref: {skill.hash}\n"
+                    "await_needed: false\n"
+                    "mode: inline\n"
+                    f"task: {task_prompt}\n"
+                    f"content_refs: {activation_content_refs or []}\n"
+                    f"step_refs: {activation_step_refs or []}"
+                )
+                compiler.emit(step_result)
             compiler.resolve_current_gap(gap.hash)
         else:
             step_result, child_gaps = hooks.parse_step_output(

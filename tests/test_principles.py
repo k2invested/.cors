@@ -4969,7 +4969,7 @@ def test_p12_git_revert_needed_uses_tool_reported_commit_for_post_observe():
     assert compiler.ledger.stack[-1].gap.content_refs == ["feedface5678"]
 
 
-def test_p12_reason_needed_can_activate_isolated_workflow_without_await():
+def test_p12_reason_needed_can_activate_inline_workflow_without_await():
     class FakeSession:
         def __init__(self):
             self.injected = []
@@ -5035,8 +5035,10 @@ def test_p12_reason_needed_can_activate_isolated_workflow_without_await():
     )
 
     assert outcome.step_result is not None
-    assert activated == [{"ref": skill("hash_edit").hash, "task_prompt": "apply child workflow", "store_kind": "background_agent", "await_policy": "none"}]
-    assert compiler.background_refs() == [skill("hash_edit").hash]
+    assert activated == []
+    assert outcome.step_result.desc.startswith(f"activated workflow:{skill('hash_edit').hash}")
+    assert any(entry.gap.vocab == "hash_resolve_needed" for entry in compiler.ledger.stack)
+    assert compiler.background_refs() == []
     assert compiler.manual_await_refs() == []
 
 
@@ -5105,7 +5107,7 @@ def test_p12_reason_needed_can_activate_isolated_workflow_with_manual_await():
     assert compiler.background_refs() == []
 
 
-def test_p12_reason_needed_can_activate_isolated_workflow_with_attached_refs():
+def test_p12_reason_needed_can_activate_inline_workflow_with_attached_refs():
     class FakeSession:
         def call(self, user_content: str = None) -> str:
             return json.dumps(
@@ -5170,16 +5172,90 @@ def test_p12_reason_needed_can_activate_isolated_workflow_with_attached_refs():
     )
 
     assert outcome.step_result is not None
-    assert activated == [{
-        "ref": skill("debug").hash,
-        "task_prompt": "debug the attached failure",
-        "store_kind": "background_agent",
-        "await_policy": "none",
-        "content_refs": ["bot.log", "skills/entities/property_brief.st"],
-        "step_refs": ["deadbeef1234"],
-        "activation_context": "resolved activation context",
-    }]
-    assert compiler.background_refs() == [skill("debug").hash, "bot.log", "skills/entities/property_brief.st", "deadbeef1234"]
+    assert activated == []
+    assert outcome.step_result.desc.startswith(f"activated workflow:{skill('debug').hash}")
+    injected_gaps = outcome.step_result.gaps
+    assert injected_gaps
+    assert any("Activation task: debug the attached failure" in g.desc for g in injected_gaps)
+    assert any("bot.log" in g.content_refs for g in injected_gaps)
+    assert any("skills/entities/property_brief.st" in g.content_refs for g in injected_gaps)
+    assert any("deadbeef1234" in g.step_refs for g in injected_gaps)
+    assert compiler.background_refs() == []
+
+
+def test_p12_chain_backed_vocab_injects_workflow_inline():
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            return "{}"
+
+    activated: list[dict] = []
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    compiler.ledger.chain_states["parent_chain"] = ChainState.OPEN
+    origin_step = make_step("origin")
+    gap = make_gap(
+        "Activate the architect workflow to audit docs and sync stale files.",
+        vocab="architect_needed",
+        content_refs=["docs/ARCHITECTURE.md"],
+        step_refs=["deadbeef1234"],
+    )
+    entry = SimpleNamespace(gap=gap, chain_id="parent_chain")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "resolved architect activation context",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: None,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        run_isolated_workflow=lambda ref, **kwargs: activated.append({"ref": ref, **kwargs}) or {"status": "ok", "activation_ref": ref, "store_kind": "background_agent"},
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "trajectory_store" / "command",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert activated == []
+    assert outcome.step_result.desc.startswith(f"activated workflow:{skill('architect').hash}")
+    assert any(g.vocab == "hash_resolve_needed" for g in outcome.step_result.gaps)
+    assert compiler.manual_await_refs() == []
+    assert compiler.background_refs() == []
+    assert any(entry.gap.vocab == "hash_resolve_needed" for entry in compiler.ledger.stack)
+    assert any("## Chain workflow activation" in content for content in session.injected)
 
 
 def test_p12_execution_failure_auto_activates_debug(monkeypatch):

@@ -48,6 +48,7 @@ import manifest_engine as me
 import action_foundations as action_foundations_module
 from execution_engine import ExecutionConfig, ExecutionHooks, execute_iteration
 from tools import st_builder as st_builder_module
+from system.chain_registry import public_chain_ref_map
 from system.hash_registry import HASH_RESOLVE_ROUTES
 from vocab_registry import (
     BRIDGE_VOCAB,
@@ -2817,6 +2818,14 @@ def run_isolated_workflow_ref(
     compiler.ledger.chain_states[chain.hash] = ChainState.OPEN
 
     skill = registry.resolve(ref)
+    if skill is None:
+        chain_path = public_chain_ref_map(CORS_ROOT).get(ref)
+        if chain_path:
+            expected_source = str((CORS_ROOT / chain_path).resolve())
+            for candidate in registry.by_hash.values():
+                if str(Path(candidate.source).resolve()) == expected_source:
+                    skill = candidate
+                    break
     if skill is not None:
         activation_step = me.activate_skill_package(
             skill,
