@@ -1,8 +1,14 @@
 {
   "name": "principles",
   "desc": "Reason-activated principles maintenance. Resolves the current source/runtime surface first, then PRINCIPLES.md, then reasons about requested principle edits or principles drift and may activate principles_edit only for PRINCIPLES.md while preserving the layered principles structure.",
-  "trigger": "manual",
-  "author": "developer",
+  "trigger": "on_vocab:principles_needed",
+  "refs": {},
+  "artifact": {
+    "kind": "action",
+    "protected_kind": "action",
+    "lineage": "principles",
+    "version_strategy": "hash_pinned"
+  },
   "root": "phase_resolve_source_1",
   "phases": [
     {
@@ -128,7 +134,10 @@
     {
       "action": "analyse_and_handoff_fix",
       "desc": "inspect the resolved source context, the resolved PRINCIPLES.md, and the activation task. This workflow is used both for targeted user-directed principle maintenance and for general principles drift review. If the activation task specifies principles to add, remove, rewrite, or preserve, follow those instructions as the governing edit brief while grounding every change in the resolved live mechanisms. Otherwise, assess PRINCIPLES.md for drift against the current system context carried into this workflow, especially the layered narrative, mechanism trees, execution law, and runtime structure reflected in source. If edits are needed, preserve the governing structure of PRINCIPLES.md unless the activation task explicitly says otherwise: keep it as a layered narrative that unwraps from the step primitive outward; keep mechanism composition explicit; maintain a mechanism tree for each top-level principle section; keep ARCHITECTURE-style flattened specification out of this document. Only two outputs are lawful here: emit nothing if no principles edits are needed, or emit only a reason activation JSON for principles_edit. If activating principles_edit, use the principles_edit workflow ref, and prompt that child workflow to preserve the required principles structure while editing only docs/PRINCIPLES.md. Include only docs/PRINCIPLES.md in the edit set, and set await_needed=false by default. Do not activate architect. Do not activate any workflow other than principles_edit. Do not include source files, tests, or any other docs in the edit set for this workflow. Do not emit reprogramme_needed from this phase unless entity state persistence is explicitly required.",
-      "post_diff": true
+      "post_diff": true,
+      "resolve": [
+        "docs/PRINCIPLES.md"
+      ]
     }
   ],
   "closure": {
