@@ -1,8 +1,10 @@
 {
   "name": "tinchy.stryka",
-  "desc": "Bootstrap entity for inbound contact discord:719157451496357949",
+  "desc": "Discord entity for Clinton (tinchystricker). Canonical info and identity mapping from clinton:bfa1a96aea7c.",
   "trigger": "on_contact:discord:719157451496357949",
-  "refs": {},
+  "refs": {
+    "clinton": "bfa1a96aea7c"
+  },
   "artifact": {
     "kind": "entity",
     "protected_kind": "entity",
@@ -11,18 +13,23 @@
   },
   "identity": {
     "external_id": "discord:719157451496357949",
-    "username": "tinchy.stryka",
+    "username": "tinchystricker",
     "discord_user_id": "719157451496357949",
-    "name": "tinchy.stryka",
-    "source": "inbound_contact",
-    "context": "Auto-bootstrapped from a first inbound message. Minimal identity only until init is completed."
-  },
-  "init": {
-    "status": "pending",
-    "mode": "first_contact",
-    "ask_profile_questions": true,
-    "seed_message": "hi",
-    "next_action": "Ask a small number of concise onboarding questions when useful. When enough stable profile is known, reprogramme this entity to set init.status to complete."
+    "name": "Clinton",
+    "source": "identity mapping from clinton:bfa1a96aea7c",
+    "context": "Auto-bootstrapped from a first inbound message. Minimal identity only until init is completed.",
+    "role": "cyber security developer",
+    "location": "London",
+    "current_stay": "Northampton",
+    "current_status": "studying",
+    "specialty": "backend systems",
+    "previous_location": "Lagos",
+    "collaborated_with": [
+      "72b1d5ffc964"
+    ],
+    "project_history": [
+      "v3"
+    ]
   },
   "preferences": {
     "onboarding": {
@@ -45,7 +52,36 @@
         "watch"
       ],
       "football_attendance": "never_attended_in_person"
+    },
+    "communication": {
+      "style": "async",
+      "timezone": "Europe/London"
     }
+  },
+  "steps": [
+    {
+      "action": "load_identity",
+      "desc": "surface identity context for tinchy.stryka",
+      "resolve": [
+        "identity"
+      ],
+      "post_diff": false
+    },
+    {
+      "action": "load_preferences",
+      "desc": "surface preferences context for tinchy.stryka",
+      "resolve": [
+        "preferences"
+      ],
+      "post_diff": false
+    }
+  ],
+  "init": {
+    "status": "pending",
+    "mode": "first_contact",
+    "ask_profile_questions": true,
+    "seed_message": "hi",
+    "next_action": "Ask a small number of concise onboarding questions when useful. When enough stable profile is known, reprogramme this entity to set init.status to complete."
   },
   "access_rules": {
     "observe": true,
@@ -53,18 +89,5 @@
     "compile": false,
     "activate_existing": false,
     "mutate": false
-  },
-  "steps": [
-    {
-      "action": "initiate_entity",
-      "desc": "This is a newly bound contact entity. Ask a small number of concise get-to-know-you questions when useful, learn stable facts and preferences over time, and surface reprogramme_needed when new durable knowledge should be written back to this entity.",
-      "post_diff": false,
-      "resolve": [
-        "identity",
-        "preferences",
-        "access_rules",
-        "init"
-      ]
-    }
-  ]
+  }
 }
