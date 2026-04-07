@@ -80,12 +80,25 @@ class ExecutionOutcome:
     step_result: Step | None = None
 
 
+def _canonical_workflow_ref(ref: str | None) -> str | None:
+    if not isinstance(ref, str):
+        return None
+    candidate = ref.strip()
+    if not candidate:
+        return None
+    match = re.fullmatch(r"[A-Za-z0-9_.-]+:([0-9a-f]{12,64})", candidate)
+    if match:
+        return match.group(1)
+    return candidate
+
+
 def _extract_reason_activation_intent(raw: str, hooks: ExecutionHooks) -> dict[str, Any] | None:
     data = hooks.extract_json(raw)
     if not isinstance(data, dict) or "gaps" in data:
         return None
     activate_ref = data.get("activate_ref")
-    if not isinstance(activate_ref, str) or not activate_ref.strip():
+    activate_ref = _canonical_workflow_ref(activate_ref)
+    if not activate_ref:
         return None
     prompt = data.get("prompt")
     if prompt is not None and not isinstance(prompt, str):
@@ -104,7 +117,7 @@ def _extract_reason_activation_intent(raw: str, hooks: ExecutionHooks) -> dict[s
     if not isinstance(step_refs, list) or any(not isinstance(ref, str) or not ref.strip() for ref in step_refs):
         return None
     return {
-        "activate_ref": activate_ref.strip(),
+        "activate_ref": activate_ref,
         "prompt": prompt.strip() if isinstance(prompt, str) and prompt.strip() else None,
         "await_needed": await_needed,
         "content_refs": [ref.strip() for ref in content_refs if ref.strip()],
@@ -134,6 +147,7 @@ def _public_tool_path_for_ref(tool_ref: str | None, cors_root: Path) -> str | No
 
 
 def _resolve_workflow_skill(registry: Any, activate_ref: str, cors_root: Path) -> Any | None:
+    activate_ref = _canonical_workflow_ref(activate_ref) or activate_ref
     skill = registry.resolve(activate_ref)
     if skill is not None:
         return skill
@@ -1900,6 +1914,36 @@ def execute_iteration(
                 if activation_context:
                     run_kwargs["activation_context"] = activation_context
                 child_result = hooks.run_isolated_workflow(activate_ref, **run_kwargs)
+                child_status = str(child_result.get("status", "unknown") or "unknown")
+                if child_status != "ok":
+                    compiler.resolve_current_gap(gap.hash, resolution_kind="rogue_handoff")
+                    failure_detail = f"isolated workflow launch failed: status={child_status}, activation_ref={activate_ref}"
+                    step_result = _emit_rogue_with_diagnosis(
+                        desc=f"FAILED: {gap.desc}",
+                        origin_step=origin_step,
+                        gap=gap,
+                        chain_id=entry.chain_id,
+                        rogue_kind="tool_failure",
+                        failure_source="reason_needed",
+                        trajectory=trajectory,
+                        compiler=compiler,
+                        failure_detail=failure_detail,
+                    )
+                    _auto_activate_debug_for_rogue(
+                        registry=registry,
+                        origin_step=origin_step,
+                        rogue_step=step_result,
+                        gap=gap,
+                        chain_id=entry.chain_id,
+                        rogue_kind="tool_failure",
+                        failure_source="reason_needed",
+                        failure_detail=failure_detail,
+                        trajectory=trajectory,
+                        hooks=hooks,
+                        compiler=compiler,
+                        session=session,
+                    )
+                    return ExecutionOutcome(control="continue", step_result=step_result)
                 compiler.record_background_trigger(
                     entry.chain_id,
                     refs=[activate_ref] + activation_content_refs + activation_step_refs,

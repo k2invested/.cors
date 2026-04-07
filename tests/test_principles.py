@@ -1208,6 +1208,58 @@ def test_p12_run_isolated_workflow_ref_writes_background_store(tmp_path, monkeyp
     assert alias_doc["store_kind"] == "background_agent"
 
 
+def test_p12_run_isolated_workflow_ref_normalizes_typed_workflow_ref(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "TRAJECTORY_STORE_DIR", tmp_path / "trajectory_store")
+    monkeypatch.setattr(loop, "COMMAND_TRAJECTORY_DIR", loop.TRAJECTORY_STORE_DIR / "command")
+    monkeypatch.setattr(loop, "SUBAGENT_TRAJECTORY_DIR", loop.TRAJECTORY_STORE_DIR / "subagent")
+    monkeypatch.setattr(loop, "BACKGROUND_AGENT_TRAJECTORY_DIR", loop.TRAJECTORY_STORE_DIR / "background_agent")
+
+    class FakeSession:
+        def __init__(self, model=None):
+            self.messages = []
+
+        def set_system(self, content: str):
+            self.messages = [{"role": "system", "content": content}]
+
+        def inject(self, content: str, role: str = "user"):
+            self.messages.append({"role": role, "content": content})
+
+        def call(self, user_content: str = None) -> str:
+            if user_content:
+                self.inject(user_content)
+            return '{"gaps":[]}'
+
+    monkeypatch.setattr(loop, "Session", FakeSession)
+    monkeypatch.setattr(loop, "_synthesize", lambda session, user_message, turn_facts=None: "child done")
+
+    def fake_execute_iteration(**kwargs):
+        entry = kwargs["entry"]
+        trajectory = kwargs["trajectory"]
+        compiler = kwargs["compiler"]
+        step_result = make_step(f"child executed: {entry.gap.desc}", chain_id=entry.chain_id)
+        trajectory.append(step_result)
+        compiler.add_step_to_chain(step_result.hash)
+        compiler.resolve_current_gap(entry.gap.hash)
+        return SimpleNamespace(control="continue", step_result=step_result)
+
+    monkeypatch.setattr(loop, "execute_iteration", fake_execute_iteration)
+
+    ref = f"architect:{skill('architect').hash}"
+    result = loop.run_isolated_workflow_ref(
+        ref,
+        task_prompt="run architect child flow",
+        store_kind="background_agent",
+        await_policy="manual",
+    )
+
+    assert result["status"] == "ok"
+    assert result["activation_ref"] == skill("architect").hash
+    alias_path = Path(str(result["chains_dir"])) / f"{skill('architect').hash}.json"
+    assert alias_path.exists()
+    alias_doc = json.loads(alias_path.read_text())
+    assert alias_doc["activation_ref"] == skill("architect").hash
+
+
 P13_CASES = [
     ("max_chain_depth_constant", lambda: MAX_CHAIN_DEPTH == 15),
     ("chain_extract_length_constant", lambda: CHAIN_EXTRACT_LENGTH == 8),
@@ -5387,6 +5439,77 @@ def test_p12_reason_needed_queues_completed_background_child_followup():
     assert queued
     assert queued[0]["activation_ref"] == skill("hash_edit").hash
     assert queued[0]["response"] == "child complete"
+
+
+def test_p12_reason_needed_missing_isolated_child_surfaces_rogue():
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps(
+                {
+                    "activate_ref": f"architect:{skill('architect').hash}",
+                    "prompt": "run architecture flow",
+                    "await_needed": True,
+                }
+            )
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    compiler.ledger.chain_states["parent_chain"] = ChainState.OPEN
+    origin_step = make_step("origin")
+    gap = make_gap("delegate architecture audit", vocab="reason_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="parent_chain")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        run_isolated_workflow=lambda ref, **kwargs: {"status": "missing", "activation_ref": ref, "store_kind": "background_agent"},
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "trajectory_store" / "command",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert outcome.step_result.rogue is True
+    assert outcome.step_result.failure_source == "reason_needed"
+    assert "isolated workflow launch failed" in (outcome.step_result.failure_detail or "")
 
 
 def test_p12_queue_background_completion_dedupes(tmp_path):

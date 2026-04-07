@@ -112,6 +112,18 @@ def _child_state_paths(store_kind: str, activation_ref: str) -> StatePaths:
     )
 
 
+def _canonical_workflow_ref(ref: str | None) -> str | None:
+    if not isinstance(ref, str):
+        return None
+    candidate = ref.strip()
+    if not candidate:
+        return None
+    match = re.fullmatch(r"[A-Za-z0-9_.-]+:([0-9a-f]{12,64})", candidate)
+    if match:
+        return match.group(1)
+    return candidate
+
+
 def _background_completion_file(state: StatePaths) -> Path:
     return state.trajectory.parent / "background_completions.json"
 
@@ -2776,7 +2788,8 @@ def run_isolated_workflow_ref(
     _turn_counter += 1
     current_turn = _turn_counter
 
-    state = _child_state_paths(store_kind, ref)
+    canonical_ref = _canonical_workflow_ref(ref) or ref
+    state = _child_state_paths(store_kind, canonical_ref)
     trajectory = Trajectory.load(str(state.trajectory))
     Trajectory.load_chains(str(state.chains_file), trajectory)
 
@@ -2788,7 +2801,7 @@ def run_isolated_workflow_ref(
     session.set_system(PRE_DIFF_SYSTEM)
     session.inject(
         "## Isolated Workflow Activation\n"
-        f"activation_ref: {ref}\n"
+        f"activation_ref: {canonical_ref}\n"
         f"store_kind: {store_kind}\n"
         f"await_policy: {await_policy}\n"
         f"task: {task_prompt or '(none)'}\n"
@@ -2799,16 +2812,16 @@ def run_isolated_workflow_ref(
         session.inject(f"## Activation Context\n{activation_context}")
 
     origin_gap = Gap.create(
-        desc=task_prompt or f"run isolated workflow {ref}",
-        content_refs=[ref] + activation_content_refs,
+        desc=task_prompt or f"run isolated workflow {canonical_ref}",
+        content_refs=[canonical_ref] + activation_content_refs,
         step_refs=activation_step_refs,
     )
     origin_gap.resolved = True
     origin_gap.turn_id = current_turn
     origin = Step.create(
-        desc=f"child activation:{ref}",
+        desc=f"child activation:{canonical_ref}",
         step_refs=activation_step_refs,
-        content_refs=[ref] + activation_content_refs,
+        content_refs=[canonical_ref] + activation_content_refs,
         gaps=[origin_gap],
     )
     trajectory.append(origin)
@@ -2816,15 +2829,15 @@ def run_isolated_workflow_ref(
     compiler = Compiler(trajectory, current_turn=current_turn)
     chain = Chain.create(origin_gap.hash, origin.hash)
     chain.store_kind = store_kind
-    chain.activation_ref = ref
+    chain.activation_ref = canonical_ref
     chain.await_policy = await_policy
     trajectory.add_chain(chain)
     compiler.active_chain = chain
     compiler.ledger.chain_states[chain.hash] = ChainState.OPEN
 
-    skill = registry.resolve(ref)
+    skill = registry.resolve(canonical_ref)
     if skill is None:
-        chain_path = public_chain_ref_map(CORS_ROOT).get(ref)
+        chain_path = public_chain_ref_map(CORS_ROOT).get(canonical_ref)
         if chain_path:
             expected_source = str((CORS_ROOT / chain_path).resolve())
             for candidate in registry.by_hash.values():
@@ -2834,7 +2847,7 @@ def run_isolated_workflow_ref(
     if skill is not None:
         activation_step = me.activate_skill_package(
             skill,
-            ref,
+            canonical_ref,
             origin_gap,
             origin,
             chain.hash,
@@ -2852,7 +2865,7 @@ def run_isolated_workflow_ref(
     else:
         activation_step = me.activate_chain_reference(
             state.chains_dir,
-            ref,
+            canonical_ref,
             "inline",
             origin_gap,
             origin,
@@ -2866,15 +2879,15 @@ def run_isolated_workflow_ref(
             activation_step_refs=activation_step_refs,
             tool_map=TOOL_MAP,
         )
-        package = me.load_chain_package(state.chains_dir, ref, trajectory)
+        package = me.load_chain_package(state.chains_dir, canonical_ref, trajectory)
         if package is not None:
-            session.inject(f"## Activated workflow\n{me.render_chain_package(package, ref)}")
+            session.inject(f"## Activated workflow\n{me.render_chain_package(package, canonical_ref)}")
 
     if activation_step is None:
         _save_turn(trajectory, state)
         return {
             "status": "missing",
-            "activation_ref": ref,
+            "activation_ref": canonical_ref,
             "store_kind": store_kind,
             "trajectory": str(state.trajectory),
             "chains_file": str(state.chains_file),
@@ -2905,21 +2918,21 @@ def run_isolated_workflow_ref(
             registry=registry,
             current_turn=current_turn,
             hooks=_execution_hooks(state.chains_dir),
-            config=_execution_config(state.chains_dir, task_prompt or ref),
+            config=_execution_config(state.chains_dir, task_prompt or canonical_ref),
         )
         if outcome.control == "break" or compiler.is_done():
             break
 
-    child_response = _synthesize(session, task_prompt or f"child workflow {ref}")
+    child_response = _synthesize(session, task_prompt or f"child workflow {canonical_ref}")
 
     chain.store_kind = store_kind
-    chain.activation_ref = ref
+    chain.activation_ref = canonical_ref
     chain.await_policy = await_policy
     if chain.resolved:
             commit_step = Step.create(
-                desc=f"commit: reintegrate child workflow {ref}",
+                desc=f"commit: reintegrate child workflow {canonical_ref}",
                 step_refs=[activation_step.hash],
-                content_refs=[ref, chain.hash],
+                content_refs=[canonical_ref, chain.hash],
                 chain_id=chain.hash,
             )
             trajectory.append(commit_step)
@@ -2928,14 +2941,14 @@ def run_isolated_workflow_ref(
     for child_chain in trajectory.chains.values():
         if child_chain.resolved:
             child_chain.store_kind = store_kind
-            child_chain.activation_ref = child_chain.activation_ref or ref
+            child_chain.activation_ref = child_chain.activation_ref or canonical_ref
             child_chain.await_policy = child_chain.await_policy or await_policy
             child_chain.extracted = True
 
     _save_turn(trajectory, state)
     return {
         "status": "ok",
-        "activation_ref": ref,
+        "activation_ref": canonical_ref,
         "store_kind": store_kind,
         "resolved": bool(chain.resolved),
         "trajectory": str(state.trajectory),
