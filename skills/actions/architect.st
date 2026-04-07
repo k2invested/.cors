@@ -147,10 +147,10 @@
     {
       "id": "phase_analyse_and_handoff_fix_5",
       "kind": "higher_order",
-      "goal": "analyse architectural drift, identify which docs or tests actually need syncing, consider dependencies, failure modes, and mitigations, and if edits are warranted activate hash_edit with those exact file refs; default to inline activation with await_needed=false, and select await_needed=true only when true isolation or deferred synchronization is necessary",
+      "goal": "inspect the resolved source, principles, docs, and tests for architectural drift. This phase has only two lawful outcomes: 1. if no documentation or test edits are needed, emit no activation and close the workflow; 2. if edits are needed, emit only a reason activation JSON for hash_edit using the hash_edit workflow ref, include only the concrete file refs that require mutation, and set await_needed=false by default. Do not activate architect again. Do not activate any workflow other than hash_edit. Do not emit reprogramme_needed from this phase unless the task explicitly changes entity state.",
       "action": "analyse_and_handoff_fix",
       "gap_template": {
-        "desc": "analyse architectural drift, identify which docs or tests actually need syncing, consider dependencies, failure modes, and mitigations, and if edits are warranted activate hash_edit with those exact file refs; default to inline activation with await_needed=false, and select await_needed=true only when true isolation or deferred synchronization is necessary",
+        "desc": "inspect the resolved source, principles, docs, and tests for architectural drift. Only two outputs are lawful here: emit nothing if no edits are needed, or emit only a reason activation JSON for hash_edit. If activating hash_edit, use the hash_edit workflow ref, include only the exact file refs that need mutation, and set await_needed=false by default. Do not reactivate architect. Do not activate any workflow other than hash_edit. Do not emit reprogramme_needed from this phase unless entity state persistence is explicitly required.",
         "content_refs": [],
         "step_refs": []
       },
@@ -220,7 +220,7 @@
     },
     {
       "action": "analyse_and_handoff_fix",
-      "desc": "analyse architectural drift, identify which docs or tests actually need syncing, consider dependencies, failure modes, and mitigations, and if edits are warranted activate hash_edit with those exact file refs; default to inline activation with await_needed=false, and select await_needed=true only when true isolation or deferred synchronization is necessary",
+      "desc": "inspect the resolved source, principles, docs, and tests for architectural drift. Only two outputs are lawful here: emit nothing if no edits are needed, or emit only a reason activation JSON for hash_edit. If activating hash_edit, use the hash_edit workflow ref, include only the exact file refs that need mutation, and set await_needed=false by default. Do not reactivate architect. Do not activate any workflow other than hash_edit. Do not emit reprogramme_needed from this phase unless entity state persistence is explicitly required.",
       "post_diff": true
     }
   ],
