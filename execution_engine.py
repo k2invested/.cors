@@ -27,9 +27,11 @@ from compile import ChainState, GovernorSignal, is_mutate, is_observe
 import manifest_engine as me
 from step import Chain, Epistemic, Gap, Step
 from system.chain_registry import public_chain_ref_map, render_public_chain_registry
+from system.control_surface import render_admin_surface, render_system_control_surface
 from tools import st_builder as st_builder_module
 from system.tool_contract import ToolContract, load_tool_contract
 from system.tool_registry import public_tool_ref_map, render_public_tool_registry
+from skills.loader import load_all
 from vocab_registry import FOUNDATIONAL_BRIDGE_POST_OBSERVE, find_vocab_for_tool_ref, get_vocab, render_configurable_vocab_registry
 
 
@@ -53,6 +55,9 @@ class ExecutionHooks:
     step_assessment: Callable[[dict | None, dict | None, str | None], list[str]]
     run_isolated_workflow: Callable[..., dict[str, Any]] = field(
         default=lambda ref, **kwargs: {"status": "missing", "activation_ref": ref}
+    )
+    queue_background_completion: Callable[[dict[str, Any]], None] = field(
+        default=lambda payload: None
     )
     render_session_context: Callable[[Any, Any, str, str | None, str | None], str] = field(
         default=lambda trajectory, registry, user_message, active_chain_id=None, active_gap=None: ""
@@ -930,6 +935,49 @@ def _coerce_semantic_frame_for_mode(frame: dict | None, route_mode: str) -> dict
     return frame
 
 
+def _system_surface_sections_for_path(path: str | None) -> set[str]:
+    if not isinstance(path, str) or not path.strip():
+        return set()
+    normalized = str(Path(path)).replace("\\", "/").lstrip("./")
+    sections: set[str] = set()
+    if normalized == "vocab_registry.py":
+        sections.add("vocab")
+    if normalized == "system/tool_registry.py" or normalized.startswith("tools/"):
+        sections.update({"tools", "vocab"})
+    if normalized == "system/chain_registry.py" or normalized.startswith("skills/actions/"):
+        sections.update({"workflows", "vocab"})
+    if normalized.startswith("skills/entities/"):
+        sections.add("entities")
+    return sections
+
+
+def _refresh_runtime_control_surfaces(
+    *,
+    written_path: str | None,
+    session: Any,
+    config: ExecutionConfig,
+) -> None:
+    if not isinstance(written_path, str) or not written_path.strip():
+        return
+    normalized = str(Path(written_path)).replace("\\", "/").lstrip("./")
+    registry = load_all(str(config.cors_root / "skills"))
+    if normalized == "skills/admin.st":
+        admin = registry.resolve_by_name("admin")
+        if admin is not None:
+            session.inject(f"## Refreshed Admin Surface\n{render_admin_surface(admin, cors_root=config.cors_root)}")
+        return
+    sections = _system_surface_sections_for_path(normalized)
+    if sections:
+        session.inject(
+            render_system_control_surface(
+                registry,
+                cors_root=config.cors_root,
+                title="## Refreshed System Control Surface",
+                sections=sections,
+            )
+        )
+
+
 def execute_iteration(
     *,
     entry: Any,
@@ -1574,6 +1622,11 @@ def execute_iteration(
                     chain_id=entry.chain_id,
                 )
                 compiler.record_execution(vocab, True)
+                _refresh_runtime_control_surfaces(
+                    written_path=written_path,
+                    session=session,
+                    config=config,
+                )
                 postcond_vocab = "hash_resolve_needed"
                 postcond_refs, postcond_desc = _bridge_reintegration_target(
                     vocab=vocab,
@@ -1861,10 +1914,23 @@ def execute_iteration(
                     f"await_needed: {str(await_needed).lower()}\n"
                     f"status: {child_result.get('status', 'unknown')}\n"
                     f"store_kind: {child_result.get('store_kind', 'background_agent')}\n"
+                    f"resolved: {str(bool(child_result.get('resolved'))).lower()}\n"
                     f"task: {task_prompt}\n"
                     f"content_refs: {activation_content_refs or []}\n"
                     f"step_refs: {activation_step_refs or []}"
                 )
+                if child_result.get("resolved") and child_result.get("response"):
+                    hooks.queue_background_completion(
+                        {
+                            "activation_ref": activate_ref,
+                            "task": task_prompt,
+                            "store_kind": child_result.get("store_kind", "background_agent"),
+                            "trajectory": child_result.get("trajectory"),
+                            "chains_file": child_result.get("chains_file"),
+                            "tree_render": child_result.get("tree_render"),
+                            "response": child_result.get("response"),
+                        }
+                    )
                 step_result = Step.create(
                     desc=f"activated child workflow:{activate_ref}",
                     step_refs=[origin_step.hash],

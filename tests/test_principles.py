@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import compile as compile_module
+import discord_bot as discord_bot_module
 import execution_engine as execution_engine_module
 import loop
 import manifest_engine as manifest_engine_module
@@ -59,6 +60,7 @@ from compile import (
 from skills.loader import Skill, SkillRegistry, SkillStep, load_all, load_skill
 from step import Chain, Epistemic, Gap, Step, Trajectory, absolute_time, blob_hash, chain_hash, relative_time
 from system import chain_registry as chain_registry_module
+from system import control_surface as control_surface_module
 from system import hash_registry as hash_registry_module
 from tools import hash_manifest as hash_manifest_module
 from tools.hash import office_manifest as office_manifest_module
@@ -552,9 +554,9 @@ P5_CASES = [
     ("render_entity_has_steps_summary", lambda: "steps:" in loop._render_entity(skill("admin"))),
     ("find_identity_skill_returns_admin", lambda: loop._find_identity_skill("discord:784778107013431296", registry()) == skill("admin")),
     ("render_identity_has_mutable_preferences_surface", lambda: "## Mutable Preferences Surface" in loop._render_identity(skill("admin"))),
-    ("render_identity_has_immutable_environment_surface", lambda: "## Immutable Environment Surface" in loop._render_identity(skill("admin"))),
-    ("render_identity_has_available_workflows", lambda: "## Available Workflows" in loop._render_identity(skill("admin"))),
-    ("render_identity_has_vocab_map", lambda: "## Vocab Map" in loop._render_identity(skill("admin"))),
+    ("render_identity_excludes_system_control_surface", lambda: "## System Control Surface" not in loop._render_identity(skill("admin"))),
+    ("render_system_control_surface_has_available_workflows", lambda: "## Available Workflows" in control_surface_module.render_system_control_surface(registry(), cors_root=ROOT)),
+    ("render_system_control_surface_has_vocab_map", lambda: "## Vocab Map" in control_surface_module.render_system_control_surface(registry(), cors_root=ROOT)),
     ("render_identity_has_access_rules_when_present", lambda: "## Access Rules" in loop._render_identity(skill("admin")) if "access_rules" in skill_data("admin") else True),
     ("render_identity_pending_bootstrap_shows_initiation", lambda: "## Initiation" in render_bootstrap_identity()),
     ("reprogramme_skill_trigger_is_vocab", lambda: skill("reprogramme").trigger == "on_vocab:reprogramme_needed"),
@@ -998,7 +1000,7 @@ P12_CASES = [
     ("execute_tool_missing_file_nonzero", lambda: loop.execute_tool("tools/does_not_exist.py", {})[1] == 1),
     ("find_identity_skill_admin", lambda: loop._find_identity_skill("discord:784778107013431296", registry()) == skill("admin")),
     ("render_identity_has_communication_pref", lambda: "communication:" in loop._render_identity(skill("admin"))),
-    ("admin_load_order_matches_split_surfaces", lambda: [s.action for s in skill("admin").steps] == ["load_preferences", "load_environment"]),
+    ("admin_load_order_matches_split_surfaces", lambda: [s.action for s in skill("admin").steps] == ["load_identity", "load_preferences"]),
     ("validate_st_accepts_command_trigger", lambda: st_builder_module.validate_st({"name": "cmd", "desc": "d", "trigger": "command:demo", "steps": []}) == []),
     ("load_skill_detects_command_flag", lambda: (lambda path: load_skill(str(path)).is_command)(
         (lambda p: (p.write_text(json.dumps({"name": "cmd", "desc": "d", "trigger": "command:test", "steps": []})), p)[1])(Path(ROOT / "tests" / "_tmp_command.st"))
@@ -4773,7 +4775,7 @@ def test_p12_vocab_reg_needed_stays_on_builder_path_for_vocab_registry_mutation(
     hooks = execution_engine_module.ExecutionHooks(
         resolve_all_refs=lambda step_refs, content_refs, trajectory: "resolved vocab registry context",
         execute_tool=lambda tool, params: (executed_tools.append(tool) or "written: vocab_registry.py", 0),
-        auto_commit=lambda message, paths=None: (None, None),
+        auto_commit=lambda message, paths=None: ("abc123", None),
         parse_step_output=loop._parse_step_output,
         extract_json=lambda raw: json.loads(raw),
         extract_command=lambda raw: None,
@@ -4813,6 +4815,16 @@ def test_p12_vocab_reg_needed_stays_on_builder_path_for_vocab_registry_mutation(
     assert executed_tools == ["system/vocab_builder.py"]
     assert gap.vocab == "vocab_reg_needed"
     assert session.calls == 1
+    assert any(content.startswith("## Refreshed System Control Surface") for content in session.injected)
+    assert any("## Vocab Map" in content for content in session.injected)
+
+
+def test_p12_system_surface_sections_for_vocab_registry_path():
+    assert execution_engine_module._system_surface_sections_for_path("vocab_registry.py") == {"vocab"}
+
+
+def test_p12_system_surface_sections_for_action_path():
+    assert execution_engine_module._system_surface_sections_for_path("skills/actions/principles.st") == {"workflows", "vocab"}
 
 
 def test_p12_direct_tool_ref_observe_executes_public_tool_by_hash():
@@ -5257,6 +5269,124 @@ def test_p12_reason_needed_can_activate_isolated_workflow_with_manual_await():
 
     assert compiler.manual_await_refs() == [skill("hash_edit").hash]
     assert compiler.background_refs() == []
+
+
+def test_p12_reason_needed_queues_completed_background_child_followup():
+    class FakeSession:
+        def call(self, user_content: str = None) -> str:
+            return json.dumps(
+                {
+                    "activate_ref": skill("hash_edit").hash,
+                    "prompt": "apply child workflow",
+                    "await_needed": True,
+                }
+            )
+
+        def inject(self, content: str, role: str = "user"):
+            pass
+
+    queued: list[dict] = []
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    compiler.ledger.chain_states["parent_chain"] = ChainState.OPEN
+    origin_step = make_step("origin")
+    gap = make_gap("delegate child work", vocab="reason_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="parent_chain")
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        run_isolated_workflow=lambda ref, **kwargs: {
+            "status": "ok",
+            "activation_ref": ref,
+            "store_kind": "background_agent",
+            "resolved": True,
+            "trajectory": "trajectory_store/background_agent/hash_edit.trajectory.json",
+            "chains_file": "trajectory_store/background_agent/hash_edit.chains.json",
+            "tree_render": "chain:child",
+            "response": "child complete",
+        },
+        queue_background_completion=lambda payload: queued.append(payload),
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "trajectory_store" / "command",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=FakeSession(),
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert queued
+    assert queued[0]["activation_ref"] == skill("hash_edit").hash
+    assert queued[0]["response"] == "child complete"
+
+
+def test_p12_queue_background_completion_dedupes(tmp_path):
+    state = loop._state_paths(
+        traj_file=tmp_path / "trajectory.json",
+        chains_file=tmp_path / "chains.json",
+        chains_dir=tmp_path / "trajectory_store" / "command",
+    )
+    payload = {
+        "activation_ref": "hash_edit:abcd",
+        "trajectory": "trajectory_store/background_agent/hash_edit.trajectory.json",
+        "response": "done",
+    }
+    loop._queue_background_completion(state, payload)
+    loop._queue_background_completion(state, payload)
+    data = json.loads(loop._background_completion_file(state).read_text(encoding="utf-8"))
+    assert len(data) == 1
+
+
+def test_p12_discord_pop_background_completion_notifications_formats_and_clears(tmp_path, monkeypatch):
+    monkeypatch.setattr(discord_bot_module, "STATE_ROOT", tmp_path)
+    paths = discord_bot_module.state_paths_for_contact("discord:123")
+    paths["background_completions_file"].parent.mkdir(parents=True, exist_ok=True)
+    paths["background_completions_file"].write_text(
+        json.dumps(
+            [
+                {
+                    "activation_ref": "principles:f9ba012dfe64",
+                    "tree_render": "chain:child",
+                    "response": "child synth",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    messages = discord_bot_module.pop_background_completion_notifications("discord:123")
+    assert len(messages) == 1
+    assert "Background workflow complete: principles:f9ba012dfe64" in messages[0]
+    assert "Semantic Tree:" in messages[0]
+    assert "Response:" in messages[0]
+    assert not paths["background_completions_file"].exists()
 
 
 def test_p12_reason_needed_can_activate_inline_workflow_with_attached_refs():

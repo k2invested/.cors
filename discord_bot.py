@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -77,6 +78,7 @@ def state_paths_for_contact(contact_id: str) -> dict[str, Path]:
         "traj_file": base / "trajectory.json",
         "chains_file": base / "chains.json",
         "chains_dir": base / "trajectory_store" / "command",
+        "background_completions_file": base / "background_completions.json",
     }
 
 
@@ -131,7 +133,7 @@ def configure_logging() -> None:
 
 def wipe_state_for_contact(contact_id: str) -> None:
     paths = state_paths_for_contact(contact_id)
-    for key in ("traj_file", "chains_file"):
+    for key in ("traj_file", "chains_file", "background_completions_file"):
         path = paths[key]
         if path.exists():
             path.unlink()
@@ -170,6 +172,38 @@ def new_assessment_notifications(contact_id: str, since_step_count: int) -> list
         notifications.append(step.desc)
         notifications.extend(step.assessment)
     return notifications
+
+
+def pop_background_completion_notifications(contact_id: str) -> list[str]:
+    paths = state_paths_for_contact(contact_id)
+    queue_file = paths["background_completions_file"]
+    if not queue_file.exists():
+        return []
+    try:
+        data = json.loads(queue_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        queue_file.unlink(missing_ok=True)
+        return []
+    queue_file.unlink(missing_ok=True)
+    if not isinstance(data, list):
+        return []
+
+    messages: list[str] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        activation_ref = str(item.get("activation_ref", "") or "").strip() or "workflow"
+        response = str(item.get("response", "") or "").strip()
+        tree_render = str(item.get("tree_render", "") or "").strip()
+        lines = [f"Background workflow complete: {activation_ref}"]
+        if tree_render:
+            lines.append("Semantic Tree:")
+            lines.append(tree_render)
+        if response:
+            lines.append("Response:")
+            lines.append(response)
+        messages.append("\n".join(lines).strip())
+    return messages
 
 
 def production_destinations_for_guild(guild: Any, diff_channel_ids: set[int]) -> list[Any]:
@@ -278,7 +312,9 @@ def build_client():
                             prompt,
                             contact_id,
                             contact_profile=contact_profile,
-                            **state_paths_for_contact(contact_id),
+                            traj_file=state_paths_for_contact(contact_id)["traj_file"],
+                            chains_file=state_paths_for_contact(contact_id)["chains_file"],
+                            chains_dir=state_paths_for_contact(contact_id)["chains_dir"],
                         )
             except Exception:
                 logging.exception("discord turn failed for %s", contact_id)
@@ -287,6 +323,10 @@ def build_client():
 
             for chunk in split_discord_message(response):
                 await message.channel.send(chunk)
+
+            for payload in pop_background_completion_notifications(contact_id):
+                for chunk in split_discord_message(payload):
+                    await message.channel.send(chunk)
 
             diff_lines = new_assessment_notifications(contact_id, prior_step_count)
             if diff_lines and getattr(message, "guild", None) is not None:

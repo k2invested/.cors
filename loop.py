@@ -49,12 +49,11 @@ import action_foundations as action_foundations_module
 from execution_engine import ExecutionConfig, ExecutionHooks, execute_iteration
 from tools import st_builder as st_builder_module
 from system.chain_registry import public_chain_ref_map
+from system.control_surface import render_admin_surface, render_system_control_surface
 from system.hash_registry import HASH_RESOLVE_ROUTES
 from vocab_registry import (
     BRIDGE_VOCAB,
-    CONFIGURABLE_VOCABS,
     DETERMINISTIC_VOCAB,
-    FOUNDATIONAL_BRIDGES,
     OBSERVATION_ONLY_VOCAB,
     TOOL_MAP,
     validate_tree_policy_targets,
@@ -111,6 +110,38 @@ def _child_state_paths(store_kind: str, activation_ref: str) -> StatePaths:
         chains_file=base / f"{safe_ref}.chains.json",
         chains_dir=base,
     )
+
+
+def _background_completion_file(state: StatePaths) -> Path:
+    return state.trajectory.parent / "background_completions.json"
+
+
+def _queue_background_completion(state: StatePaths, payload: dict[str, object]) -> None:
+    queue_file = _background_completion_file(state)
+    queue_file.parent.mkdir(parents=True, exist_ok=True)
+    existing: list[dict[str, object]] = []
+    if queue_file.exists():
+        try:
+            data = json.loads(queue_file.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                existing = [item for item in data if isinstance(item, dict)]
+        except json.JSONDecodeError:
+            existing = []
+    key = (
+        str(payload.get("activation_ref", "")),
+        str(payload.get("trajectory", "")),
+        str(payload.get("response", "")),
+    )
+    for item in existing:
+        existing_key = (
+            str(item.get("activation_ref", "")),
+            str(item.get("trajectory", "")),
+            str(item.get("response", "")),
+        )
+        if existing_key == key:
+            return
+    existing.append(payload)
+    queue_file.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
 
 # ── Git operations ───────────────────────────────────────────────────────
@@ -1361,8 +1392,9 @@ def run_turn(
         "  Do not edit vocab_registry.py just to introduce or wire a workflow trigger term.\n"
         "  vocab_registry.py is for kernel/runtime vocab semantics, not for every action trigger.\n"
         "  If a new skills/actions/*.st package uses trigger on_vocab:<term>, that trigger becomes discoverable from the loaded package itself.\n\n"
-        "  The detailed semantic control surface for entities, public workflows, and public vocab routes is injected deterministically through admin hydration.\n"
-        "  Use that immutable hydrated surface to choose lawful semantic paths; do not invent low-level tool routes on your own."
+        "  The detailed semantic control surface for entities, public workflows, and public vocab routes is injected deterministically by the runtime.\n"
+        "  Admin hydration owns operator identity and mutable preferences.\n"
+        "  Use the runtime-injected control surface to choose lawful semantic paths; do not invent low-level tool routes on your own."
     )
     system_prompt = PRE_DIFF_SYSTEM.replace("BRIDGE_VOCAB_PLACEHOLDER", dynamic_bridge)
     session.set_system(system_prompt)
@@ -1383,6 +1415,9 @@ def run_turn(
         )
         trajectory.append(identity_step)
         print(f"  step:{identity_step.hash} → refs:[{identity_skill.display_name}:{identity_skill.hash}]")
+
+    system_control_block = render_system_control_surface(registry, cors_root=CORS_ROOT)
+    session.inject(system_control_block)
 
     # ── 1b. RESUME CHECK ──────────────────────────────────────────────
     #
@@ -1956,6 +1991,7 @@ def _render_conversation_history(
 
 def _execution_hooks(chains_dir: Path | None = None) -> ExecutionHooks:
     active_chains_dir = chains_dir or CHAINS_DIR
+    active_state = _state_paths(chains_dir=active_chains_dir)
     return ExecutionHooks(
         resolve_all_refs=resolve_all_refs,
         execute_tool=execute_tool,
@@ -1981,6 +2017,7 @@ def _execution_hooks(chains_dir: Path | None = None) -> ExecutionHooks:
         commit_assessment=_commit_assessment_for_commit,
         step_assessment=_step_assessment_for_docs,
         run_isolated_workflow=run_isolated_workflow_ref,
+        queue_background_completion=lambda payload: _queue_background_completion(active_state, payload),
     )
 
 
@@ -2507,66 +2544,11 @@ def _run_no_gap_discord_profile_sync(
     return step_result
 
 
-def _render_admin_control_surface(skill: Skill, registry: SkillRegistry) -> str:
-    data = skill.payload or {}
-
-    lines = [f"## Admin Surface: {skill.display_name}:{skill.hash}"]
-
-    preferences = data.get("preferences", {}) or {}
-    if preferences:
-        lines.append("## Mutable Preferences Surface")
-        for category, prefs in preferences.items():
-            lines.append(f"  {category}:")
-            if isinstance(prefs, dict):
-                for k, v in prefs.items():
-                    lines.append(f"    {k}: {v}")
-            else:
-                lines.append(f"    {prefs}")
-
-    lines.append("## Immutable Environment Surface")
-
-    entities = sorted(
-        (
-            s for s in registry.all_skills()
-            if Path(s.source).name == "admin.st" or "entities" in Path(s.source).parts or s.artifact_kind == "entity"
-        ),
-        key=lambda s: (s.display_name.lower(), s.hash),
-    )
-    lines.append("## Available Entities")
-    if entities:
-        for entity in entities:
-            lines.append(f"  - {entity.display_name}:{entity.hash} ({Path(entity.source).name}) — {entity.desc}")
-    else:
-        lines.append("  - none")
-
-    workflows = sorted(
-        (
-            s for s in registry.by_hash.values()
-            if "actions" in Path(s.source).parts or getattr(s, "is_command", False)
-        ),
-        key=lambda s: (s.name.lower(), s.hash),
-    )
-    lines.append("## Available Workflows")
-    if workflows:
-        for workflow in workflows:
-            lines.append(f"  - {workflow.name}:{workflow.hash} — {workflow.desc}")
-    else:
-        lines.append("  - none")
-
-    lines.append("## Vocab Map")
-    for name, spec in sorted(CONFIGURABLE_VOCABS.items()):
-        target = spec.target_ref or spec.target_kind or "internal"
-        lines.append(f"  - {name} -> {target}")
-    for name, spec in sorted(FOUNDATIONAL_BRIDGES.items()):
-        lines.append(f"  - {name} -> bridge")
-    return "\n".join(lines)
-
-
 def _render_identity(skill: Skill, registry: SkillRegistry | None = None) -> str:
     """Render a skill's identity, preferences, and init state for session injection."""
     registry = registry or _skill_registry or load_all(str(SKILLS_DIR))
     if skill.name == "admin" and registry is not None:
-        return _render_admin_control_surface(skill, registry)
+        return render_admin_surface(skill, cors_root=CORS_ROOT)
 
     try:
         data = skill.payload or json.loads(Path(skill.source).read_text())
@@ -2896,9 +2878,11 @@ def run_isolated_workflow_ref(
         "status": "ok",
         "activation_ref": ref,
         "store_kind": store_kind,
+        "resolved": bool(chain.resolved),
         "trajectory": str(state.trajectory),
         "chains_file": str(state.chains_file),
         "chains_dir": str(state.chains_dir),
+        "tree_render": trajectory.render_chain(chain.hash, registry=registry) if chain.resolved else None,
         "response": child_response,
     }
 

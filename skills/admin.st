@@ -1,6 +1,6 @@
 {
   "name": "admin",
-  "desc": "Canonical admin identity and operator control surface for Kenny. Splits mutable preferences from immutable environment/workflow/vocab context.",
+  "desc": "Canonical admin identity and mutable operator preference surface for Kenny.",
   "trigger": "on_contact:discord:784778107013431296",
   "refs": {
     "identity": null,
@@ -82,18 +82,20 @@
   },
   "steps": [
     {
-      "action": "load_preferences",
-      "desc": "surface Kenny's mutable communication, workflow, and operator preferences",
+      "action": "load_identity",
+      "desc": "surface Kenny's canonical operator identity and access context",
       "resolve": [
-        "preferences"
+        "identity",
+        "access_rules",
+        "init"
       ],
       "post_diff": false
     },
     {
-      "action": "load_environment",
-      "desc": "surface immutable operator identity plus entity, workflow, vocab, and system-environment control context",
+      "action": "load_preferences",
+      "desc": "surface Kenny's mutable communication, workflow, and operator preferences",
       "resolve": [
-        "identity"
+        "preferences"
       ],
       "post_diff": false
     }
