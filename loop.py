@@ -1241,6 +1241,7 @@ SYNTH_SYSTEM = """You are the response synthesizer. Read the full session and pr
 
 Keep it concise and conversational. Do not mention internal systems, hashes, or trajectory.
 Just answer the user's question or confirm what was done.
+If the session injects contact synthesis guidance, follow it.
 
 Never claim that a file, preference, or workspace state was changed, removed, updated, saved, or persisted unless the injected turn outcome facts explicitly show a successful mutation or commit."""
 
@@ -1255,6 +1256,36 @@ def _render_clarify_synthesis_guidance(clarify_step: Step) -> str:
     for gap in clarify_step.gaps:
         lines.append(f"- {gap.desc}")
     return "\n".join(lines)
+
+
+def _render_contact_synthesis_guidance(identity_skill: Skill | None) -> str | None:
+    if (
+        identity_skill is None
+        or not _is_entity_source(identity_skill.source)
+        or not identity_skill.trigger.startswith("on_contact:discord:")
+        or Path(identity_skill.source).name == "admin.st"
+        or identity_skill.name == "admin"
+    ):
+        return None
+    payload = identity_skill.payload or {}
+    init_status = str((payload.get("init", {}) or {}).get("status", "")).strip().lower()
+    if init_status == "pending":
+        return (
+            "## Contact Synthesis Guidance\n"
+            "This is a newly bound contact entity with init.status pending.\n"
+            "Do not let the conversation drift into generic banter.\n"
+            "You may briefly acknowledge the topic, but keep the response oriented toward learning about the user directly.\n"
+            "Prefer one concise follow-up question about the person, their preferences, or how they want the interaction to go."
+        )
+    if init_status == "complete":
+        return (
+            "## Contact Synthesis Guidance\n"
+            "This bound contact entity has init.status complete.\n"
+            "Hold normal conversation naturally.\n"
+            "Do not force a get-to-know-you question or redirect back to onboarding unless the user invites it.\n"
+            "Only treat new information as persistence-worthy when it would materially improve future interactions."
+        )
+    return None
 
 
 def _clarify_gap_wants_identity_linkage(gap: Gap) -> bool:
@@ -1539,6 +1570,9 @@ def run_turn(
                 )
         # No gaps → auto-synthesize
         print("\n── AUTO-SYNTH (no gaps) ──")
+        synth_guidance = _render_contact_synthesis_guidance(identity_skill)
+        if synth_guidance:
+            session.inject(synth_guidance, role="system")
         response = _synthesize(session, user_message, turn_facts)
         trajectory.append(Step.create(desc=f"{RESPONSE_TURN_PREFIX}{response}"))
         _save_turn(trajectory, state)
@@ -1648,6 +1682,9 @@ def run_turn(
     print("\n── SYNTHESIS ──")
     if clarify_frontier_step is not None:
         session.inject(_render_clarify_synthesis_guidance(clarify_frontier_step), role="system")
+    synth_guidance = _render_contact_synthesis_guidance(identity_skill)
+    if synth_guidance:
+        session.inject(synth_guidance, role="system")
     response = _synthesize(session, user_message, turn_facts)
     trajectory.append(Step.create(desc=f"{RESPONSE_TURN_PREFIX}{response}"))
 
@@ -2380,19 +2417,22 @@ def _build_init_user_intent(contact_id: str, user_message: str, *, contact_profi
                 "get_to_know_entity": True,
                 "ask_concise_questions": True,
                 "question_strategy": (
-                    "Ask a small number of concise get-to-know-you questions when useful, "
-                    "rather than interrogating every turn."
+                    "Ask a small number of concise questions when useful about how this person likes to communicate, "
+                    "what level of detail they want, and what would make the interaction more useful. "
+                    "Do not interrogate every turn or block casual conversation. "
+                    "If they bring up a casual topic, briefly acknowledge it and then steer back toward a concise question about them."
                 ),
                 "profile_update_mode": (
-                    "Passively surface explicit reprogramme_needed gaps when stable traits, "
-                    "preferences, or user-corrected context should be persisted."
+                    "Passively surface explicit reprogramme_needed gaps only for durable communication preferences, "
+                    "interaction patterns, accessibility needs, goals, corrections, or other context that will improve the user experience."
                 ),
                 "passive_reprogramme_optional": True,
                 "passive_reprogramme_removal": (
                     "The user may later ask to remove passive profile-maintenance behavior from this entity."
                 ),
                 "completion_rule": (
-                    "Once enough stable profile is known, update this entity and set init.status to complete."
+                    "Once enough is known about how this person likes to communicate and what improves the interaction, "
+                    "update this entity and set init.status to complete."
                 ),
             }
         },
@@ -2409,17 +2449,20 @@ def _build_init_user_intent(contact_id: str, user_message: str, *, contact_profi
             "ask_profile_questions": True,
             "seed_message": seed,
             "next_action": (
-                "Ask a small number of concise onboarding questions when useful. "
-                "When enough stable profile is known, reprogramme this entity to set init.status to complete."
+                "Ask a small number of concise onboarding questions when useful about communication style and interaction preferences. "
+                "Do not block casual conversation, but do not drift into topic-only banter either. "
+                "Briefly acknowledge casual topics and then ask something concise about the user. "
+                "When enough stable user-experience context is known, reprogramme this entity to set init.status to complete."
             ),
         },
         "steps": [
             {
                 "action": "initiate_entity",
                 "desc": (
-                    "This is a newly bound contact entity. Ask a small number of concise get-to-know-you questions "
-                    "when useful, learn stable facts and preferences over time, and surface reprogramme_needed when "
-                    "new durable knowledge should be written back to this entity."
+                    "This is a newly bound contact entity. Ask a small number of concise questions when useful about "
+                    "how the person likes to communicate and what improves the interaction. Do not block casual conversation. "
+                    "If the user introduces a casual topic, briefly acknowledge it and then steer back to a concise user-directed question. "
+                    "Surface reprogramme_needed only when new durable user-experience context should be written back to this entity."
                 ),
                 "resolve": ["identity", "preferences", "access_rules", "init"],
                 "post_diff": False,
@@ -2474,7 +2517,7 @@ def _run_no_gap_discord_profile_sync(
     if force_update:
         sync_session.inject(
             "## Deterministic Sync Signal\n"
-            "The latest message contains durable self-description that should be persisted into the bound contact entity."
+            "The latest message contains durable user-experience context that should be persisted into the bound contact entity."
         )
     noop_rule = (
         '- Do not return {"noop": true}; this message warrants a profile update.\n'
@@ -2492,10 +2535,11 @@ def _run_no_gap_discord_profile_sync(
         "- Otherwise return a semantic_skeleton.v1 entity update for this existing contact entity.\n"
         "- Use existing_ref and update the current entity in place.\n"
         "- Preserve trigger, identity bindings, access_rules, init, refs, and entity shape.\n"
-        "- Persist only stable facts, corrections, preferences, goals, or durable context learned from this turn.\n"
+        "- Persist only durable context that will improve the user experience: communication style, response preferences, accessibility needs, goals, corrections, or stable interaction preferences.\n"
         "- Prefer the latest explicit first-person statement over stale historical ambiguity.\n"
-        "- If the latest message states identity, role, work history, health context, goals, or preferences in first person, treat those as durable unless clearly temporary.\n"
+        "- If the latest message states identity, role, work history, health context, goals, or communication preferences in first person, treat those as durable unless clearly temporary.\n"
         "- If the latest message fills a pending profile field, update the entity instead of returning noop.\n"
+        "- Do not persist casual small-talk details, entertainment opinions, or fleeting tastes unless the user explicitly frames them as something to remember for future interactions.\n"
         "- Do not ask questions.\n"
         "- Do not emit gaps.\n"
     )

@@ -582,6 +582,9 @@ P5_CASES = [
     ("init_user_intent_prefers_get_to_know_questions", lambda: loop._build_init_user_intent("discord:123", "hi")["preferences"]["onboarding"]["get_to_know_entity"] is True),
     ("init_user_intent_bootstrap_is_only_deterministic_reprogramme", lambda: loop._build_init_user_intent("discord:123", "hi")["preferences"]["onboarding"]["deterministic_reprogramme_mode"] == "bootstrap_only"),
     ("init_user_intent_passive_reprogramme_is_optional", lambda: loop._build_init_user_intent("discord:123", "hi")["preferences"]["onboarding"]["passive_reprogramme_optional"] is True),
+    ("init_user_intent_question_strategy_prioritizes_communication_preferences", lambda: "likes to communicate" in loop._build_init_user_intent("discord:123", "hi")["preferences"]["onboarding"]["question_strategy"].lower()),
+    ("init_user_intent_question_strategy_redirects_casual_topics_back_to_user", lambda: "steer back" in loop._build_init_user_intent("discord:123", "hi")["preferences"]["onboarding"]["question_strategy"].lower()),
+    ("init_user_intent_profile_updates_focus_on_user_experience", lambda: "improve the user experience" in loop._build_init_user_intent("discord:123", "hi")["preferences"]["onboarding"]["profile_update_mode"].lower()),
     ("init_user_intent_has_single_initiation_step", lambda: [step["action"] for step in loop._build_init_user_intent("discord:123", "hi")["steps"]] == ["initiate_entity"]),
     ("init_user_intent_initiation_step_resolves_full_profile", lambda: loop._build_init_user_intent("discord:123", "hi")["steps"][0]["resolve"] == ["identity", "preferences", "access_rules", "init"]),
     ("init_user_intent_uses_discord_username_as_default_name", lambda: loop._build_init_user_intent("discord:123", "hi", contact_profile={"username": "courtney"})["name"] == "courtney"),
@@ -593,6 +596,8 @@ P5_CASES = [
     ("discord_profile_update_detector_ignores_greeting_only", lambda: loop._message_warrants_discord_profile_update("Hey", bootstrap_identity_skill()) is False),
     ("discord_profile_update_detector_flags_first_person_identity", lambda: loop._message_warrants_discord_profile_update("Hello I'm Jay. I work as a data analyst and have bad knees", bootstrap_identity_skill(contact_id="discord:456", username="jay")) is True),
     ("discord_profile_update_detector_flags_pending_profile_fragment", lambda: loop._message_warrants_discord_profile_update("Edit assistant for 2 years", bootstrap_identity_skill()) is True),
+    ("discord_profile_update_detector_ignores_casual_player_taste", lambda: loop._message_warrants_discord_profile_update("son, cherki, tamale are all cool players who are playing at the moment", bootstrap_identity_skill()) is False),
+    ("synth_system_defers_to_contact_guidance", lambda: "if the session injects contact synthesis guidance, follow it." in loop.SYNTH_SYSTEM.lower()),
     ("reprogramme_intent_accepts_semantic_skeleton", lambda: loop._is_reprogramme_intent({
         "version": "semantic_skeleton.v1",
         "artifact": {"kind": "entity"},
@@ -1520,6 +1525,25 @@ def test_p12_reprogramme_intent_accepts_entity_payload():
 
 def test_p12_reprogramme_intent_rejects_action_payload():
     assert loop._is_reprogramme_intent({"name": "hash_edit", "desc": "workflow", "artifact_kind": "action_update"}) is False
+
+
+def test_p12_contact_synthesis_guidance_pending_redirects_to_user():
+    guidance = loop._render_contact_synthesis_guidance(bootstrap_identity_skill())
+
+    assert guidance is not None
+    assert "init.status pending" in guidance
+    assert "learning about the user directly" in guidance
+
+
+def test_p12_contact_synthesis_guidance_complete_allows_normal_conversation():
+    identity = bootstrap_identity_skill()
+    identity.payload["init"]["status"] = "complete"
+
+    guidance = loop._render_contact_synthesis_guidance(identity)
+
+    assert guidance is not None
+    assert "init.status complete" in guidance
+    assert "Hold normal conversation naturally" in guidance
 
 
 def test_p12_bootstrap_contact_entity_skips_known_contact(monkeypatch):
