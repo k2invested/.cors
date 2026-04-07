@@ -97,6 +97,7 @@ def _validate_target(*, target_kind: str, target_ref: str) -> None:
 
 def main() -> None:
     params = json.load(sys.stdin)
+    version = str(params.get("version", "vocab_skeleton.v1")).strip() or "vocab_skeleton.v1"
     name = str(params.get("name", "")).strip()
     classifiable = str(params.get("classifiable", "")).strip()
     target_kind = str(params.get("target_kind", "")).strip()
@@ -109,6 +110,9 @@ def main() -> None:
 
     if not name:
         print("Error: missing 'name' parameter", file=sys.stderr)
+        sys.exit(1)
+    if version != "vocab_skeleton.v1":
+        print("Error: version must be 'vocab_skeleton.v1'", file=sys.stderr)
         sys.exit(1)
     if not classifiable:
         print("Error: missing 'classifiable' parameter", file=sys.stderr)

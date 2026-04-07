@@ -1292,64 +1292,66 @@ def execute_iteration(
         policy = hooks.load_tree_policy()
         target_skill = _entity_target_for_reprogramme(gap, registry)
         reroute_vocab = None
-        for ref in gap.content_refs:
-            rule = hooks.match_policy(ref, policy)
-            if rule and rule.get("on_mutate") and rule["on_mutate"] != vocab:
-                reroute_vocab = rule["on_mutate"]
-                if rule.get("reprogramme_mode"):
-                    gap.route_mode = str(rule["reprogramme_mode"])
-                break
-        if not reroute_vocab:
-            for path_prefix, rule in policy.items():
-                if rule.get("on_mutate") and path_prefix.rstrip("/") in gap.desc.lower():
-                    if rule["on_mutate"] != vocab:
-                        reroute_vocab = rule["on_mutate"]
-                        if rule.get("reprogramme_mode"):
-                            gap.route_mode = str(rule["reprogramme_mode"])
-                        break
-        if not reroute_vocab and vocab != "reprogramme_needed":
-            if any(ref.endswith(".st") or registry.resolve(ref) is not None for ref in gap.content_refs):
-                reroute_vocab = "reprogramme_needed"
-            elif ".st" in gap.desc.lower():
-                reroute_vocab = "reprogramme_needed"
+        sealed_builder_branch = vocab == "vocab_reg_needed"
+        if not sealed_builder_branch:
+            for ref in gap.content_refs:
+                rule = hooks.match_policy(ref, policy)
+                if rule and rule.get("on_mutate") and rule["on_mutate"] != vocab:
+                    reroute_vocab = rule["on_mutate"]
+                    if rule.get("reprogramme_mode"):
+                        gap.route_mode = str(rule["reprogramme_mode"])
+                    break
+            if not reroute_vocab:
+                for path_prefix, rule in policy.items():
+                    if rule.get("on_mutate") and path_prefix.rstrip("/") in gap.desc.lower():
+                        if rule["on_mutate"] != vocab:
+                            reroute_vocab = rule["on_mutate"]
+                            if rule.get("reprogramme_mode"):
+                                gap.route_mode = str(rule["reprogramme_mode"])
+                            break
+            if not reroute_vocab and vocab != "reprogramme_needed":
+                if any(ref.endswith(".st") or registry.resolve(ref) is not None for ref in gap.content_refs):
+                    reroute_vocab = "reprogramme_needed"
+                elif ".st" in gap.desc.lower():
+                    reroute_vocab = "reprogramme_needed"
 
-        if not reroute_vocab:
-            structural_route_mode = _infer_reason_judgment_route_mode(
+            if not reroute_vocab:
+                structural_route_mode = _infer_reason_judgment_route_mode(
+                    gap,
+                    registry=registry,
+                    policy=policy,
+                    target_entity=target_skill,
+                    route_mode=gap.route_mode,
+                )
+                if _requires_reason_judgment(
+                    gap,
+                    registry=registry,
+                    policy=policy,
+                    route_mode=structural_route_mode,
+                    target_entity=target_skill,
+                ):
+                    reroute_vocab = "reason_needed"
+                    if structural_route_mode:
+                        gap.route_mode = structural_route_mode
+
+            if reroute_vocab == "reprogramme_needed" and not gap.route_mode:
+                gap.route_mode = _determine_reprogramme_mode(gap, target_skill, policy)
+
+            if reroute_vocab == "reprogramme_needed" and _new_action_origination_requires_reason(
                 gap,
-                registry=registry,
-                policy=policy,
-                target_entity=target_skill,
                 route_mode=gap.route_mode,
-            )
-            if _requires_reason_judgment(
-                gap,
-                registry=registry,
-                policy=policy,
-                route_mode=structural_route_mode,
                 target_entity=target_skill,
             ):
                 reroute_vocab = "reason_needed"
-                if structural_route_mode:
-                    gap.route_mode = structural_route_mode
+                gap.route_mode = None
 
-        if reroute_vocab == "reprogramme_needed" and not gap.route_mode:
-            gap.route_mode = _determine_reprogramme_mode(gap, target_skill, policy)
-
-        if reroute_vocab == "reprogramme_needed" and _new_action_origination_requires_reason(
-            gap,
-            route_mode=gap.route_mode,
-            target_entity=target_skill,
-        ):
-            reroute_vocab = "reason_needed"
-            gap.route_mode = None
-
-        if reroute_vocab:
-            print(f"  → policy auto-route: {vocab} → {reroute_vocab}")
-            if gap.route_mode:
-                print(f"    route_mode: {gap.route_mode}")
-            gap.vocab = reroute_vocab
-            compiler.ledger.stack.append(entry)
-            return ExecutionOutcome(control="continue")
+            if reroute_vocab:
+                print(f"  → policy auto-route: {vocab} → {reroute_vocab}")
+                if gap.route_mode:
+                    print(f"    route_mode: {gap.route_mode}")
+                gap.vocab = reroute_vocab
+                compiler.ledger.stack.append(entry)
+                return ExecutionOutcome(control="continue")
 
         print(f"  → mutation ({vocab})")
         if not compiler.validate_omo(vocab):
@@ -1404,14 +1406,18 @@ def execute_iteration(
             session.inject(render_public_chain_registry(config.cors_root))
             session.inject(render_configurable_vocab_registry())
             compose_prompt = (
-                f"Compose a semantic vocab route to resolve this gap:\n"
+                f"Compose a semantic vocab skeleton to resolve this gap:\n"
                 f"  gap:{gap.hash} \"{gap.desc}\"\n\n"
+                "This is a dedicated vocab-registry branch. Stay on the vocab builder path.\n"
+                "Do not surface reason_needed, reprogramme_needed, or hash_edit_needed here.\n"
+                "Use exact public tool or chain hashes for target_ref.\n\n"
                 f"Respond with JSON params for system/vocab_builder.py:\n"
-                f'{{"name": "new_vocab_needed", "classifiable": "observe|mutate", '
+                f'{{"version": "vocab_skeleton.v1", "operation": "upsert|delete", '
+                f'"name": "new_vocab_needed", "classifiable": "observe|mutate", '
                 f'"target_kind": "tool|chain", "target_ref": "da6ab1b8070b", '
                 f'"desc": "what the semantic route means", "prompt_hint": "how the route should be used"}}\n\n'
-                f"Use public tool or chain blob refs only. Prefer tool targets for executable routing. "
-                f"Do not invent bridge vocab here."
+                "Use operation='delete' only when removing an existing configurable vocab.\n"
+                "Do not invent bridge vocab here."
             )
         elif tool_path:
             compose_prompt = _mutate_tool_compose_prompt(

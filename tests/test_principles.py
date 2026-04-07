@@ -4546,6 +4546,39 @@ def test_p12_vocab_builder_writes_configurable_tool_route(tmp_path):
     assert 'prompt_hint="Use for demo write/edit requests."' in content
 
 
+def test_p12_vocab_builder_accepts_vocab_skeleton_version_for_chain_route(tmp_path):
+    registry_copy = tmp_path / "vocab_registry.py"
+    registry_copy.write_text((ROOT / "vocab_registry.py").read_text(encoding="utf-8"), encoding="utf-8")
+    public_chain_ref = next(iter(chain_registry_module.public_chain_ref_map(ROOT)))
+    stdin = json.dumps(
+        {
+            "version": "vocab_skeleton.v1",
+            "name": "demo_chain_vocab_needed",
+            "classifiable": "mutate",
+            "target_kind": "chain",
+            "target_ref": public_chain_ref,
+            "desc": "route demo semantic maintenance through a public chain",
+            "registry_path": str(registry_copy),
+        }
+    )
+
+    old_stdin = sys.stdin
+    old_stdout = sys.stdout
+    try:
+        sys.stdin = SimpleNamespace(read=lambda: stdin)
+        buffer = []
+        sys.stdout = SimpleNamespace(write=lambda s: buffer.append(s), flush=lambda: None)
+        vocab_builder_module.main()
+    finally:
+        sys.stdin = old_stdin
+        sys.stdout = old_stdout
+
+    content = registry_copy.read_text(encoding="utf-8")
+    assert '"demo_chain_vocab_needed": VocabSpec(' in content
+    assert 'target_kind="chain"' in content
+    assert f'target_ref="{public_chain_ref}"' in content
+
+
 def test_p12_tool_needed_injects_public_tool_registry_before_compose():
     class FakeSession:
         def __init__(self):
@@ -4639,6 +4672,7 @@ def test_p12_vocab_reg_needed_injects_registries_before_compose():
             )
             return json.dumps(
                 {
+                    "version": "vocab_skeleton.v1",
                     "name": "demo_vocab_needed",
                     "classifiable": "mutate",
                     "target_kind": "tool",
@@ -4697,6 +4731,87 @@ def test_p12_vocab_reg_needed_injects_registries_before_compose():
     assert any(content.startswith("## Public Tool Registry") for content in session.injected)
     assert any(content.startswith("## Public Chain Registry") for content in session.injected)
     assert any(content.startswith("## Configurable Vocab Registry") for content in session.injected)
+    assert session.calls == 1
+
+
+def test_p12_vocab_reg_needed_stays_on_builder_path_for_vocab_registry_mutation():
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+            self.calls = 0
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            self.calls += 1
+            return json.dumps(
+                {
+                    "version": "vocab_skeleton.v1",
+                    "operation": "upsert",
+                    "name": "principles_needed",
+                    "classifiable": "mutate",
+                    "target_kind": "chain",
+                    "target_ref": skill("principles").hash,
+                    "desc": "Run the principles workflow.",
+                    "prompt_hint": "Use for principles maintenance requests.",
+                }
+            )
+
+    executed_tools: list[str] = []
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap(
+        "Add principles_needed to vocab_registry.py, mapping it to the principles action package with the correct trigger and target_ref.",
+        vocab="vocab_reg_needed",
+        content_refs=["vocab_registry.py", skill("principles").hash],
+    )
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "resolved vocab registry context",
+        execute_tool=lambda tool, params: (executed_tools.append(tool) or "written: vocab_registry.py", 0),
+        auto_commit=lambda message, paths=None: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=lambda output: "vocab_registry.py",
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {"vocab_registry.py": {"on_mutate": "vocab_reg_needed"}, "skills/actions/": {"on_mutate": "reason_needed"}},
+        match_policy=lambda path, policy: policy.get(path),
+        resolve_entity=lambda content_refs, registry_obj, trajectory: skill("principles") if skill("principles").hash in content_refs else None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert executed_tools == ["system/vocab_builder.py"]
+    assert gap.vocab == "vocab_reg_needed"
     assert session.calls == 1
 
 
