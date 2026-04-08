@@ -989,9 +989,13 @@ def _system_surface_sections_for_path(path: str | None) -> set[str]:
 def _is_entity_admin_surface(path: str | None) -> bool:
     if not isinstance(path, str) or not path.strip():
         return False
-    normalized = str(Path(path)).replace("\\", "/").lstrip("./")
+    candidate = Path(path)
+    normalized = str(candidate).replace("\\", "/").lstrip("./")
+    parts = candidate.parts
     return (
-        normalized == "skills/admin.st"
+        candidate.name == "admin.st"
+        or normalized == "skills/admin.st"
+        or ("skills" in parts and "entities" in parts)
         or normalized == "skills/entities"
         or normalized.startswith("skills/entities/")
     )
@@ -1004,9 +1008,11 @@ def _is_destructive_bash_gap(gap: Gap) -> bool:
     return bool(re.search(r"\b(delete|remove|unlink|rm|move|rename)\b", text))
 
 
-def _preserve_destructive_bash_on_entity_surface(gap: Gap, policy: dict) -> bool:
+def _preserve_destructive_bash_on_entity_surface(gap: Gap, policy: dict, target_entity: Any | None = None) -> bool:
     if not _is_destructive_bash_gap(gap):
         return False
+    if target_entity is not None and _is_entity_admin_surface(getattr(target_entity, "source", None)):
+        return True
     if any(_is_entity_admin_surface(ref) for ref in gap.content_refs if isinstance(ref, str)):
         return True
     if "skills/entities/" in gap.desc.lower() or "skills/admin.st" in gap.desc.lower():
@@ -1412,7 +1418,7 @@ def execute_iteration(
         if not sealed_builder_branch:
             for ref in gap.content_refs:
                 rule = hooks.match_policy(ref, policy)
-                if _preserve_destructive_bash_on_entity_surface(gap, policy) and _is_entity_admin_surface(ref):
+                if _preserve_destructive_bash_on_entity_surface(gap, policy, target_skill) and _is_entity_admin_surface(ref):
                     continue
                 if rule and rule.get("on_mutate") and rule["on_mutate"] != vocab:
                     reroute_vocab = rule["on_mutate"]
@@ -1421,7 +1427,7 @@ def execute_iteration(
                     break
             if not reroute_vocab:
                 for path_prefix, rule in policy.items():
-                    if _preserve_destructive_bash_on_entity_surface(gap, policy) and _is_entity_admin_surface(path_prefix):
+                    if _preserve_destructive_bash_on_entity_surface(gap, policy, target_skill) and _is_entity_admin_surface(path_prefix):
                         continue
                     if rule.get("on_mutate") and path_prefix.rstrip("/") in gap.desc.lower():
                         if rule["on_mutate"] != vocab:
@@ -1429,7 +1435,7 @@ def execute_iteration(
                             if rule.get("reprogramme_mode"):
                                 gap.route_mode = str(rule["reprogramme_mode"])
                             break
-            if not reroute_vocab and vocab != "reprogramme_needed" and not _preserve_destructive_bash_on_entity_surface(gap, policy):
+            if not reroute_vocab and vocab != "reprogramme_needed" and not _preserve_destructive_bash_on_entity_surface(gap, policy, target_skill):
                 if any(ref.endswith(".st") or registry.resolve(ref) is not None for ref in gap.content_refs):
                     reroute_vocab = "reprogramme_needed"
                 elif ".st" in gap.desc.lower():

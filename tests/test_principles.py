@@ -933,6 +933,7 @@ P10_CASES += [
     ("destructive_bash_detected_for_delete_gap", lambda: execution_engine_module._is_destructive_bash_gap(make_gap("Delete skills/entities/clinton.st from the workspace.", vocab="bash_needed")) is True),
     ("destructive_bash_not_detected_for_hash_edit_gap", lambda: execution_engine_module._is_destructive_bash_gap(make_gap("Delete skills/entities/clinton.st from the workspace.", vocab="hash_edit_needed")) is False),
     ("destructive_bash_preserved_on_entity_surface", lambda: execution_engine_module._preserve_destructive_bash_on_entity_surface(make_gap("Delete skills/entities/clinton.st from the workspace.", vocab="bash_needed"), loop._load_tree_policy()) is True),
+    ("destructive_bash_preserved_for_resolved_entity_target", lambda: execution_engine_module._preserve_destructive_bash_on_entity_surface(make_gap("Delete clinton.st entity file.", vocab="bash_needed", content_refs=[skill("clinton").hash]), loop._load_tree_policy(), skill("clinton")) is True),
     ("route_mode_for_action_source_is_action_editor", lambda: execution_engine_module._reprogramme_mode_for_source("skills/actions/hash_edit.st") == "action_editor"),
     ("new_action_origination_requires_reason", lambda: execution_engine_module._new_action_origination_requires_reason(make_gap("create research workflow", vocab="content_needed"), route_mode="action_editor", target_entity=None)),
     ("reason_judgment_required_for_public_trigger_assignment", lambda: execution_engine_module._requires_reason_judgment(
