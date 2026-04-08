@@ -929,6 +929,7 @@ P10_CASES += [
     ("reprogramme_skill_is_codon", lambda: skill("reprogramme").artifact_kind == "codon"),
     ("route_mode_for_admin_source_is_entity_editor", lambda: execution_engine_module._reprogramme_mode_for_source("skills/admin.st") == "entity_editor"),
     ("route_mode_for_entity_source_is_entity_editor", lambda: execution_engine_module._reprogramme_mode_for_source("skills/entities/clinton.st") == "entity_editor"),
+    ("entity_surface_matcher_accepts_entities_prefix", lambda: execution_engine_module._is_entity_admin_surface("skills/entities/") is True),
     ("destructive_bash_detected_for_delete_gap", lambda: execution_engine_module._is_destructive_bash_gap(make_gap("Delete skills/entities/clinton.st from the workspace.", vocab="bash_needed")) is True),
     ("destructive_bash_not_detected_for_hash_edit_gap", lambda: execution_engine_module._is_destructive_bash_gap(make_gap("Delete skills/entities/clinton.st from the workspace.", vocab="hash_edit_needed")) is False),
     ("destructive_bash_preserved_on_entity_surface", lambda: execution_engine_module._preserve_destructive_bash_on_entity_surface(make_gap("Delete skills/entities/clinton.st from the workspace.", vocab="bash_needed"), loop._load_tree_policy()) is True),

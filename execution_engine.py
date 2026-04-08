@@ -990,7 +990,11 @@ def _is_entity_admin_surface(path: str | None) -> bool:
     if not isinstance(path, str) or not path.strip():
         return False
     normalized = str(Path(path)).replace("\\", "/").lstrip("./")
-    return normalized == "skills/admin.st" or normalized.startswith("skills/entities/")
+    return (
+        normalized == "skills/admin.st"
+        or normalized == "skills/entities"
+        or normalized.startswith("skills/entities/")
+    )
 
 
 def _is_destructive_bash_gap(gap: Gap) -> bool:
