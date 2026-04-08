@@ -1,0 +1,16 @@
+[
+  {
+    "hash": "6b28f07809f6",
+    "origin_gap": "1fae0b6b3be6",
+    "steps": [
+      "31fc6051b113"
+    ],
+    "desc": "",
+    "resolved": false,
+    "extracted": false,
+    "store_kind": "background_agent",
+    "activation_ref": "principles:f9ba012dfe64",
+    "await_policy": "manual",
+    "signature": "6b28f07809f6"
+  }
+]

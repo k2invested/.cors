@@ -1,6 +1,6 @@
 {
   "name": "architect",
-  "desc": "Architecture analysis. Resolves source, principles, docs, and tests, then reasons about drift and may activate hash_edit for the files that actually need syncing.",
+  "desc": "Architecture analysis. Treats source as the canonical system surface, resolves principles for grounding, audits spec/docs against source, and may activate hash_edit only for stale documentation files.",
   "trigger": "on_vocab:architect_needed",
   "refs": {},
   "artifact": {
@@ -45,10 +45,10 @@
     {
       "id": "phase_resolve_principles_2",
       "kind": "observe",
-      "goal": "resolve PRINCIPLES.md so architectural judgment stays grounded in the current system philosophy and laws",
+      "goal": "resolve PRINCIPLES.md as architectural grounding context only; do not treat it as part of the editable synchronization surface for this workflow",
       "action": "resolve_principles",
       "gap_template": {
-        "desc": "resolve PRINCIPLES.md so architectural judgment stays grounded in the current system philosophy and laws",
+        "desc": "resolve PRINCIPLES.md as architectural grounding context only; do not treat it as part of the editable synchronization surface for this workflow",
         "content_refs": [
           "docs/PRINCIPLES.md"
         ],
@@ -78,10 +78,10 @@
     {
       "id": "phase_resolve_docs_3",
       "kind": "observe",
-      "goal": "resolve ARCHITECTURE.md and the module docs that may have drifted from source",
+      "goal": "resolve ARCHITECTURE.md and the module docs that form the editable spec/documentation surface that should stay in sync with source",
       "action": "resolve_docs",
       "gap_template": {
-        "desc": "resolve ARCHITECTURE.md and the module docs that may have drifted from source",
+        "desc": "resolve ARCHITECTURE.md and the module docs that form the editable spec/documentation surface that should stay in sync with source",
         "content_refs": [
           "docs/ARCHITECTURE.md",
           "docs/step.md",
@@ -147,10 +147,10 @@
     {
       "id": "phase_analyse_and_handoff_fix_5",
       "kind": "higher_order",
-      "goal": "inspect the resolved source, principles, docs, and tests for architectural drift. This phase has only two lawful outcomes: 1. if no documentation or test edits are needed, emit no activation and close the workflow; 2. if edits are needed, emit only a reason activation JSON for hash_edit using the hash_edit workflow ref, include only the concrete file refs that require mutation, and set await_needed=false by default. Do not activate architect again. Do not activate any workflow other than hash_edit. Do not emit reprogramme_needed from this phase unless the task explicitly changes entity state.",
+      "goal": "treat the resolved source code as the canonical source of truth and use PRINCIPLES.md only as architectural grounding. Audit the editable documentation/spec surface against that source and grounding. This phase has only two lawful outcomes: 1. if no documentation edits are needed, emit no activation and close the workflow; 2. if documentation edits are needed, emit only a reason activation JSON for hash_edit using the hash_edit workflow ref, include only the concrete stale documentation/spec file refs that require mutation, and set await_needed=false by default. Do not activate architect again. Do not activate any workflow other than hash_edit. Do not include source-code files, tests, or PRINCIPLES.md in the edit set for this workflow. Do not emit reprogramme_needed from this phase unless the task explicitly changes entity state.",
       "action": "analyse_and_handoff_fix",
       "gap_template": {
-        "desc": "inspect the resolved source, principles, docs, and tests for architectural drift. Only two outputs are lawful here: emit nothing if no edits are needed, or emit only a reason activation JSON for hash_edit. If activating hash_edit, use the hash_edit workflow ref, include only the exact file refs that need mutation, and set await_needed=false by default. Do not reactivate architect. Do not activate any workflow other than hash_edit. Do not emit reprogramme_needed from this phase unless entity state persistence is explicitly required.",
+        "desc": "treat the resolved source code as the canonical source of truth and use PRINCIPLES.md only as architectural grounding. Audit only the editable documentation/spec surface against that source and grounding. Only two outputs are lawful here: emit nothing if no documentation edits are needed, or emit only a reason activation JSON for hash_edit. If activating hash_edit, use the hash_edit workflow ref, include only the exact stale documentation/spec file refs that need mutation, and set await_needed=false by default. Do not reactivate architect. Do not activate any workflow other than hash_edit. Do not include source-code files, tests, or PRINCIPLES.md in the edit set for this workflow. Do not emit reprogramme_needed from this phase unless entity state persistence is explicitly required.",
         "content_refs": [],
         "step_refs": []
       },
@@ -191,7 +191,7 @@
     },
     {
       "action": "resolve_principles",
-      "desc": "resolve PRINCIPLES.md so architectural judgment stays grounded in the current system philosophy and laws",
+      "desc": "resolve PRINCIPLES.md as architectural grounding context only; do not treat it as part of the editable synchronization surface for this workflow",
       "vocab": "hash_resolve_needed",
       "post_diff": false,
       "resolve": [
@@ -200,7 +200,7 @@
     },
     {
       "action": "resolve_docs",
-      "desc": "resolve ARCHITECTURE.md and the module docs that may have drifted from source",
+      "desc": "resolve ARCHITECTURE.md and the module docs that form the editable spec/documentation surface that should stay in sync with source",
       "vocab": "hash_resolve_needed",
       "post_diff": false,
       "resolve": [
@@ -220,7 +220,7 @@
     },
     {
       "action": "analyse_and_handoff_fix",
-      "desc": "inspect the resolved source, principles, docs, and tests for architectural drift. Only two outputs are lawful here: emit nothing if no edits are needed, or emit only a reason activation JSON for hash_edit. If activating hash_edit, use the hash_edit workflow ref, include only the exact file refs that need mutation, and set await_needed=false by default. Do not reactivate architect. Do not activate any workflow other than hash_edit. Do not emit reprogramme_needed from this phase unless entity state persistence is explicitly required.",
+      "desc": "treat the resolved source code as the canonical source of truth and use PRINCIPLES.md only as architectural grounding. Audit only the editable documentation/spec surface against that source and grounding. Only two outputs are lawful here: emit nothing if no documentation edits are needed, or emit only a reason activation JSON for hash_edit. If activating hash_edit, use the hash_edit workflow ref, include only the exact stale documentation/spec file refs that need mutation, and set await_needed=false by default. Do not reactivate architect. Do not activate any workflow other than hash_edit. Do not include source-code files, tests, or PRINCIPLES.md in the edit set for this workflow. Do not emit reprogramme_needed from this phase unless entity state persistence is explicitly required.",
       "post_diff": true
     }
   ],

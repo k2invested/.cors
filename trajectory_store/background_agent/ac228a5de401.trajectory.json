@@ -1,0 +1,1394 @@
+[
+  {
+    "hash": "05f87814ecb0",
+    "step_refs": [
+      "abcc74a74b28",
+      "dd12fb338b09",
+      "b2c71533d1c0"
+    ],
+    "content_refs": [
+      "ac228a5de401",
+      "f693bcad0032b132222938a06d3f52d4615de53e",
+      "f9ba012dfe64"
+    ],
+    "desc": "child activation:ac228a5de401",
+    "gaps": [
+      {
+        "hash": "61702521d93f",
+        "desc": "Debug execution failure. rogue_kind=manifest_failure; source=st_builder; original_gap=1a21ee6b251d \"Add 'principles_needed' to vocab_registry.py, mapping it to the principles action package (f9ba012dfe64) with correct trigger and target_ref.\". failure_detail=Written: /Users/k2invested/Desktop/cors/skills/actions/principles.st",
+        "content_refs": [
+          "ac228a5de401",
+          "f693bcad0032b132222938a06d3f52d4615de53e",
+          "f9ba012dfe64"
+        ],
+        "step_refs": [
+          "abcc74a74b28",
+          "dd12fb338b09",
+          "b2c71533d1c0"
+        ],
+        "scores": {
+          "relevance": 0.0,
+          "confidence": 0.0,
+          "grounded": 0.0
+        },
+        "resolved": true,
+        "turn_id": 5
+      }
+    ],
+    "t": 1775574348.059146
+  },
+  {
+    "hash": "eb354232cf45",
+    "step_refs": [
+      "05f87814ecb0"
+    ],
+    "content_refs": [
+      "4e22c815bf2b",
+      "ac228a5de401",
+      "f693bcad0032b132222938a06d3f52d4615de53e",
+      "f9ba012dfe64"
+    ],
+    "desc": "activated workflow:ac228a5de401 for Debug execution failure. rogue_kind=manifest_failure; source=st_builder; original_gap=1a21ee6b251d \"Add 'principles_needed' to vocab_registry.py, mapping it to the principles action package (f9ba012dfe64) with correct trigger and target_ref.\". failure_detail=Written: /Users/k2invested/Desktop/cors/skills/actions/principles.st | task:Debug execution failure. rogue_kind=manifest_failure; source=st_builder; original_gap=1a21ee6b251d \"Add 'principles_needed' to vocab_registry.py, mapping it to the principles action package (f9ba012dfe64) with correct trigger and target_ref.\". failure_detail=Written: /Users/k2invested/Desktop/cors/skills/actions/principles.st",
+    "gaps": [
+      {
+        "hash": "080611bd2845",
+        "desc": "resolve PRINCIPLES.md before debugging so the analysis stays grounded in current system laws\n\nActivation task: Debug execution failure. rogue_kind=manifest_failure; source=st_builder; original_gap=1a21ee6b251d \"Add 'principles_needed' to vocab_registry.py, mapping it to the principles action package (f9ba012dfe64) with correct trigger and target_ref.\". failure_detail=Written: /Users/k2invested/Desktop/cors/skills/actions/principles.st\nActivation content refs: ['f693bcad0032b132222938a06d3f52d4615de53e', 'f9ba012dfe64']\nActivation step refs: ['abcc74a74b28', 'dd12fb338b09', 'b2c71533d1c0']",
+        "content_refs": [
+          "ac228a5de401",
+          "f693bcad0032b132222938a06d3f52d4615de53e",
+          "f9ba012dfe64",
+          "docs/PRINCIPLES.md"
+        ],
+        "step_refs": [
+          "abcc74a74b28",
+          "dd12fb338b09",
+          "b2c71533d1c0"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 0.8,
+          "grounded": 0.6190476190476191
+        },
+        "vocab": "hash_resolve_needed",
+        "vocab_score": 0.0,
+        "turn_id": 5,
+        "package_ref": "ac228a5de401",
+        "package_step_ref": "eb354232cf45",
+        "phase_id": "phase_resolve_principles_1",
+        "phase_state": "active",
+        "transitions": {
+          "on_done": "phase_resolve_source_2"
+        }
+      },
+      {
+        "hash": "20b5141e9d70",
+        "desc": "resolve the attached source code files implicated in the failure from activation content refs\n\nActivation task: Debug execution failure. rogue_kind=manifest_failure; source=st_builder; original_gap=1a21ee6b251d \"Add 'principles_needed' to vocab_registry.py, mapping it to the principles action package (f9ba012dfe64) with correct trigger and target_ref.\". failure_detail=Written: /Users/k2invested/Desktop/cors/skills/actions/principles.st\nActivation content refs: ['f693bcad0032b132222938a06d3f52d4615de53e', 'f9ba012dfe64']\nActivation step refs: ['abcc74a74b28', 'dd12fb338b09', 'b2c71533d1c0']",
+        "content_refs": [
+          "ac228a5de401",
+          "f693bcad0032b132222938a06d3f52d4615de53e",
+          "f9ba012dfe64"
+        ],
+        "step_refs": [
+          "abcc74a74b28",
+          "dd12fb338b09",
+          "b2c71533d1c0"
+        ],
+        "scores": {
+          "relevance": 0.97,
+          "confidence": 0.8,
+          "grounded": 0.0
+        },
+        "vocab": "hash_resolve_needed",
+        "vocab_score": 0.0,
+        "turn_id": 5,
+        "package_ref": "ac228a5de401",
+        "package_step_ref": "eb354232cf45",
+        "phase_id": "phase_resolve_source_2",
+        "phase_state": "planned",
+        "transitions": {
+          "on_done": "phase_resolve_turn_tree_3"
+        }
+      },
+      {
+        "hash": "455e589751ca",
+        "desc": "resolve the attached turn semantic tree and nearby failing steps from activation step refs\n\nActivation task: Debug execution failure. rogue_kind=manifest_failure; source=st_builder; original_gap=1a21ee6b251d \"Add 'principles_needed' to vocab_registry.py, mapping it to the principles action package (f9ba012dfe64) with correct trigger and target_ref.\". failure_detail=Written: /Users/k2invested/Desktop/cors/skills/actions/principles.st\nActivation content refs: ['f693bcad0032b132222938a06d3f52d4615de53e', 'f9ba012dfe64']\nActivation step refs: ['abcc74a74b28', 'dd12fb338b09', 'b2c71533d1c0']",
+        "content_refs": [
+          "ac228a5de401",
+          "f693bcad0032b132222938a06d3f52d4615de53e",
+          "f9ba012dfe64"
+        ],
+        "step_refs": [
+          "abcc74a74b28",
+          "dd12fb338b09",
+          "b2c71533d1c0"
+        ],
+        "scores": {
+          "relevance": 0.94,
+          "confidence": 0.8,
+          "grounded": 0.0
+        },
+        "vocab": "hash_resolve_needed",
+        "vocab_score": 0.0,
+        "turn_id": 5,
+        "package_ref": "ac228a5de401",
+        "package_step_ref": "eb354232cf45",
+        "phase_id": "phase_resolve_turn_tree_3",
+        "phase_state": "planned",
+        "transitions": {
+          "on_done": "phase_resolve_failed_log_4"
+        }
+      },
+      {
+        "hash": "7584843458c7",
+        "desc": "resolve the failed turn output log and any attached failure artifacts from activation content refs\n\nActivation task: Debug execution failure. rogue_kind=manifest_failure; source=st_builder; original_gap=1a21ee6b251d \"Add 'principles_needed' to vocab_registry.py, mapping it to the principles action package (f9ba012dfe64) with correct trigger and target_ref.\". failure_detail=Written: /Users/k2invested/Desktop/cors/skills/actions/principles.st\nActivation content refs: ['f693bcad0032b132222938a06d3f52d4615de53e', 'f9ba012dfe64']\nActivation step refs: ['abcc74a74b28', 'dd12fb338b09', 'b2c71533d1c0']",
+        "content_refs": [
+          "ac228a5de401",
+          "f693bcad0032b132222938a06d3f52d4615de53e",
+          "f9ba012dfe64"
+        ],
+        "step_refs": [
+          "abcc74a74b28",
+          "dd12fb338b09",
+          "b2c71533d1c0"
+        ],
+        "scores": {
+          "relevance": 0.91,
+          "confidence": 0.8,
+          "grounded": 0.0
+        },
+        "vocab": "hash_resolve_needed",
+        "vocab_score": 0.0,
+        "turn_id": 5,
+        "package_ref": "ac228a5de401",
+        "package_step_ref": "eb354232cf45",
+        "phase_id": "phase_resolve_failed_log_4",
+        "phase_state": "planned",
+        "transitions": {
+          "on_done": "phase_analyse_and_handoff_fix_5"
+        }
+      },
+      {
+        "hash": "66eb1534389e",
+        "desc": "analyse the failure, propose concrete solutions, and consider dependencies, failure modes, and mitigations; if a code change is warranted, activate hash_edit with the best fix prompt\n\nActivation task: Debug execution failure. rogue_kind=manifest_failure; source=st_builder; original_gap=1a21ee6b251d \"Add 'principles_needed' to vocab_registry.py, mapping it to the principles action package (f9ba012dfe64) with correct trigger and target_ref.\". failure_detail=Written: /Users/k2invested/Desktop/cors/skills/actions/principles.st\nActivation content refs: ['f693bcad0032b132222938a06d3f52d4615de53e', 'f9ba012dfe64']\nActivation step refs: ['abcc74a74b28', 'dd12fb338b09', 'b2c71533d1c0']",
+        "content_refs": [
+          "ac228a5de401",
+          "f693bcad0032b132222938a06d3f52d4615de53e",
+          "f9ba012dfe64"
+        ],
+        "step_refs": [
+          "abcc74a74b28",
+          "dd12fb338b09",
+          "b2c71533d1c0"
+        ],
+        "scores": {
+          "relevance": 0.78,
+          "confidence": 0.8,
+          "grounded": 0.0
+        },
+        "vocab": "reason_needed",
+        "vocab_score": 0.0,
+        "turn_id": 5,
+        "package_ref": "ac228a5de401",
+        "package_step_ref": "eb354232cf45",
+        "phase_id": "phase_analyse_and_handoff_fix_5",
+        "phase_state": "planned",
+        "transitions": {
+          "on_close": "phase_done"
+        }
+      }
+    ],
+    "t": 1775574348.059254,
+    "chain_id": "5da08a4a5c20"
+  },
+  {
+    "hash": "a72af1e374de",
+    "step_refs": [
+      "05f87814ecb0"
+    ],
+    "content_refs": [
+      "ac228a5de401",
+      "f693bcad0032b132222938a06d3f52d4615de53e",
+      "f9ba012dfe64",
+      "7bb8fbc93ee4bc3c5b2c19f9c25be0de71a0e3fb"
+    ],
+    "desc": "```json",
+    "gaps": [
+      {
+        "hash": "f03a488ca053",
+        "desc": "Add 'principles_needed' to vocab_registry.py, mapping it to the principles action package (f9ba012dfe64) with correct trigger and target_ref.",
+        "content_refs": [
+          "f693bcad0032b132222938a06d3f52d4615de53e",
+          "f9ba012dfe64"
+        ],
+        "step_refs": [
+          "abcc74a74b28",
+          "dd12fb338b09",
+          "b2c71533d1c0"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 0.95,
+          "grounded": 0.6666666666666666
+        },
+        "vocab": "reprogramme_needed",
+        "vocab_score": 0.8,
+        "resolved": true,
+        "resolution_kind": "rogue_handoff",
+        "turn_id": 5,
+        "route_mode": "action_editor"
+      }
+    ],
+    "t": 1775574353.685982,
+    "chain_id": "5da08a4a5c20"
+  },
+  {
+    "hash": "f9199216bb81",
+    "step_refs": [
+      "05f87814ecb0"
+    ],
+    "content_refs": [
+      "f693bcad0032b132222938a06d3f52d4615de53e",
+      "f9ba012dfe64"
+    ],
+    "desc": "failed attempt: Add 'principles_needed' to vocab_registry.py, mapping it to the principles action package (f9ba012dfe64) with correct trigger and target_ref.",
+    "gaps": [],
+    "t": 1775574381.3862379,
+    "chain_id": "5da08a4a5c20",
+    "assessment": [
+      "failure_source: st_builder",
+      "failure_detail: Written: /Users/k2invested/Desktop/cors/skills/actions/principles.st"
+    ]
+  },
+  {
+    "hash": "93f33eb1edf5",
+    "step_refs": [
+      "f9199216bb81"
+    ],
+    "content_refs": [
+      "f693bcad0032b132222938a06d3f52d4615de53e",
+      "f9ba012dfe64"
+    ],
+    "desc": "reprogramme failed: Add 'principles_needed' to vocab_registry.py, mapping it to the principles action package (f9ba012dfe64) with correct trigger and target_ref.",
+    "gaps": [
+      {
+        "hash": "c8329892b3eb",
+        "desc": "Diagnose rogue step: classify the failure, determine whether state changed or was reverted, and choose the next safe correction path for manifest_failure from st_builder.",
+        "content_refs": [
+          "f693bcad0032b132222938a06d3f52d4615de53e",
+          "f9ba012dfe64"
+        ],
+        "step_refs": [
+          "f9199216bb81"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 0.9,
+          "grounded": 1.0
+        },
+        "vocab": "reason_needed",
+        "vocab_score": 0.0,
+        "carry_forward": true
+      }
+    ],
+    "t": 1775574381.386317,
+    "chain_id": "5da08a4a5c20",
+    "parent": "f9199216bb81",
+    "rogue": true,
+    "rogue_kind": "manifest_failure",
+    "failure_source": "st_builder",
+    "failure_detail": "Written: /Users/k2invested/Desktop/cors/skills/actions/principles.st\nName: principles\nArtifact kind: action_update\nSteps: 3\nTrigger: on_vocab:principles_needed\n  1. [deterministic] resolve the source files relevant to architecture, runtime,  \u2192 hash_resolve_needed\n  2. [deterministic] resolve PRINCIPLES.md as the only editable surface for this  \u2192 hash_resolve_needed refs:['docs/PRINCIPLES.md']\n  3. [flexible] inspect the resolved source context, the resolved PRINCIPLES \u2192 \u2014 refs:['docs/PRINCIPLES.",
+    "assessment": [
+      "  validator.status: ok",
+      "  structure.artifact_kind: action->action",
+      "  structure.step_count: 3->3",
+      "  continuity.trigger: preserved",
+      "  continuity.identity_binding: none",
+      "  projection.bridge_count: 0->0",
+      "  projection.mutation_count: 0->0",
+      "  projection.post_diff_reentry_points: 1->1",
+      "  grounding.hash_refs: 1->1",
+      "  policy.status: accepted",
+      "  policy.drift: false",
+      "  semantic.drift: true",
+      "  surface.hash_resolve_needed: unchanged (2->2)",
+      "  surface.internal: unchanged (1->1)"
+    ]
+  },
+  {
+    "hash": "93f33eb1edf5",
+    "step_refs": [
+      "f9199216bb81"
+    ],
+    "content_refs": [
+      "f693bcad0032b132222938a06d3f52d4615de53e",
+      "f9ba012dfe64"
+    ],
+    "desc": "reprogramme failed: Add 'principles_needed' to vocab_registry.py, mapping it to the principles action package (f9ba012dfe64) with correct trigger and target_ref.",
+    "gaps": [
+      {
+        "hash": "c8329892b3eb",
+        "desc": "Diagnose rogue step: classify the failure, determine whether state changed or was reverted, and choose the next safe correction path for manifest_failure from st_builder.",
+        "content_refs": [
+          "f693bcad0032b132222938a06d3f52d4615de53e",
+          "f9ba012dfe64"
+        ],
+        "step_refs": [
+          "f9199216bb81"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 0.9,
+          "grounded": 1.0
+        },
+        "vocab": "reason_needed",
+        "vocab_score": 0.0,
+        "carry_forward": true
+      }
+    ],
+    "t": 1775574381.386317,
+    "chain_id": "5da08a4a5c20",
+    "parent": "f9199216bb81",
+    "rogue": true,
+    "rogue_kind": "manifest_failure",
+    "failure_source": "st_builder",
+    "failure_detail": "Written: /Users/k2invested/Desktop/cors/skills/actions/principles.st\nName: principles\nArtifact kind: action_update\nSteps: 3\nTrigger: on_vocab:principles_needed\n  1. [deterministic] resolve the source files relevant to architecture, runtime,  \u2192 hash_resolve_needed\n  2. [deterministic] resolve PRINCIPLES.md as the only editable surface for this  \u2192 hash_resolve_needed refs:['docs/PRINCIPLES.md']\n  3. [flexible] inspect the resolved source context, the resolved PRINCIPLES \u2192 \u2014 refs:['docs/PRINCIPLES.",
+    "assessment": [
+      "  validator.status: ok",
+      "  structure.artifact_kind: action->action",
+      "  structure.step_count: 3->3",
+      "  continuity.trigger: preserved",
+      "  continuity.identity_binding: none",
+      "  projection.bridge_count: 0->0",
+      "  projection.mutation_count: 0->0",
+      "  projection.post_diff_reentry_points: 1->1",
+      "  grounding.hash_refs: 1->1",
+      "  policy.status: accepted",
+      "  policy.drift: false",
+      "  semantic.drift: true",
+      "  surface.hash_resolve_needed: unchanged (2->2)",
+      "  surface.internal: unchanged (1->1)"
+    ]
+  },
+  {
+    "hash": "751a7806df46",
+    "step_refs": [
+      "05f87814ecb0"
+    ],
+    "content_refs": [
+      "f693bcad0032b132222938a06d3f52d4615de53e",
+      "f9ba012dfe64"
+    ],
+    "desc": "```json",
+    "gaps": [
+      {
+        "hash": "e01c954d5a41",
+        "desc": "Classify manifest_failure: st_builder wrote /skills/actions/principles.st but semantic drift detected; registry update for 'principles_needed' in vocab_registry.py may not have occurred or was not persisted.",
+        "content_refs": [
+          "f693bcad0032b132222938a06d3f52d4615de53e",
+          "f9ba012dfe64"
+        ],
+        "step_refs": [
+          "f9199216bb81",
+          "93f33eb1edf5"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 0.95,
+          "grounded": 0.9166666666666666
+        },
+        "vocab": "reason_needed",
+        "vocab_score": 0.8,
+        "turn_id": 5,
+        "route_mode": "action_editor"
+      }
+    ],
+    "t": 1775574401.7849789,
+    "chain_id": "5da08a4a5c20"
+  },
+  {
+    "hash": "51df29494583",
+    "step_refs": [
+      "05f87814ecb0"
+    ],
+    "content_refs": [
+      "f693bcad0032b132222938a06d3f52d4615de53e",
+      "f9ba012dfe64"
+    ],
+    "desc": "```json",
+    "gaps": [
+      {
+        "hash": "d7633d8c0ab9",
+        "desc": "Edit vocab_registry.py to add 'principles_needed', mapping it to the principles action package (f9ba012dfe64) with correct trigger and target_ref.",
+        "content_refs": [
+          "f693bcad0032b132222938a06d3f52d4615de53e",
+          "f9ba012dfe64"
+        ],
+        "step_refs": [
+          "f9199216bb81",
+          "93f33eb1edf5"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 0.98,
+          "grounded": 1.0
+        },
+        "vocab": "reprogramme_needed",
+        "vocab_score": 0.8,
+        "resolved": true,
+        "resolution_kind": "rogue_handoff",
+        "turn_id": 5,
+        "route_mode": "action_editor"
+      }
+    ],
+    "t": 1775574457.290316,
+    "chain_id": "5da08a4a5c20"
+  },
+  {
+    "hash": "70066cdff335",
+    "step_refs": [
+      "05f87814ecb0"
+    ],
+    "content_refs": [
+      "f693bcad0032b132222938a06d3f52d4615de53e",
+      "f9ba012dfe64"
+    ],
+    "desc": "failed attempt: Edit vocab_registry.py to add 'principles_needed', mapping it to the principles action package (f9ba012dfe64) with correct trigger and target_ref.",
+    "gaps": [],
+    "t": 1775574556.11065,
+    "chain_id": "5da08a4a5c20",
+    "assessment": [
+      "failure_source: st_builder",
+      "failure_detail: Written: /Users/k2invested/Desktop/cors/skills/actions/principles.st"
+    ]
+  },
+  {
+    "hash": "59c6213cdbc3",
+    "step_refs": [
+      "70066cdff335"
+    ],
+    "content_refs": [
+      "f693bcad0032b132222938a06d3f52d4615de53e",
+      "f9ba012dfe64"
+    ],
+    "desc": "reprogramme failed: Edit vocab_registry.py to add 'principles_needed', mapping it to the principles action package (f9ba012dfe64) with correct trigger and target_ref.",
+    "gaps": [
+      {
+        "hash": "ce2c92363e99",
+        "desc": "Diagnose rogue step: classify the failure, determine whether state changed or was reverted, and choose the next safe correction path for manifest_failure from st_builder.",
+        "content_refs": [
+          "f693bcad0032b132222938a06d3f52d4615de53e",
+          "f9ba012dfe64"
+        ],
+        "step_refs": [
+          "70066cdff335"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 0.9,
+          "grounded": 1.0
+        },
+        "vocab": "reason_needed",
+        "vocab_score": 0.0,
+        "carry_forward": true
+      }
+    ],
+    "t": 1775574556.110733,
+    "chain_id": "5da08a4a5c20",
+    "parent": "70066cdff335",
+    "rogue": true,
+    "rogue_kind": "manifest_failure",
+    "failure_source": "st_builder",
+    "failure_detail": "Written: /Users/k2invested/Desktop/cors/skills/actions/principles.st\nName: principles\nArtifact kind: action_update\nSteps: 3\nTrigger: on_vocab:principles_needed\n  1. [deterministic] resolve the source files relevant to architecture, runtime,  \u2192 hash_resolve_needed\n  2. [deterministic] resolve PRINCIPLES.md as the only editable surface for this  \u2192 hash_resolve_needed refs:['docs/PRINCIPLES.md']\n  3. [flexible] inspect the resolved source context, the resolved PRINCIPLES \u2192 \u2014 refs:['docs/PRINCIPLES.",
+    "assessment": [
+      "  validator.status: ok",
+      "  structure.artifact_kind: action->action",
+      "  structure.step_count: 3->3",
+      "  continuity.trigger: preserved",
+      "  continuity.identity_binding: none",
+      "  projection.bridge_count: 0->0",
+      "  projection.mutation_count: 0->0",
+      "  projection.post_diff_reentry_points: 1->1",
+      "  grounding.hash_refs: 1->1",
+      "  policy.status: accepted",
+      "  policy.drift: false",
+      "  semantic.drift: true",
+      "  surface.hash_resolve_needed: unchanged (2->2)",
+      "  surface.internal: unchanged (1->1)"
+    ]
+  },
+  {
+    "hash": "59c6213cdbc3",
+    "step_refs": [
+      "70066cdff335"
+    ],
+    "content_refs": [
+      "f693bcad0032b132222938a06d3f52d4615de53e",
+      "f9ba012dfe64"
+    ],
+    "desc": "reprogramme failed: Edit vocab_registry.py to add 'principles_needed', mapping it to the principles action package (f9ba012dfe64) with correct trigger and target_ref.",
+    "gaps": [
+      {
+        "hash": "ce2c92363e99",
+        "desc": "Diagnose rogue step: classify the failure, determine whether state changed or was reverted, and choose the next safe correction path for manifest_failure from st_builder.",
+        "content_refs": [
+          "f693bcad0032b132222938a06d3f52d4615de53e",
+          "f9ba012dfe64"
+        ],
+        "step_refs": [
+          "70066cdff335"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 0.9,
+          "grounded": 1.0
+        },
+        "vocab": "reason_needed",
+        "vocab_score": 0.0,
+        "carry_forward": true
+      }
+    ],
+    "t": 1775574556.110733,
+    "chain_id": "5da08a4a5c20",
+    "parent": "70066cdff335",
+    "rogue": true,
+    "rogue_kind": "manifest_failure",
+    "failure_source": "st_builder",
+    "failure_detail": "Written: /Users/k2invested/Desktop/cors/skills/actions/principles.st\nName: principles\nArtifact kind: action_update\nSteps: 3\nTrigger: on_vocab:principles_needed\n  1. [deterministic] resolve the source files relevant to architecture, runtime,  \u2192 hash_resolve_needed\n  2. [deterministic] resolve PRINCIPLES.md as the only editable surface for this  \u2192 hash_resolve_needed refs:['docs/PRINCIPLES.md']\n  3. [flexible] inspect the resolved source context, the resolved PRINCIPLES \u2192 \u2014 refs:['docs/PRINCIPLES.",
+    "assessment": [
+      "  validator.status: ok",
+      "  structure.artifact_kind: action->action",
+      "  structure.step_count: 3->3",
+      "  continuity.trigger: preserved",
+      "  continuity.identity_binding: none",
+      "  projection.bridge_count: 0->0",
+      "  projection.mutation_count: 0->0",
+      "  projection.post_diff_reentry_points: 1->1",
+      "  grounding.hash_refs: 1->1",
+      "  policy.status: accepted",
+      "  policy.drift: false",
+      "  semantic.drift: true",
+      "  surface.hash_resolve_needed: unchanged (2->2)",
+      "  surface.internal: unchanged (1->1)"
+    ]
+  },
+  {
+    "hash": "65fc3d3f2068",
+    "step_refs": [
+      "05f87814ecb0"
+    ],
+    "content_refs": [
+      "f693bcad0032b132222938a06d3f52d4615de53e",
+      "f9ba012dfe64"
+    ],
+    "desc": "```json",
+    "gaps": [
+      {
+        "hash": "ab767a240e2a",
+        "desc": "Manual intervention required: repeated manifest_failure from st_builder when editing vocab_registry.py to add 'principles_needed'. Automated attempts failed; diagnose for file system issues, permissions, or conflicting process locks.",
+        "content_refs": [
+          "f693bcad0032b132222938a06d3f52d4615de53e",
+          "f9ba012dfe64"
+        ],
+        "step_refs": [
+          "70066cdff335",
+          "59c6213cdbc3"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 0.9,
+          "grounded": 1.0
+        },
+        "vocab": "reason_needed",
+        "vocab_score": 0.8,
+        "turn_id": 5
+      }
+    ],
+    "t": 1775574593.585485,
+    "chain_id": "5da08a4a5c20"
+  },
+  {
+    "hash": "2b5c4ae1fb06",
+    "step_refs": [
+      "05f87814ecb0"
+    ],
+    "content_refs": [
+      "f693bcad0032b132222938a06d3f52d4615de53e",
+      "f9ba012dfe64"
+    ],
+    "desc": "```json",
+    "gaps": [
+      {
+        "hash": "d3d1066c8da0",
+        "desc": "Surface clarify_needed: user must check for file system issues, permissions, or process locks on vocab_registry.py before further automated attempts can proceed.",
+        "content_refs": [
+          "f693bcad0032b132222938a06d3f52d4615de53e"
+        ],
+        "step_refs": [
+          "70066cdff335",
+          "59c6213cdbc3"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 0.95,
+          "grounded": 1.0
+        },
+        "vocab": "clarify_needed",
+        "vocab_score": 0.8,
+        "turn_id": 5
+      }
+    ],
+    "t": 1775574628.402386,
+    "chain_id": "5da08a4a5c20"
+  },
+  {
+    "hash": "5a23966c7dbc",
+    "step_refs": [
+      "05f87814ecb0",
+      "70066cdff335",
+      "59c6213cdbc3"
+    ],
+    "content_refs": [
+      "f693bcad0032b132222938a06d3f52d4615de53e"
+    ],
+    "desc": "clarify frontier: Surface clarify_needed: user must check for file system issues, permissions, or process locks on vocab_registry.py before further automated attempts can proceed.",
+    "gaps": [
+      {
+        "hash": "d3d1066c8da0",
+        "desc": "Surface clarify_needed: user must check for file system issues, permissions, or process locks on vocab_registry.py before further automated attempts can proceed.",
+        "content_refs": [
+          "f693bcad0032b132222938a06d3f52d4615de53e"
+        ],
+        "step_refs": [
+          "70066cdff335",
+          "59c6213cdbc3"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 0.95,
+          "grounded": 1.0
+        },
+        "vocab": "clarify_needed",
+        "vocab_score": 0.8,
+        "turn_id": 5
+      }
+    ],
+    "t": 1775574640.497922,
+    "chain_id": "5da08a4a5c20"
+  },
+  {
+    "hash": "09a05374a884",
+    "step_refs": [
+      "6b0ad1c462e9",
+      "f91163056252",
+      "be0926d566d9"
+    ],
+    "content_refs": [
+      "ac228a5de401",
+      "b20883d07f48",
+      "bfa1a96aea7c"
+    ],
+    "desc": "child activation:ac228a5de401",
+    "gaps": [
+      {
+        "hash": "01ead0717191",
+        "desc": "Debug execution failure. rogue_kind=validation_error; source=st_builder; original_gap=eca4a6692f34 \"Edit tinchy_stryka.st to update Discord entity with Clinton's canonical info.\". failure_detail=Validation errors:",
+        "content_refs": [
+          "ac228a5de401",
+          "b20883d07f48",
+          "bfa1a96aea7c"
+        ],
+        "step_refs": [
+          "6b0ad1c462e9",
+          "f91163056252",
+          "be0926d566d9"
+        ],
+        "scores": {
+          "relevance": 0.0,
+          "confidence": 0.0,
+          "grounded": 0.0
+        },
+        "resolved": true,
+        "turn_id": 4
+      }
+    ],
+    "t": 1775595998.6077702
+  },
+  {
+    "hash": "96e3f7b43642",
+    "step_refs": [
+      "09a05374a884"
+    ],
+    "content_refs": [
+      "4e22c815bf2b",
+      "ac228a5de401",
+      "b20883d07f48",
+      "bfa1a96aea7c"
+    ],
+    "desc": "activated workflow:ac228a5de401 for Debug execution failure. rogue_kind=validation_error; source=st_builder; original_gap=eca4a6692f34 \"Edit tinchy_stryka.st to update Discord entity with Clinton's canonical info.\". failure_detail=Validation errors: | task:Debug execution failure. rogue_kind=validation_error; source=st_builder; original_gap=eca4a6692f34 \"Edit tinchy_stryka.st to update Discord entity with Clinton's canonical info.\". failure_detail=Validation errors:",
+    "gaps": [
+      {
+        "hash": "ff8c58a00ef1",
+        "desc": "resolve PRINCIPLES.md before debugging so the analysis stays grounded in current system laws\n\nActivation task: Debug execution failure. rogue_kind=validation_error; source=st_builder; original_gap=eca4a6692f34 \"Edit tinchy_stryka.st to update Discord entity with Clinton's canonical info.\". failure_detail=Validation errors:\nActivation content refs: ['b20883d07f48', 'bfa1a96aea7c']\nActivation step refs: ['6b0ad1c462e9', 'f91163056252', 'be0926d566d9']",
+        "content_refs": [
+          "ac228a5de401",
+          "b20883d07f48",
+          "bfa1a96aea7c",
+          "docs/PRINCIPLES.md"
+        ],
+        "step_refs": [
+          "6b0ad1c462e9",
+          "f91163056252",
+          "be0926d566d9"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 0.8,
+          "grounded": 0.8095238095238095
+        },
+        "vocab": "hash_resolve_needed",
+        "vocab_score": 0.0,
+        "turn_id": 4,
+        "package_ref": "ac228a5de401",
+        "package_step_ref": "96e3f7b43642",
+        "phase_id": "phase_resolve_principles_1",
+        "phase_state": "active",
+        "transitions": {
+          "on_done": "phase_resolve_source_2"
+        }
+      },
+      {
+        "hash": "291e051f95cb",
+        "desc": "resolve the attached source code files implicated in the failure from activation content refs\n\nActivation task: Debug execution failure. rogue_kind=validation_error; source=st_builder; original_gap=eca4a6692f34 \"Edit tinchy_stryka.st to update Discord entity with Clinton's canonical info.\". failure_detail=Validation errors:\nActivation content refs: ['b20883d07f48', 'bfa1a96aea7c']\nActivation step refs: ['6b0ad1c462e9', 'f91163056252', 'be0926d566d9']",
+        "content_refs": [
+          "ac228a5de401",
+          "b20883d07f48",
+          "bfa1a96aea7c"
+        ],
+        "step_refs": [
+          "6b0ad1c462e9",
+          "f91163056252",
+          "be0926d566d9"
+        ],
+        "scores": {
+          "relevance": 0.97,
+          "confidence": 0.8,
+          "grounded": 0.0
+        },
+        "vocab": "hash_resolve_needed",
+        "vocab_score": 0.0,
+        "turn_id": 4,
+        "package_ref": "ac228a5de401",
+        "package_step_ref": "96e3f7b43642",
+        "phase_id": "phase_resolve_source_2",
+        "phase_state": "planned",
+        "transitions": {
+          "on_done": "phase_resolve_turn_tree_3"
+        }
+      },
+      {
+        "hash": "4b1c2d98a131",
+        "desc": "resolve the attached turn semantic tree and nearby failing steps from activation step refs\n\nActivation task: Debug execution failure. rogue_kind=validation_error; source=st_builder; original_gap=eca4a6692f34 \"Edit tinchy_stryka.st to update Discord entity with Clinton's canonical info.\". failure_detail=Validation errors:\nActivation content refs: ['b20883d07f48', 'bfa1a96aea7c']\nActivation step refs: ['6b0ad1c462e9', 'f91163056252', 'be0926d566d9']",
+        "content_refs": [
+          "ac228a5de401",
+          "b20883d07f48",
+          "bfa1a96aea7c"
+        ],
+        "step_refs": [
+          "6b0ad1c462e9",
+          "f91163056252",
+          "be0926d566d9"
+        ],
+        "scores": {
+          "relevance": 0.94,
+          "confidence": 0.8,
+          "grounded": 0.0
+        },
+        "vocab": "hash_resolve_needed",
+        "vocab_score": 0.0,
+        "turn_id": 4,
+        "package_ref": "ac228a5de401",
+        "package_step_ref": "96e3f7b43642",
+        "phase_id": "phase_resolve_turn_tree_3",
+        "phase_state": "planned",
+        "transitions": {
+          "on_done": "phase_resolve_failed_log_4"
+        }
+      },
+      {
+        "hash": "5764d9344a1a",
+        "desc": "resolve the failed turn output log and any attached failure artifacts from activation content refs\n\nActivation task: Debug execution failure. rogue_kind=validation_error; source=st_builder; original_gap=eca4a6692f34 \"Edit tinchy_stryka.st to update Discord entity with Clinton's canonical info.\". failure_detail=Validation errors:\nActivation content refs: ['b20883d07f48', 'bfa1a96aea7c']\nActivation step refs: ['6b0ad1c462e9', 'f91163056252', 'be0926d566d9']",
+        "content_refs": [
+          "ac228a5de401",
+          "b20883d07f48",
+          "bfa1a96aea7c"
+        ],
+        "step_refs": [
+          "6b0ad1c462e9",
+          "f91163056252",
+          "be0926d566d9"
+        ],
+        "scores": {
+          "relevance": 0.91,
+          "confidence": 0.8,
+          "grounded": 0.0
+        },
+        "vocab": "hash_resolve_needed",
+        "vocab_score": 0.0,
+        "turn_id": 4,
+        "package_ref": "ac228a5de401",
+        "package_step_ref": "96e3f7b43642",
+        "phase_id": "phase_resolve_failed_log_4",
+        "phase_state": "planned",
+        "transitions": {
+          "on_done": "phase_analyse_and_handoff_fix_5"
+        }
+      },
+      {
+        "hash": "b029fc8bcbad",
+        "desc": "analyse the failure, propose concrete solutions, and consider dependencies, failure modes, and mitigations; if a code change is warranted, activate hash_edit with the best fix prompt\n\nActivation task: Debug execution failure. rogue_kind=validation_error; source=st_builder; original_gap=eca4a6692f34 \"Edit tinchy_stryka.st to update Discord entity with Clinton's canonical info.\". failure_detail=Validation errors:\nActivation content refs: ['b20883d07f48', 'bfa1a96aea7c']\nActivation step refs: ['6b0ad1c462e9', 'f91163056252', 'be0926d566d9']",
+        "content_refs": [
+          "ac228a5de401",
+          "b20883d07f48",
+          "bfa1a96aea7c"
+        ],
+        "step_refs": [
+          "6b0ad1c462e9",
+          "f91163056252",
+          "be0926d566d9"
+        ],
+        "scores": {
+          "relevance": 0.78,
+          "confidence": 0.8,
+          "grounded": 0.0
+        },
+        "vocab": "reason_needed",
+        "vocab_score": 0.0,
+        "turn_id": 4,
+        "package_ref": "ac228a5de401",
+        "package_step_ref": "96e3f7b43642",
+        "phase_id": "phase_analyse_and_handoff_fix_5",
+        "phase_state": "planned",
+        "transitions": {
+          "on_close": "phase_done"
+        }
+      }
+    ],
+    "t": 1775595998.6077938,
+    "chain_id": "8f8ec679a8c9"
+  },
+  {
+    "hash": "9392bca052dd",
+    "step_refs": [
+      "09a05374a884"
+    ],
+    "content_refs": [
+      "ac228a5de401",
+      "b20883d07f48",
+      "bfa1a96aea7c",
+      "7bb8fbc93ee4bc3c5b2c19f9c25be0de71a0e3fb"
+    ],
+    "desc": "```json",
+    "gaps": [
+      {
+        "hash": "9a04c129d68e",
+        "desc": "Analyse validation error and determine required fix to update tinchy_stryka.st with Clinton's canonical info; surface reprogramme_needed for semantic persistence if warranted.",
+        "content_refs": [
+          "b20883d07f48",
+          "bfa1a96aea7c"
+        ],
+        "step_refs": [
+          "6b0ad1c462e9",
+          "f91163056252",
+          "be0926d566d9"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 0.95,
+          "grounded": 0.6666666666666666
+        },
+        "vocab": "reason_needed",
+        "vocab_score": 0.8,
+        "resolved": true,
+        "turn_id": 4
+      }
+    ],
+    "t": 1775596004.319319,
+    "chain_id": "8f8ec679a8c9"
+  },
+  {
+    "hash": "ab5eb471d1c5",
+    "step_refs": [
+      "09a05374a884"
+    ],
+    "content_refs": [
+      "b20883d07f48",
+      "bfa1a96aea7c"
+    ],
+    "desc": "```json\n[",
+    "gaps": [],
+    "t": 1775596012.471918,
+    "chain_id": "8f8ec679a8c9"
+  },
+  {
+    "hash": "6853610f0e36",
+    "step_refs": [
+      "96e3f7b43642"
+    ],
+    "content_refs": [
+      "ac228a5de401",
+      "8f8ec679a8c9"
+    ],
+    "desc": "commit: reintegrate child workflow ac228a5de401",
+    "gaps": [],
+    "t": 1775596015.246646,
+    "chain_id": "8f8ec679a8c9"
+  },
+  {
+    "hash": "ecd828c17116",
+    "step_refs": [
+      "fe6abd9d10d3",
+      "b6882839be44",
+      "4f51a7dfdee5"
+    ],
+    "content_refs": [
+      "ac228a5de401",
+      "4c140e0ccafb"
+    ],
+    "desc": "child activation:ac228a5de401",
+    "gaps": [
+      {
+        "hash": "c102ad2eb34e",
+        "desc": "Debug execution failure. rogue_kind=manifest_failure; source=st_builder; original_gap=ab1867bda30f \"Delete skills/entities/clinton.st from the workspace to fully remove the file after all references and semantic links have been updated.\". failure_detail=Written: /Users/k2invested/Desktop/cors/skills/entities/clinton.st",
+        "content_refs": [
+          "ac228a5de401",
+          "4c140e0ccafb"
+        ],
+        "step_refs": [
+          "fe6abd9d10d3",
+          "b6882839be44",
+          "4f51a7dfdee5"
+        ],
+        "scores": {
+          "relevance": 0.0,
+          "confidence": 0.0,
+          "grounded": 0.0
+        },
+        "resolved": true,
+        "turn_id": 3
+      }
+    ],
+    "t": 1775649010.942971
+  },
+  {
+    "hash": "bedff84b6006",
+    "step_refs": [
+      "ecd828c17116"
+    ],
+    "content_refs": [
+      "4e22c815bf2b",
+      "ac228a5de401",
+      "4c140e0ccafb"
+    ],
+    "desc": "activated workflow:ac228a5de401 for Debug execution failure. rogue_kind=manifest_failure; source=st_builder; original_gap=ab1867bda30f \"Delete skills/entities/clinton.st from the workspace to fully remove the file after all references and semantic links have been updated.\". failure_detail=Written: /Users/k2invested/Desktop/cors/skills/entities/clinton.st | task:Debug execution failure. rogue_kind=manifest_failure; source=st_builder; original_gap=ab1867bda30f \"Delete skills/entities/clinton.st from the workspace to fully remove the file after all references and semantic links have been updated.\". failure_detail=Written: /Users/k2invested/Desktop/cors/skills/entities/clinton.st",
+    "gaps": [
+      {
+        "hash": "8baad2ae7f16",
+        "desc": "resolve PRINCIPLES.md before debugging so the analysis stays grounded in current system laws\n\nActivation task: Debug execution failure. rogue_kind=manifest_failure; source=st_builder; original_gap=ab1867bda30f \"Delete skills/entities/clinton.st from the workspace to fully remove the file after all references and semantic links have been updated.\". failure_detail=Written: /Users/k2invested/Desktop/cors/skills/entities/clinton.st\nActivation content refs: ['4c140e0ccafb']\nActivation step refs: ['fe6abd9d10d3', 'b6882839be44', '4f51a7dfdee5']",
+        "content_refs": [
+          "ac228a5de401",
+          "4c140e0ccafb",
+          "docs/PRINCIPLES.md"
+        ],
+        "step_refs": [
+          "fe6abd9d10d3",
+          "b6882839be44",
+          "4f51a7dfdee5"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 0.8,
+          "grounded": 1.0
+        },
+        "vocab": "hash_resolve_needed",
+        "vocab_score": 0.0,
+        "turn_id": 3,
+        "package_ref": "ac228a5de401",
+        "package_step_ref": "bedff84b6006",
+        "phase_id": "phase_resolve_principles_1",
+        "phase_state": "active",
+        "transitions": {
+          "on_done": "phase_resolve_source_2"
+        }
+      },
+      {
+        "hash": "9272ffe2fd6c",
+        "desc": "resolve the attached source code files implicated in the failure from activation content refs\n\nActivation task: Debug execution failure. rogue_kind=manifest_failure; source=st_builder; original_gap=ab1867bda30f \"Delete skills/entities/clinton.st from the workspace to fully remove the file after all references and semantic links have been updated.\". failure_detail=Written: /Users/k2invested/Desktop/cors/skills/entities/clinton.st\nActivation content refs: ['4c140e0ccafb']\nActivation step refs: ['fe6abd9d10d3', 'b6882839be44', '4f51a7dfdee5']",
+        "content_refs": [
+          "ac228a5de401",
+          "4c140e0ccafb"
+        ],
+        "step_refs": [
+          "fe6abd9d10d3",
+          "b6882839be44",
+          "4f51a7dfdee5"
+        ],
+        "scores": {
+          "relevance": 0.97,
+          "confidence": 0.8,
+          "grounded": 0.0
+        },
+        "vocab": "hash_resolve_needed",
+        "vocab_score": 0.0,
+        "turn_id": 3,
+        "package_ref": "ac228a5de401",
+        "package_step_ref": "bedff84b6006",
+        "phase_id": "phase_resolve_source_2",
+        "phase_state": "planned",
+        "transitions": {
+          "on_done": "phase_resolve_turn_tree_3"
+        }
+      },
+      {
+        "hash": "94fef9206d1c",
+        "desc": "resolve the attached turn semantic tree and nearby failing steps from activation step refs\n\nActivation task: Debug execution failure. rogue_kind=manifest_failure; source=st_builder; original_gap=ab1867bda30f \"Delete skills/entities/clinton.st from the workspace to fully remove the file after all references and semantic links have been updated.\". failure_detail=Written: /Users/k2invested/Desktop/cors/skills/entities/clinton.st\nActivation content refs: ['4c140e0ccafb']\nActivation step refs: ['fe6abd9d10d3', 'b6882839be44', '4f51a7dfdee5']",
+        "content_refs": [
+          "ac228a5de401",
+          "4c140e0ccafb"
+        ],
+        "step_refs": [
+          "fe6abd9d10d3",
+          "b6882839be44",
+          "4f51a7dfdee5"
+        ],
+        "scores": {
+          "relevance": 0.94,
+          "confidence": 0.8,
+          "grounded": 0.0
+        },
+        "vocab": "hash_resolve_needed",
+        "vocab_score": 0.0,
+        "turn_id": 3,
+        "package_ref": "ac228a5de401",
+        "package_step_ref": "bedff84b6006",
+        "phase_id": "phase_resolve_turn_tree_3",
+        "phase_state": "planned",
+        "transitions": {
+          "on_done": "phase_resolve_failed_log_4"
+        }
+      },
+      {
+        "hash": "efc67667fe26",
+        "desc": "resolve the failed turn output log and any attached failure artifacts from activation content refs\n\nActivation task: Debug execution failure. rogue_kind=manifest_failure; source=st_builder; original_gap=ab1867bda30f \"Delete skills/entities/clinton.st from the workspace to fully remove the file after all references and semantic links have been updated.\". failure_detail=Written: /Users/k2invested/Desktop/cors/skills/entities/clinton.st\nActivation content refs: ['4c140e0ccafb']\nActivation step refs: ['fe6abd9d10d3', 'b6882839be44', '4f51a7dfdee5']",
+        "content_refs": [
+          "ac228a5de401",
+          "4c140e0ccafb"
+        ],
+        "step_refs": [
+          "fe6abd9d10d3",
+          "b6882839be44",
+          "4f51a7dfdee5"
+        ],
+        "scores": {
+          "relevance": 0.91,
+          "confidence": 0.8,
+          "grounded": 0.0
+        },
+        "vocab": "hash_resolve_needed",
+        "vocab_score": 0.0,
+        "turn_id": 3,
+        "package_ref": "ac228a5de401",
+        "package_step_ref": "bedff84b6006",
+        "phase_id": "phase_resolve_failed_log_4",
+        "phase_state": "planned",
+        "transitions": {
+          "on_done": "phase_analyse_and_handoff_fix_5"
+        }
+      },
+      {
+        "hash": "4b47f296bd6a",
+        "desc": "analyse the failure, propose concrete solutions, and consider dependencies, failure modes, and mitigations; if a code change is warranted, activate hash_edit with the best fix prompt\n\nActivation task: Debug execution failure. rogue_kind=manifest_failure; source=st_builder; original_gap=ab1867bda30f \"Delete skills/entities/clinton.st from the workspace to fully remove the file after all references and semantic links have been updated.\". failure_detail=Written: /Users/k2invested/Desktop/cors/skills/entities/clinton.st\nActivation content refs: ['4c140e0ccafb']\nActivation step refs: ['fe6abd9d10d3', 'b6882839be44', '4f51a7dfdee5']",
+        "content_refs": [
+          "ac228a5de401",
+          "4c140e0ccafb"
+        ],
+        "step_refs": [
+          "fe6abd9d10d3",
+          "b6882839be44",
+          "4f51a7dfdee5"
+        ],
+        "scores": {
+          "relevance": 0.78,
+          "confidence": 0.8,
+          "grounded": 0.0
+        },
+        "vocab": "reason_needed",
+        "vocab_score": 0.0,
+        "turn_id": 3,
+        "package_ref": "ac228a5de401",
+        "package_step_ref": "bedff84b6006",
+        "phase_id": "phase_analyse_and_handoff_fix_5",
+        "phase_state": "planned",
+        "transitions": {
+          "on_close": "phase_done"
+        }
+      }
+    ],
+    "t": 1775649010.942998,
+    "chain_id": "92cb4223e434"
+  },
+  {
+    "hash": "bcddd5913ae6",
+    "step_refs": [
+      "ecd828c17116"
+    ],
+    "content_refs": [
+      "ac228a5de401",
+      "4c140e0ccafb",
+      "0ba18be932d893102c75b07d4e695093c4da9ab5"
+    ],
+    "desc": "```json",
+    "gaps": [
+      {
+        "hash": "e43cf4c40974",
+        "desc": "Resolve the source for the failed execution: gather the current state of skills/entities/clinton.st and any references or semantic links to it before proceeding with deletion.",
+        "content_refs": [
+          "4c140e0ccafb"
+        ],
+        "step_refs": [
+          "fe6abd9d10d3",
+          "b6882839be44",
+          "4f51a7dfdee5"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 1.0,
+          "grounded": 0.6666666666666666
+        },
+        "vocab": "hash_resolve_needed",
+        "vocab_score": 0.8,
+        "turn_id": 3
+      }
+    ],
+    "t": 1775649014.730679,
+    "chain_id": "92cb4223e434"
+  },
+  {
+    "hash": "5e5c6afaf821",
+    "step_refs": [
+      "ecd828c17116"
+    ],
+    "content_refs": [
+      "4c140e0ccafb"
+    ],
+    "desc": "```json",
+    "gaps": [
+      {
+        "hash": "04689596a510",
+        "desc": "Delete skills/entities/clinton.st from the workspace to fully remove the file after all references and semantic links have been updated.",
+        "content_refs": [
+          "4c140e0ccafb"
+        ],
+        "step_refs": [
+          "fe6abd9d10d3",
+          "b6882839be44",
+          "4f51a7dfdee5"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 1.0,
+          "grounded": 1.0
+        },
+        "vocab": "reprogramme_needed",
+        "vocab_score": 0.8,
+        "resolved": true,
+        "resolution_kind": "rogue_handoff",
+        "turn_id": 3
+      }
+    ],
+    "t": 1775649018.28661,
+    "chain_id": "92cb4223e434"
+  },
+  {
+    "hash": "b4b570586f04",
+    "step_refs": [
+      "ecd828c17116"
+    ],
+    "content_refs": [
+      "4c140e0ccafb"
+    ],
+    "desc": "failed attempt: Delete skills/entities/clinton.st from the workspace to fully remove the file after all references and semantic links have been updated.",
+    "gaps": [],
+    "t": 1775649024.8225029,
+    "chain_id": "92cb4223e434",
+    "assessment": [
+      "failure_source: st_builder",
+      "failure_detail: Written: /Users/k2invested/Desktop/cors/skills/entities/clinton.st"
+    ]
+  },
+  {
+    "hash": "be11822d6852",
+    "step_refs": [
+      "b4b570586f04"
+    ],
+    "content_refs": [
+      "4c140e0ccafb"
+    ],
+    "desc": "reprogramme failed: Delete skills/entities/clinton.st from the workspace to fully remove the file after all references and semantic links have been updated.",
+    "gaps": [
+      {
+        "hash": "9cb2573b9687",
+        "desc": "Diagnose rogue step: classify the failure, determine whether state changed or was reverted, and choose the next safe correction path for manifest_failure from st_builder.",
+        "content_refs": [
+          "4c140e0ccafb"
+        ],
+        "step_refs": [
+          "b4b570586f04"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 0.9,
+          "grounded": 1.0
+        },
+        "vocab": "reason_needed",
+        "vocab_score": 0.0,
+        "carry_forward": true
+      }
+    ],
+    "t": 1775649024.822556,
+    "chain_id": "92cb4223e434",
+    "parent": "b4b570586f04",
+    "rogue": true,
+    "rogue_kind": "manifest_failure",
+    "failure_source": "st_builder",
+    "failure_detail": "Written: /Users/k2invested/Desktop/cors/skills/entities/clinton.st\nName: clinton\nArtifact kind: entity\nSteps: 2\nTrigger: on_contact:admin | manual\n  1. [deterministic] surface identity context for clinton \u2192 \u2014 refs:['identity']\n  2. [deterministic] surface preferences context for clinton \u2192 \u2014 refs:['preferences']",
+    "assessment": [
+      "  validator.status: ok",
+      "  structure.artifact_kind: entity->entity",
+      "  structure.step_count: 2->2",
+      "  continuity.trigger: preserved",
+      "  continuity.identity_binding: none",
+      "  projection.bridge_count: 0->0",
+      "  projection.mutation_count: 0->0",
+      "  projection.post_diff_reentry_points: 0->0",
+      "  grounding.hash_refs: 2->2",
+      "  policy.status: accepted",
+      "  policy.drift: false",
+      "  semantic.drift: true",
+      "  surface.hash_resolve_needed: unchanged (2->2)"
+    ]
+  },
+  {
+    "hash": "be11822d6852",
+    "step_refs": [
+      "b4b570586f04"
+    ],
+    "content_refs": [
+      "4c140e0ccafb"
+    ],
+    "desc": "reprogramme failed: Delete skills/entities/clinton.st from the workspace to fully remove the file after all references and semantic links have been updated.",
+    "gaps": [
+      {
+        "hash": "9cb2573b9687",
+        "desc": "Diagnose rogue step: classify the failure, determine whether state changed or was reverted, and choose the next safe correction path for manifest_failure from st_builder.",
+        "content_refs": [
+          "4c140e0ccafb"
+        ],
+        "step_refs": [
+          "b4b570586f04"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 0.9,
+          "grounded": 1.0
+        },
+        "vocab": "reason_needed",
+        "vocab_score": 0.0,
+        "carry_forward": true
+      }
+    ],
+    "t": 1775649024.822556,
+    "chain_id": "92cb4223e434",
+    "parent": "b4b570586f04",
+    "rogue": true,
+    "rogue_kind": "manifest_failure",
+    "failure_source": "st_builder",
+    "failure_detail": "Written: /Users/k2invested/Desktop/cors/skills/entities/clinton.st\nName: clinton\nArtifact kind: entity\nSteps: 2\nTrigger: on_contact:admin | manual\n  1. [deterministic] surface identity context for clinton \u2192 \u2014 refs:['identity']\n  2. [deterministic] surface preferences context for clinton \u2192 \u2014 refs:['preferences']",
+    "assessment": [
+      "  validator.status: ok",
+      "  structure.artifact_kind: entity->entity",
+      "  structure.step_count: 2->2",
+      "  continuity.trigger: preserved",
+      "  continuity.identity_binding: none",
+      "  projection.bridge_count: 0->0",
+      "  projection.mutation_count: 0->0",
+      "  projection.post_diff_reentry_points: 0->0",
+      "  grounding.hash_refs: 2->2",
+      "  policy.status: accepted",
+      "  policy.drift: false",
+      "  semantic.drift: true",
+      "  surface.hash_resolve_needed: unchanged (2->2)"
+    ]
+  },
+  {
+    "hash": "046a03cc9839",
+    "step_refs": [
+      "ecd828c17116"
+    ],
+    "content_refs": [
+      "4c140e0ccafb"
+    ],
+    "desc": "```json",
+    "gaps": [
+      {
+        "hash": "10da8c6634e7",
+        "desc": "Delete skills/entities/clinton.st from the workspace using a shell-level operation to ensure the file is fully removed after semantic links have been updated and semantic persistence has failed.",
+        "content_refs": [
+          "4c140e0ccafb"
+        ],
+        "step_refs": [
+          "b4b570586f04",
+          "be11822d6852"
+        ],
+        "scores": {
+          "relevance": 1.0,
+          "confidence": 1.0,
+          "grounded": 0.7777777777777778
+        },
+        "vocab": "reprogramme_needed",
+        "vocab_score": 0.8,
+        "resolved": true,
+        "turn_id": 3,
+        "route_mode": "entity_editor"
+      }
+    ],
+    "t": 1775649031.702365,
+    "chain_id": "92cb4223e434"
+  },
+  {
+    "hash": "2d914420a3b8",
+    "step_refs": [
+      "ecd828c17116"
+    ],
+    "content_refs": [
+      "4c140e0ccafb"
+    ],
+    "desc": "reprogramme skipped: Delete skills/entities/clinton.st from the workspace using a shell-level operation to ensure the file is fully removed after semantic links have been updated and semantic persistence has failed.",
+    "gaps": [],
+    "t": 1775649046.1391869,
+    "chain_id": "92cb4223e434"
+  },
+  {
+    "hash": "cd3745d4365f",
+    "step_refs": [
+      "bedff84b6006"
+    ],
+    "content_refs": [
+      "ac228a5de401",
+      "92cb4223e434"
+    ],
+    "desc": "commit: reintegrate child workflow ac228a5de401",
+    "gaps": [],
+    "t": 1775649047.7330549,
+    "chain_id": "92cb4223e434"
+  }
+]

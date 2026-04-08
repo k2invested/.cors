@@ -1,0 +1,22 @@
+[
+  {
+    "hash": "ac71a998a98e",
+    "origin_gap": "2ba94c968c18",
+    "steps": [
+      "494e53360909",
+      "727eec4596a4",
+      "94f7d5eca421",
+      "b4f7ef93f66e",
+      "952dc31785eb",
+      "e81b8304a6ef",
+      "f9cd72ea84ee"
+    ],
+    "desc": "",
+    "resolved": true,
+    "extracted": true,
+    "store_kind": "background_agent",
+    "activation_ref": "7dbcaa8a10ea",
+    "await_policy": "manual",
+    "signature": "45de67d8a39f"
+  }
+]

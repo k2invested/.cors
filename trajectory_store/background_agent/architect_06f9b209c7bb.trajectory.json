@@ -1,0 +1,34 @@
+[
+  {
+    "hash": "44c573238201",
+    "step_refs": [
+      "1854e1751752"
+    ],
+    "content_refs": [
+      "architect:06f9b209c7bb",
+      "efdcb86"
+    ],
+    "desc": "child activation:architect:06f9b209c7bb",
+    "gaps": [
+      {
+        "hash": "ad8e08bb2567",
+        "desc": "Run architecture analysis: treat the current source as canonical, resolve principles for grounding, audit spec/docs against source, and activate hash_edit only for stale documentation files.",
+        "content_refs": [
+          "architect:06f9b209c7bb",
+          "efdcb86"
+        ],
+        "step_refs": [
+          "1854e1751752"
+        ],
+        "scores": {
+          "relevance": 0.0,
+          "confidence": 0.0,
+          "grounded": 0.0
+        },
+        "resolved": true,
+        "turn_id": 2
+      }
+    ],
+    "t": 1775589014.751884
+  }
+]

@@ -1,0 +1,16 @@
+[
+  {
+    "hash": "300ae77e1d7d",
+    "origin_gap": "ad8e08bb2567",
+    "steps": [
+      "44c573238201"
+    ],
+    "desc": "",
+    "resolved": false,
+    "extracted": false,
+    "store_kind": "background_agent",
+    "activation_ref": "architect:06f9b209c7bb",
+    "await_policy": "manual",
+    "signature": "300ae77e1d7d"
+  }
+]
