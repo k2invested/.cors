@@ -19,7 +19,7 @@ This report reflects the current runtime split:
 | hash_edit_needed | mutate | tool | `da6ab1b8070b` | Public hash mutation primitive. |
 | stitch_needed | mutate | tool | `533639db50a2` | Explicit post-observe to `ui_output/`. |
 | content_needed | mutate | tool | `da6ab1b8070b` | New workspace content through hash manifest. |
-| command_needed | mutate | tool | `52f151625add` | Explicit post-observe to `bot.log`. |
+| bash_needed | mutate | tool | `52f151625add` | Explicit post-observe to `bot.log`. |
 | email_needed | mutate | tool | `0aa81af568e8` | Email/message send with artifact-aware post-observe. |
 | json_patch_needed | mutate | tool | `da6ab1b8070b` | Structured JSON mutation through hash manifest. |
 | git_revert_needed | mutate | tool | `7320bac4d41b` | Git revert operations with commit-aware post-observe. |

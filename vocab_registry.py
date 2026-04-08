@@ -91,8 +91,8 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         target_kind="tool",
         target_ref="20c7462db20c",
     ),
-    "command_needed": VocabSpec(
-        name="command_needed",
+    "bash_needed": VocabSpec(
+        name="bash_needed",
         category="mutate",
         priority=40,
         tool="tools/code_exec.py",

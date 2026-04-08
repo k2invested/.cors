@@ -54,7 +54,7 @@ class TestCheckSteps:
 
     def test_clean_no_background(self):
         """No background or await vocab — returns empty findings."""
-        steps = [step("hash_resolve_needed"), step("command_needed"), step(None)]
+        steps = [step("hash_resolve_needed"), step("bash_needed"), step(None)]
         findings = check_steps(steps)
         assert findings == []
 

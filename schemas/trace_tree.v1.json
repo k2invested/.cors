@@ -58,7 +58,7 @@
         "pattern_needed",
         "hash_edit_needed",
         "content_needed",
-        "command_needed",
+        "bash_needed",
         "reason_needed",
         "vocab_reg_needed",
         "tool_needed",

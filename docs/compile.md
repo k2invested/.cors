@@ -44,7 +44,7 @@ Mutate:
 - `hash_edit_needed`
 - `stitch_needed`
 - `content_needed`
-- `command_needed`
+- `bash_needed`
 - `email_needed`
 - `json_patch_needed`
 - `git_revert_needed`

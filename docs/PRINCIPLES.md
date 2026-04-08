@@ -252,7 +252,7 @@ step
 | `hash_edit_needed` | 40 | Workspace mutation through the hash primitive. |
 | `content_needed` | 40 | New workspace content through the hash primitive. |
 | `stitch_needed` | 40 | UI artifact generation. |
-| `command_needed` | 40 | Shell mutation. |
+| `bash_needed` | 40 | Shell mutation. |
 | `email_needed` | 40 | Email/message send. |
 | `json_patch_needed` | 40 | Structured JSON mutation via hash manifest. |
 | `git_revert_needed` | 40 | Git revert operations. |
@@ -321,7 +321,7 @@ vocab
 │  ├─ hash_edit_needed
 │  ├─ content_needed
 │  ├─ stitch_needed
-│  ├─ command_needed
+│  ├─ bash_needed
 │  ├─ email_needed
 │  ├─ json_patch_needed
 │  └─ git_revert_needed

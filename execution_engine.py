@@ -328,7 +328,7 @@ def _collect_contract_artifact_refs(
 
 
 def _mutate_tool_compose_prompt(*, vocab: str, gap: Gap, tool_path: str, contract: ToolContract | None) -> str:
-    if vocab == "command_needed":
+    if vocab == "bash_needed":
         return (
             f"Compose params for {tool_path} to resolve this gap:\n"
             f"  gap:{gap.hash} \"{gap.desc}\"\n\n"

@@ -415,7 +415,7 @@ P3_CASES = [
     ("mutate_content_needed", lambda: is_mutate("content_needed")),
     ("bridge_tool_needed", lambda: is_bridge("tool_needed")),
     ("bridge_vocab_reg_needed", lambda: is_bridge("vocab_reg_needed")),
-    ("mutate_command_needed", lambda: is_mutate("command_needed")),
+    ("mutate_bash_needed", lambda: is_mutate("bash_needed")),
     ("mutate_email_needed", lambda: is_mutate("email_needed")),
     ("mutate_json_patch_needed", lambda: is_mutate("json_patch_needed")),
     ("mutate_git_revert_needed", lambda: is_mutate("git_revert_needed")),
@@ -437,7 +437,7 @@ P3_CASES = [
     ("tool_needed_not_in_mutate_tool_map", lambda: "tool_needed" not in loop.TOOL_MAP),
     ("vocab_reg_needed_not_in_mutate_tool_map", lambda: "vocab_reg_needed" not in loop.TOOL_MAP),
     ("tool_map_stitch_has_post_observe", lambda: loop.TOOL_MAP["stitch_needed"]["post_observe"] == "ui_output/"),
-    ("tool_map_command_has_log_post_observe", lambda: loop.TOOL_MAP["command_needed"]["post_observe"] == "bot.log"),
+    ("tool_map_bash_has_log_post_observe", lambda: loop.TOOL_MAP["bash_needed"]["post_observe"] == "bot.log"),
     ("priority_observe_before_mutate", lambda: vocab_priority("pattern_needed") < vocab_priority("content_needed")),
     ("priority_mutate_before_reason", lambda: vocab_priority("content_needed") < vocab_priority("reason_needed")),
     ("priority_reason_before_await", lambda: vocab_priority("reason_needed") < vocab_priority("await_needed")),
@@ -574,7 +574,7 @@ P5_CASES = [
     ("pre_diff_prompt_says_content_hashes_enable_context_traversal", lambda: "content hashes are evidence and let you traverse the concrete context attached to that tree" in loop.PRE_DIFF_SYSTEM.lower()),
     ("pre_diff_prompt_distinguishes_step_refs_and_content_refs", lambda: "step refs show the reasoning path you followed" in loop.PRE_DIFF_SYSTEM.lower() and "content refs show the evidence or workspace objects you need" in loop.PRE_DIFF_SYSTEM.lower()),
     ("pre_diff_prompt_restores_scoring_section", lambda: "## Scoring" in loop.PRE_DIFF_SYSTEM and "`relevance` = how directly resolving the gap advances the user's goal." in loop.PRE_DIFF_SYSTEM),
-    ("pre_diff_prompt_names_builtin_abstractions", lambda: "`hash_resolve_needed` = resolve hashes, packages, repo paths, and semantic records into context." in loop.PRE_DIFF_SYSTEM and "`hash_edit_needed` = ordinary workspace file patch/rewrite." in loop.PRE_DIFF_SYSTEM and "`command_needed` = bash execution abstraction for shell-level mutation." in loop.PRE_DIFF_SYSTEM and "`pattern_needed` = deterministic workspace search." in loop.PRE_DIFF_SYSTEM),
+    ("pre_diff_prompt_names_builtin_abstractions", lambda: "`hash_resolve_needed` = resolve hashes, packages, repo paths, and semantic records into context." in loop.PRE_DIFF_SYSTEM and "`hash_edit_needed` = ordinary workspace file patch/rewrite." in loop.PRE_DIFF_SYSTEM and "`bash_needed` = bash execution abstraction for shell-level mutation." in loop.PRE_DIFF_SYSTEM and "`pattern_needed` = deterministic workspace search." in loop.PRE_DIFF_SYSTEM),
     ("pre_diff_prompt_says_custom_surfaces_are_runtime_injected", lambda: "Other observe and mutate surfaces may be injected at runtime through vocab-to-tool or vocab-to-chain routing." in loop.PRE_DIFF_SYSTEM),
     ("admin_truth_model_tracks_trajectory_as_truth", lambda: skill_data("admin")["preferences"]["meta"]["truth_and_causality_model"]["trajectory_is_source_of_truth"] is True),
     ("admin_truth_model_tracks_step_hashes_as_causal_memory", lambda: skill_data("admin")["preferences"]["meta"]["truth_and_causality_model"]["step_hashes_are_causal_memory"] is True),
@@ -2045,7 +2045,7 @@ def test_p12_inline_reprogramme_emits_postcondition_assessment_before_synth():
     assert postconditions[0].gaps[0].vocab == "hash_resolve_needed"
 
 
-def test_p12_command_needed_commit_postcondition_resolves_bot_log(monkeypatch):
+def test_p12_bash_needed_commit_postcondition_resolves_bot_log(monkeypatch):
     class FakeSession:
         def __init__(self):
             self.injected = []
@@ -2066,7 +2066,7 @@ def test_p12_command_needed_commit_postcondition_resolves_bot_log(monkeypatch):
     traj = Trajectory()
     compiler = Compiler(traj)
     origin_step = make_step("origin")
-    gap = make_gap("run test suite", vocab="command_needed")
+    gap = make_gap("run test suite", vocab="bash_needed")
     entry = SimpleNamespace(gap=gap, chain_id="chain1")
     session = FakeSession()
 
@@ -2119,7 +2119,7 @@ def test_p12_command_needed_commit_postcondition_resolves_bot_log(monkeypatch):
     assert postconditions[0].gaps[0].vocab == "hash_resolve_needed"
 
 
-def test_p12_command_needed_without_commit_still_emits_log_postcondition(monkeypatch):
+def test_p12_bash_needed_without_commit_still_emits_log_postcondition(monkeypatch):
     class FakeSession:
         def __init__(self):
             self.injected = []
@@ -2140,7 +2140,7 @@ def test_p12_command_needed_without_commit_still_emits_log_postcondition(monkeyp
     traj = Trajectory()
     compiler = Compiler(traj)
     origin_step = make_step("origin")
-    gap = make_gap("run test suite", vocab="command_needed")
+    gap = make_gap("run test suite", vocab="bash_needed")
     entry = SimpleNamespace(gap=gap, chain_id="chain1")
     session = FakeSession()
 
@@ -3135,9 +3135,9 @@ def test_p12_lower_step_chain_builds_valid_action_spine():
                 },
                 "manifestation": {
                     "execution_mode": "runtime_vocab",
-                    "runtime_vocab": "command_needed",
+                    "runtime_vocab": "bash_needed",
                 },
-                "allowed_vocab": ["command_needed"],
+                "allowed_vocab": ["bash_needed"],
                 "relevance": 1.0,
                 "post_diff": True,
             }
@@ -3151,8 +3151,8 @@ def test_p12_lower_step_chain_builds_valid_action_spine():
     assert lowered["root"] == "run_tests"
     assert lowered["closure"]["success"]["requires_terminal"] == "phase_done"
     assert lowered["phases"][0]["transitions"] == {"on_close": "phase_done"}
-    assert lowered["phases"][0]["manifestation"]["runtime_vocab"] == "command_needed"
-    assert lowered["steps"][0]["vocab"] == "command_needed"
+    assert lowered["phases"][0]["manifestation"]["runtime_vocab"] == "bash_needed"
+    assert lowered["steps"][0]["vocab"] == "bash_needed"
     assert st_builder_module.validate_st(lowered, artifact_kind="action") == []
 
 
@@ -3175,9 +3175,9 @@ def test_p12_manifest_engine_build_semantic_tree_uses_normalized_path_for_step_c
                 },
                 "manifestation": {
                     "execution_mode": "runtime_vocab",
-                    "runtime_vocab": "command_needed",
+                    "runtime_vocab": "bash_needed",
                 },
-                "allowed_vocab": ["command_needed"],
+                "allowed_vocab": ["bash_needed"],
                 "relevance": 1.0,
                 "post_diff": True,
             }
@@ -3189,7 +3189,7 @@ def test_p12_manifest_engine_build_semantic_tree_uses_normalized_path_for_step_c
     assert tree["version"] == "semantic_tree.v1"
     assert tree["package"]["name"] == "test"
     assert tree["package"]["closure"]["success"]["requires_terminal"] == "phase_done"
-    assert tree["nodes"][0]["gap"]["runtime_vocab"] == "command_needed"
+    assert tree["nodes"][0]["gap"]["runtime_vocab"] == "bash_needed"
 
 
 def test_p12_validate_step_chain_intent_rejects_public_trigger_before_top_layer():
@@ -3731,7 +3731,7 @@ def test_p12_validate_st_rejects_nested_phase_steps_for_authored_action():
                 "allowed_vocab": ["reason_needed"],
                 "post_diff": False,
                 "transitions": {"on_close": "phase_done"},
-                "steps": [{"kind": "mutate", "gap": {"vocab": "command_needed"}}],
+                "steps": [{"kind": "mutate", "gap": {"vocab": "bash_needed"}}],
             },
             {"id": "phase_done", "kind": "terminal", "goal": "done", "action": "close_loop", "terminal": True},
         ],
@@ -5928,7 +5928,7 @@ def test_p12_execution_failure_auto_activates_debug(monkeypatch):
     traj = Trajectory()
     compiler = Compiler(traj)
     origin_step = make_step("origin")
-    gap = make_gap("run failing test suite", vocab="command_needed")
+    gap = make_gap("run failing test suite", vocab="bash_needed")
     entry = SimpleNamespace(gap=gap, chain_id="chain1")
     session = FakeSession()
 
@@ -6052,7 +6052,7 @@ def test_p12_protected_path_violation_auto_activates_debug():
 def test_p12_debug_failure_does_not_recursively_activate_debug():
     origin_step = make_step("origin", content_refs=[skill("debug").hash])
     rogue_step = make_step("rogue", content_refs=[skill("debug").hash], step_refs=["attempt"])
-    gap = make_gap("run failing debug verification", vocab="command_needed", content_refs=[skill("debug").hash])
+    gap = make_gap("run failing debug verification", vocab="bash_needed", content_refs=[skill("debug").hash])
 
     payload = execution_engine_module._debug_activation_payload(
         registry=registry(),
