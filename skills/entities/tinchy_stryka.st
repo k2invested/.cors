@@ -11,6 +11,20 @@
     "lineage": "tinchy.stryka",
     "version_strategy": "hash_pinned"
   },
+  "access_rules": {
+    "observe": true,
+    "reprogramme": true,
+    "compile": false,
+    "activate_existing": false,
+    "mutate": false
+  },
+  "init": {
+    "status": "pending",
+    "mode": "first_contact",
+    "ask_profile_questions": true,
+    "seed_message": "hi",
+    "next_action": "Ask a small number of concise onboarding questions when useful. When enough stable profile is known, reprogramme this entity to set init.status to complete."
+  },
   "identity": {
     "external_id": "discord:719157451496357949",
     "username": "tinchystricker",
@@ -74,20 +88,22 @@
         "preferences"
       ],
       "post_diff": false
+    },
+    {
+      "action": "load_access_rules",
+      "desc": "surface access_rules context for tinchy.stryka",
+      "resolve": [
+        "access_rules"
+      ],
+      "post_diff": false
+    },
+    {
+      "action": "load_init",
+      "desc": "surface init context for tinchy.stryka",
+      "resolve": [
+        "init"
+      ],
+      "post_diff": false
     }
-  ],
-  "init": {
-    "status": "pending",
-    "mode": "first_contact",
-    "ask_profile_questions": true,
-    "seed_message": "hi",
-    "next_action": "Ask a small number of concise onboarding questions when useful. When enough stable profile is known, reprogramme this entity to set init.status to complete."
-  },
-  "access_rules": {
-    "observe": true,
-    "reprogramme": true,
-    "compile": false,
-    "activate_existing": false,
-    "mutate": false
-  }
+  ]
 }
