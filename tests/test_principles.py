@@ -445,6 +445,7 @@ P3_CASES = [
     ("priority_vocab_reg_before_await", lambda: vocab_priority("vocab_reg_needed") < vocab_priority("await_needed")),
     ("priority_await_before_reprogramme", lambda: vocab_priority("await_needed") < vocab_priority("reprogramme_needed")),
     ("pre_diff_prompt_centers_semantic_tree_reasoning", lambda: "Think in semantic trees, not flat chat turns." in loop.PRE_DIFF_SYSTEM),
+    ("pre_diff_prompt_treats_tree_as_historical_progress", lambda: "Treat the semantic tree as your own historical progress while processing the user's message." in loop.PRE_DIFF_SYSTEM),
     ("pre_diff_prompt_explains_resolved_path_pending_and_child_chains", lambda: "resolved path = what is already known or done" in loop.PRE_DIFF_SYSTEM and "child chains = active delegated or embedded work" in loop.PRE_DIFF_SYSTEM),
     ("pre_diff_prompt_says_environment_is_built_from_semantic_surfaces", lambda: "You are shaping an environment made of semantic and executable surfaces." in loop.PRE_DIFF_SYSTEM),
     ("pre_diff_prompt_treats_tree_policy_as_runtime_enforcement", lambda: "The compiler and tree policy enforce the final route." in loop.PRE_DIFF_SYSTEM),

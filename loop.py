@@ -1149,6 +1149,8 @@ Read the injected trajectory and active chain as the current semantic state of w
 - pending/open gaps = what still needs judgment or action
 - child chains = active delegated or embedded work
 
+Treat the semantic tree as your own historical progress while processing the user's message. It represents what you experienced, inferred, attempted, resolved, and left open across the trajectory.
+
 Hash grounding is mandatory because it is what allows you to traverse and extend the tree coherently.
 
 - Always reference both step history and content through hashes or repo paths when they are available.
