@@ -140,7 +140,7 @@ def _compact_frontier_code(node: dict) -> str:
         if gap.get("status") in {"active", "dormant", "resolved"}:
             gaps = [gap]
 
-    active = sum(1 for gap in gaps if gap.get("status") == "active")
+    active = sum(1 for gap in gaps if gap.get("status") in {"active", "open", "pending"})
     dormant = sum(1 for gap in gaps if gap.get("status") == "dormant")
     if active:
         return f"{kind}+{active}"
@@ -333,12 +333,77 @@ def _semantic_gap_from_runtime_gap(gap: dict, *, fallback_desc: str = "", post_d
     return expression
 
 
+def _runtime_child_chain_summary(chain) -> dict:
+    latest_step = chain.steps[-1] if chain.steps else None
+    return {
+        "id": chain.hash,
+        "desc": chain.desc or "in progress",
+        "resolved": bool(chain.resolved),
+        "step_count": len(chain.steps),
+        "latest_step": latest_step,
+        "activation_ref": chain.activation_ref,
+    }
+
+
+def _active_child_chain_map(traj: Trajectory, *, exclude_chain_id: str | None = None) -> dict[str, list[dict]]:
+    child_map: dict[str, list[dict]] = {}
+    for chain in traj.chains.values():
+        if chain.hash == exclude_chain_id or chain.resolved:
+            continue
+        child_map.setdefault(chain.origin_gap, []).append(_runtime_child_chain_summary(chain))
+    return child_map
+
+
+def _runtime_frontier_for_chain(
+    traj: Trajectory,
+    *,
+    current_chain_id: str,
+    inline_gap_hashes: set[str],
+    child_chain_map: dict[str, list[dict]],
+    limit: int = 5,
+) -> list[dict]:
+    frontier: list[dict] = []
+    seen: set[str] = set()
+    for chain in traj.chains.values():
+        if chain.hash == current_chain_id or chain.resolved:
+            continue
+        for step_hash in chain.steps:
+            step = traj.steps.get(step_hash)
+            if not step:
+                continue
+            for gap in step.gaps:
+                if (
+                    gap.hash in seen
+                    or gap.hash in inline_gap_hashes
+                    or gap.resolved
+                    or gap.dormant
+                    or gap.phase_state == "planned"
+                ):
+                    continue
+                item = _semantic_gap_from_runtime_gap(
+                    gap.to_dict(),
+                    fallback_desc=step.desc,
+                    post_diff=bool(step.commit),
+                )
+                child_chains = list(child_chain_map.get(gap.hash, []) or [])
+                item["status"] = "open" if child_chains else "pending"
+                if child_chains:
+                    item["child_chains"] = child_chains
+                item["chain_id"] = chain.hash
+                item["origin_step"] = step.hash
+                frontier.append(item)
+                seen.add(gap.hash)
+                if len(frontier) >= limit:
+                    return frontier
+    return frontier
+
+
 def _runtime_step_kind(step: dict, gaps: list[dict]) -> str:
     if step.get("rogue"):
         return "higher_order"
     if step.get("commit"):
         return "mutate"
-    primary = next((gap for gap in gaps if gap.get("status") == "active"), None)
+    primary = next((gap for gap in gaps if gap.get("status") in {"active", "open", "pending"}), None)
     if primary is None:
         primary = next((gap for gap in gaps if gap.get("status") == "resolved"), None)
     if primary is None:
@@ -354,7 +419,7 @@ def _runtime_step_kind(step: dict, gaps: list[dict]) -> str:
 
 
 def _runtime_step_signature(step: dict, gaps: list[dict]) -> str:
-    active = sum(1 for gap in gaps if gap.get("status") == "active")
+    active = sum(1 for gap in gaps if gap.get("status") in {"active", "open", "pending"})
     dormant = sum(1 for gap in gaps if gap.get("status") == "dormant")
     if step.get("rogue"):
         kind = "r"
@@ -388,7 +453,7 @@ def _derive_runtime_step_states(nodes: list[dict]) -> None:
     downstream_state: str | None = None
     for node in reversed(nodes):
         gaps = list(node.get("gaps", []) or ([] if not node.get("gap") else [node.get("gap")]))
-        has_active = any(gap.get("status") == "active" for gap in gaps)
+        has_active = any(gap.get("status") in {"active", "open", "pending"} for gap in gaps)
         has_dormant = any(gap.get("status") == "dormant" for gap in gaps)
         explicit = _runtime_explicit_step_state(node)
         if explicit:
@@ -437,7 +502,9 @@ def build_runtime_semantic_tree(steps: list[dict], *, source_type: str, source_r
                                 chains_dir: Path = CHAINS_DIR,
                                 cors_root: Path = ROOT,
                                 tool_map: dict[str, dict] | None = None,
-                                git: Any = None) -> dict:
+                                git: Any = None,
+                                child_chain_map: dict[str, list[dict]] | None = None,
+                                frontier: list[dict] | None = None) -> dict:
     git = git or _git_text
     nodes = []
     previous_id = None
@@ -447,7 +514,18 @@ def build_runtime_semantic_tree(steps: list[dict], *, source_type: str, source_r
             _semantic_gap_from_runtime_gap(gap or {}, fallback_desc=step.get("desc", ""), post_diff=bool(step.get("commit")))
             for gap in (step.get("gaps", []) or [])
         ]
+        for gap in gaps:
+            gap_hash = gap.get("hash")
+            active_children = list((child_chain_map or {}).get(gap_hash, []) or [])
+            if gap.get("status") == "active":
+                gap["status"] = "open" if active_children else "pending"
+            if active_children:
+                gap["child_chains"] = active_children
         primary_gap = next((gap for gap in gaps if gap.get("status") == "active"), None)
+        if primary_gap is None:
+            primary_gap = next((gap for gap in gaps if gap.get("status") == "open"), None)
+        if primary_gap is None:
+            primary_gap = next((gap for gap in gaps if gap.get("status") == "pending"), None)
         if primary_gap is None:
             primary_gap = next((gap for gap in gaps if gap.get("status") == "resolved"), None)
         if primary_gap is None:
@@ -529,6 +607,8 @@ def build_runtime_semantic_tree(steps: list[dict], *, source_type: str, source_r
         semantic_tree["origin_gap"] = origin_gap
     if resolved is not None:
         semantic_tree["resolved"] = resolved
+    if frontier:
+        semantic_tree["frontier"] = frontier
     return semantic_tree
 
 
@@ -640,6 +720,12 @@ def build_semantic_tree_from_trajectory(traj: Trajectory, *, chain_id: str | Non
             chain = next((candidate for candidate in traj.chains.values() if candidate.hash == chain_id), None)
         if chain:
             steps = [traj.steps[step_hash].to_dict() for step_hash in chain.steps if step_hash in traj.steps]
+            child_chain_map = _active_child_chain_map(traj, exclude_chain_id=chain.hash)
+            inline_gap_hashes = {
+                gap.hash
+                for step_hash in chain.steps
+                for gap in (traj.steps.get(step_hash).gaps if traj.steps.get(step_hash) else [])
+            }
             return build_runtime_semantic_tree(
                 steps,
                 source_type="realized_chain",
@@ -652,6 +738,13 @@ def build_semantic_tree_from_trajectory(traj: Trajectory, *, chain_id: str | Non
                 cors_root=cors_root,
                 tool_map=tool_map,
                 git=git,
+                child_chain_map=child_chain_map,
+                frontier=_runtime_frontier_for_chain(
+                    traj,
+                    current_chain_id=chain.hash,
+                    inline_gap_hashes=inline_gap_hashes,
+                    child_chain_map=child_chain_map,
+                ),
             )
     steps = [step.to_dict() for step in traj.recent(recent_n)]
     return build_runtime_semantic_tree(

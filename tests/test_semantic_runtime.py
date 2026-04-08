@@ -505,6 +505,73 @@ def test_render_chain_shows_compact_effective_contract_tags_for_foundation_backe
     assert "embed=named_default" in rendered
 
 
+def test_render_chain_marks_unresolved_sibling_gap_as_pending():
+    traj = Trajectory()
+    resolved_gap = Gap.create(desc="resolved branch", content_refs=["blob:resolved"])
+    resolved_gap.vocab = "hash_resolve_needed"
+    resolved_gap.resolved = True
+    pending_gap = Gap.create(desc="pending branch", content_refs=["blob:pending"])
+    pending_gap.vocab = "hash_edit_needed"
+
+    origin_step = Step.create(desc="origin", gaps=[resolved_gap, pending_gap])
+    traj.append(origin_step)
+    from step import Chain
+    chain = Chain.create(origin_gap=resolved_gap.hash, first_step=origin_step.hash)
+    traj.add_chain(chain)
+
+    rendered = traj.render_chain(chain.hash)
+    assert f"gap:{pending_gap.hash}" in rendered
+    assert "(pending)" in rendered
+
+
+def test_render_chain_marks_gap_open_and_shows_child_chain():
+    traj = Trajectory()
+    parent_gap = Gap.create(desc="spawn child review", content_refs=["blob:parent"])
+    parent_gap.vocab = "reason_needed"
+    parent_step = Step.create(desc="parent origin", gaps=[parent_gap])
+    traj.append(parent_step)
+
+    from step import Chain
+    parent_chain = Chain.create(origin_gap=parent_gap.hash, first_step=parent_step.hash)
+    traj.add_chain(parent_chain)
+
+    child_origin_step = Step.create(desc="child activated")
+    traj.append(child_origin_step)
+    child_chain = Chain.create(origin_gap=parent_gap.hash, first_step=child_origin_step.hash)
+    child_chain.desc = "child review in progress"
+    traj.add_chain(child_chain)
+
+    rendered = traj.render_chain(parent_chain.hash)
+    assert f"gap:{parent_gap.hash}" in rendered
+    assert "(open, child chain active)" in rendered
+    assert f'chain:{child_chain.hash}  "child review in progress" (active, 1 steps)' in rendered
+
+
+def test_render_chain_appends_remote_frontier_footer_for_other_unresolved_chains():
+    traj = Trajectory()
+
+    current_gap = Gap.create(desc="current branch", content_refs=["blob:current"])
+    current_gap.vocab = "hash_resolve_needed"
+    current_step = Step.create(desc="current origin", gaps=[current_gap])
+    traj.append(current_step)
+
+    from step import Chain
+    current_chain = Chain.create(origin_gap=current_gap.hash, first_step=current_step.hash)
+    traj.add_chain(current_chain)
+
+    remote_gap = Gap.create(desc="remote branch", content_refs=["blob:remote"])
+    remote_gap.vocab = "hash_edit_needed"
+    remote_step = Step.create(desc="remote origin", gaps=[remote_gap])
+    traj.append(remote_step)
+    remote_chain = Chain.create(origin_gap=remote_gap.hash, first_step=remote_step.hash)
+    traj.add_chain(remote_chain)
+
+    rendered = traj.render_chain(current_chain.hash)
+    assert "\n  frontier\n" in rendered
+    assert f'gap:{remote_gap.hash} "remote branch"' in rendered
+    assert f"via chain:{remote_chain.hash}" in rendered
+
+
 def test_render_gap_tree_includes_signature_and_ref_counts():
     traj = Trajectory()
     gap = Gap.create(desc="inspect config", content_refs=["blob:abc123"], step_refs=["prev123"])
