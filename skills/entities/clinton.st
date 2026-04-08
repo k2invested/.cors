@@ -11,12 +11,6 @@
     "lineage": "clinton",
     "version_strategy": "hash_pinned"
   },
-  "preferences": {
-    "communication": {
-      "style": "async",
-      "timezone": "Europe/London"
-    }
-  },
   "identity": {
     "role": "cyber security developer",
     "location": "London",
@@ -30,6 +24,12 @@
     "project_history": [
       "v3"
     ]
+  },
+  "preferences": {
+    "communication": {
+      "style": "async",
+      "timezone": "Europe/London"
+    }
   },
   "steps": [
     {
