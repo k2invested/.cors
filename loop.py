@@ -79,6 +79,16 @@ LOG_RESOLVE_MAX_LINES = 120
 LOG_RESOLVE_MAX_CHARS = 12000
 USER_TURN_PREFIX = "user_turn: "
 RESPONSE_TURN_PREFIX = "response_turn: "
+LOCAL_RUNTIME_PATH_PREFIXES = (
+    "trajectory_store/",
+)
+LOCAL_RUNTIME_PATHS = {
+    "background_completions.json",
+    "bot.log",
+}
+LOCAL_RUNTIME_SUFFIXES = (
+    ".pyc",
+)
 
 load_env()
 
@@ -302,27 +312,22 @@ def auto_commit(message: str, paths: list[str] | None = None) -> tuple[str | Non
     mutated a protected file, auto-reverts to the previous commit and
     returns (None, on_reject_vocab) (the mutation is rejected).
     """
-    status_cmd = ["status", "--porcelain"]
-    add_cmd = ["add", "-A"]
-    if paths:
-        normalized: list[str] = []
-        for path in paths:
-            try:
-                p = Path(path)
-                if p.is_absolute():
-                    p = p.relative_to(CORS_ROOT)
-                normalized.append(str(p))
-            except ValueError:
-                normalized.append(path)
-        status_cmd.extend(["--", *normalized])
-        add_cmd.extend(["--", *normalized])
+    selected_paths = _selected_commit_paths(paths)
+    if selected_paths is None:
+        status = git(["status", "--porcelain"])
+        if not status:
+            return None, None
+        selected_paths = _changed_commit_paths(status)
+    else:
+        status = git(["status", "--porcelain", "--", *selected_paths])
+        if not status:
+            return None, None
 
-    status = git(status_cmd)
-    if not status:
+    if not selected_paths:
         return None, None
 
     pre_sha = git_head()
-    git(add_cmd)
+    git(["add", "-A", "--", *selected_paths])
     git(["commit", "-m", message])
     post_sha = git_head()
 
@@ -344,6 +349,75 @@ def auto_commit(message: str, paths: list[str] | None = None) -> tuple[str | Non
             print(f"    {line}")
 
     return post_sha, None
+
+
+def _normalize_commit_path(path: str) -> str | None:
+    candidate = str(path).strip()
+    if not candidate:
+        return None
+    try:
+        parsed = Path(candidate)
+        if parsed.is_absolute():
+            parsed = parsed.relative_to(CORS_ROOT)
+        normalized = str(parsed).replace("\\", "/").lstrip("./")
+    except ValueError:
+        normalized = candidate.replace("\\", "/").lstrip("./")
+    return normalized or None
+
+
+def _is_local_runtime_path(path: str) -> bool:
+    normalized = str(path).replace("\\", "/").lstrip("./")
+    if normalized in LOCAL_RUNTIME_PATHS:
+        return True
+    if any(normalized.startswith(prefix) for prefix in LOCAL_RUNTIME_PATH_PREFIXES):
+        return True
+    if "/__pycache__/" in f"/{normalized}" or normalized.startswith("__pycache__/"):
+        return True
+    if normalized.endswith(LOCAL_RUNTIME_SUFFIXES):
+        return True
+    return False
+
+
+def _parse_status_path(line: str) -> str | None:
+    if not isinstance(line, str):
+        return None
+    raw = line.rstrip()
+    if len(raw) < 4:
+        return None
+    payload = raw[3:].strip()
+    if not payload:
+        return None
+    if " -> " in payload:
+        payload = payload.split(" -> ", 1)[1].strip()
+    if payload.startswith('"') and payload.endswith('"') and len(payload) >= 2:
+        payload = payload[1:-1]
+    return _normalize_commit_path(payload)
+
+
+def _changed_commit_paths(status_output: str) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for line in status_output.splitlines():
+        path = _parse_status_path(line)
+        if not path or _is_local_runtime_path(path) or path in seen:
+            continue
+        seen.add(path)
+        ordered.append(path)
+    return ordered
+
+
+def _selected_commit_paths(paths: list[str] | None) -> list[str] | None:
+    if not paths:
+        return None
+    seen: set[str] = set()
+    selected: list[str] = []
+    for path in paths:
+        normalized = _normalize_commit_path(path)
+        if not normalized or _is_local_runtime_path(normalized) or normalized in seen:
+            continue
+        seen.add(normalized)
+        selected.append(normalized)
+    return selected
 
 
 def _format_numstat_line(path: str, added: str, removed: str) -> str:

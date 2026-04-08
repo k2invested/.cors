@@ -8,3 +8,5 @@ chains.json
 .env
 .env.*
 bot.log
+trajectory_store/
+background_completions.json

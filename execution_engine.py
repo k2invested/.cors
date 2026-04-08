@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -346,6 +347,63 @@ def _collect_contract_artifact_refs(
 
     refs = _dedupe_refs(refs)
     return refs, runtime_commit
+
+
+def _normalize_command_target_path(path: str, cors_root: Path) -> str | None:
+    candidate = str(path).strip()
+    if not candidate or candidate.startswith("-") or candidate.startswith("$"):
+        return None
+    try:
+        parsed = Path(candidate)
+        if parsed.is_absolute():
+            parsed = parsed.resolve().relative_to(cors_root.resolve())
+        normalized = str(parsed).replace("\\", "/").lstrip("./")
+    except (ValueError, OSError):
+        normalized = candidate.replace("\\", "/").lstrip("./")
+    if not normalized or normalized in {".", ".."}:
+        return None
+    return normalized
+
+
+def _infer_bash_commit_paths(intent: dict | None, cors_root: Path) -> list[str]:
+    if not isinstance(intent, dict):
+        return []
+    commands: list[str] = []
+    single = intent.get("command")
+    if isinstance(single, str) and single.strip():
+        commands.append(single.strip())
+    multi = intent.get("commands")
+    if isinstance(multi, list):
+        commands.extend(str(item).strip() for item in multi if isinstance(item, str) and item.strip())
+
+    inferred: list[str] = []
+    seen: set[str] = set()
+    for command in commands:
+        for segment in re.split(r"\s*(?:&&|\|\||;|\|)\s*", command):
+            if not segment.strip():
+                continue
+            try:
+                tokens = shlex.split(segment)
+            except ValueError:
+                continue
+            if not tokens:
+                continue
+            index = 0
+            while index < len(tokens) and "=" in tokens[index] and not tokens[index].startswith(("/", "./", "../")):
+                index += 1
+            if index >= len(tokens):
+                continue
+            command_name = Path(tokens[index]).name
+            operands = [tok for tok in tokens[index + 1 :] if tok and not tok.startswith("-")]
+            if command_name not in {"rm", "unlink", "rmdir", "mv", "cp", "touch", "mkdir", "install", "ln"}:
+                continue
+            for operand in operands:
+                normalized = _normalize_command_target_path(operand, cors_root)
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                inferred.append(normalized)
+    return inferred
 
 
 def _mutate_tool_compose_prompt(*, vocab: str, gap: Gap, tool_path: str, contract: ToolContract | None) -> str:
@@ -1569,6 +1627,7 @@ def execute_iteration(
         output = ""
         intent = None
         written_path = None
+        commit_paths: list[str] | None = None
         runtime_refs: list[str] = []
         runtime_commit: str | None = None
 
@@ -1623,6 +1682,8 @@ def execute_iteration(
                     output=output,
                     hooks=hooks,
                 )
+                if vocab == "bash_needed":
+                    commit_paths = _infer_bash_commit_paths(intent, config.cors_root)
                 if not written_path:
                     for ref in runtime_refs:
                         if "/" in ref or "." in Path(ref).name:
@@ -1688,7 +1749,8 @@ def execute_iteration(
             commit_sha = runtime_commit
             on_reject = None
             if not commit_sha:
-                commit_paths = [written_path] if written_path else None
+                if not commit_paths:
+                    commit_paths = [written_path] if written_path else None
                 commit_sha, on_reject = hooks.auto_commit(f"step: {gap.desc[:50]}", paths=commit_paths)
             if commit_sha:
                 print(f"  → committed: {commit_sha}")

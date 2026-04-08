@@ -1420,7 +1420,7 @@ def test_p12_auto_commit_contract_success(monkeypatch):
     responses = {
         ("status", "--porcelain"): " M loop.py",
         ("rev-parse", "--short", "HEAD"): "abc123",
-        ("add", "-A"): "",
+        ("add", "-A", "--", "loop.py"): "",
         ("commit", "-m", "ok"): "",
         ("diff", "--numstat", "abc123", "abc123"): "5\t4\tloop.py",
     }
@@ -1433,6 +1433,35 @@ def test_p12_auto_commit_contract_success(monkeypatch):
     monkeypatch.setattr(loop, "_check_protected", lambda post, pre: ([], None))
 
     assert loop.auto_commit("ok") == ("abc123", None)
+
+
+def test_p12_auto_commit_filters_local_runtime_noise(monkeypatch):
+    calls: list[tuple[str, ...]] = []
+
+    def fake_git(cmd, cwd=None):
+        calls.append(tuple(cmd))
+        if cmd == ["status", "--porcelain"]:
+            return "\n".join(
+                [
+                    " M skills/admin.st",
+                    " M background_completions.json",
+                    " M trajectory_store/background_agent/hash_edit.json",
+                    " M tools/__pycache__/scan_tree.cpython-314.pyc",
+                ]
+            )
+        if cmd[:3] == ["rev-parse", "--short", "HEAD"]:
+            return "abc123"
+        if cmd == ["diff", "--numstat", "abc123", "abc123"]:
+            return "5\t4\tskills/admin.st"
+        return ""
+
+    monkeypatch.setattr(loop, "git", fake_git)
+    monkeypatch.setattr(loop, "git_head", lambda: "abc123")
+    monkeypatch.setattr(loop, "_check_protected", lambda post, pre: ([], None))
+
+    assert loop.auto_commit("ok") == ("abc123", None)
+    assert ("add", "-A", "--", "skills/admin.st") in calls
+    assert ("add", "-A", "--", "background_completions.json") not in calls
 
 
 def test_p12_auto_commit_scopes_to_selected_paths(monkeypatch):
@@ -2129,6 +2158,64 @@ def test_p12_bash_needed_commit_postcondition_resolves_bot_log(monkeypatch):
     assert len(postconditions[0].gaps) == 1
     assert postconditions[0].gaps[0].content_refs == ["bot.log"]
     assert postconditions[0].gaps[0].vocab == "hash_resolve_needed"
+
+
+def test_p12_bash_needed_infers_commit_paths_for_rm(monkeypatch):
+    class FakeSession:
+        def inject(self, content: str, role: str = "user"):
+            pass
+
+        def call(self, user_content: str = None) -> str:
+            return json.dumps({"command": "rm skills/entities/clinton.st"})
+
+    captured_paths: list[list[str] | None] = []
+
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap("delete clinton file", vocab="bash_needed")
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("[1 step(s) completed, no output]", 0),
+        auto_commit=lambda message, paths=None: (captured_paths.append(paths) or True) and ("abc123", None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: raw,
+        extract_written_path=lambda output: None,
+        is_reprogramme_intent=loop._is_reprogramme_intent,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=loop._emit_reason_skill,
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "chains",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=FakeSession(),
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert captured_paths == [["skills/entities/clinton.st"]]
 
 
 def test_p12_bash_needed_without_commit_still_emits_log_postcondition(monkeypatch):
