@@ -1205,7 +1205,7 @@ Core bridge abstractions:
 Built-in observe and mutate abstractions:
 - `hash_resolve_needed` = resolve hashes, packages, repo paths, and semantic records into context.
 - `pattern_needed` = deterministic workspace search.
-- `hash_edit_needed` = ordinary workspace file patch/rewrite.
+- `hash_edit_needed` = ordinary in-place workspace file patch/rewrite, not delete/remove/unlink/move.
 - `bash_needed` = bash execution abstraction for shell-level mutation.
 
 Other observe and mutate surfaces may be injected at runtime through vocab-to-tool or vocab-to-chain routing. Treat those as part of the live environment when they are present in injected control surface context.

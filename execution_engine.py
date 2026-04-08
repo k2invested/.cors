@@ -138,6 +138,7 @@ def _reason_controller_prompt(gap: Gap) -> str:
         "- Use reason_needed for structural ambiguity, competing interpretations, semantic boundary crossing, and deciding the next concrete abstraction.\n"
         "- tool_needed, vocab_reg_needed, and clarify_needed may only be surfaced through reason_needed.\n"
         "- reprogramme_needed may only be surfaced when semantic persistence into entity/admin state is already warranted.\n"
+        "- hash_edit_needed is for in-place content edits only; do not use it for delete, remove, unlink, move, or rename operations.\n"
         "- For deletion, removal, move, or other shell-level destructive workspace operations, prefer bash_needed rather than hash_edit_needed or reprogramme_needed.\n"
         "- Use clarify_needed only for genuinely user-only blockers after available semantic context is exhausted.\n"
         "- If a tool or workflow should exist but does not yet, emit the concrete creation or edit gap(s) needed to make that happen.\n"

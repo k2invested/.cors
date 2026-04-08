@@ -68,7 +68,7 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         category="mutate",
         priority=40,
         tool="tools/hash_manifest.py",
-        desc="Patch or rewrite a workspace file.",
+        desc="Patch or rewrite the contents of an existing workspace file in place. Do not use this for delete, remove, unlink, move, or rename operations.",
         target_kind="tool",
         target_ref="20c7462db20c",
     ),
@@ -145,7 +145,7 @@ FOUNDATIONAL_BRIDGES: dict[str, VocabSpec] = {
     "clarify_needed": VocabSpec(
         name="clarify_needed",
         category="bridge",
-        priority=20,
+        priority=30,
         deterministic=False,
         observation_only=False,
         desc="Request missing user-only information after reason has exhausted available context.",
@@ -153,7 +153,7 @@ FOUNDATIONAL_BRIDGES: dict[str, VocabSpec] = {
     "reason_needed": VocabSpec(
         name="reason_needed",
         category="bridge",
-        priority=90,
+        priority=30,
         desc="Stateful inline judgment and routing.",
     ),
     "tool_needed": VocabSpec(
