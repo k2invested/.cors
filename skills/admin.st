@@ -7,7 +7,7 @@
     "principles": null,
     "recent_chains": null,
     "commitments": null,
-    "commitment_chain_construction_spec": "eefcf9ff7e17",
+    "commitment_chain_construction_spec": "85b912993e7f",
     "top_rate_estates_ltd": "0c106388cfe2",
     "clinton": "7d5e36e7721b"
   },
@@ -16,6 +16,23 @@
     "protected_kind": "entity",
     "lineage": "admin",
     "version_strategy": "hash_pinned"
+  },
+  "identity": {
+    "name": "Kenny",
+    "role": "architect",
+    "username": "k2authorized",
+    "discord_user_id": "784778107013431296",
+    "email": "krepchequesupply@gmail.com",
+    "context": "Built this system from scratch. Thinks in primitives and recursive structures. Prefers composable solutions over constructions. Will push back hard on overengineering. Speaks fast, thinks in analogies.",
+    "relationships": {
+      "blood_brother": [
+        {
+          "entity": "skills/entities/clinton.st",
+          "entity_hash": "clinton:bfa1a96aea7c",
+          "name": "Clinton"
+        }
+      ]
+    }
   },
   "preferences": {
     "communication": {
@@ -61,23 +78,6 @@
         "refers_to": "top rate estates ltd:0c106388cfe2",
         "desc": "Whenever I refer to 'my business', interpret it as referring to the entity Top Rate Estates LTD."
       }
-    }
-  },
-  "identity": {
-    "name": "Kenny",
-    "role": "architect",
-    "username": "k2authorized",
-    "discord_user_id": "784778107013431296",
-    "email": "krepchequesupply@gmail.com",
-    "context": "Built this system from scratch. Thinks in primitives and recursive structures. Prefers composable solutions over constructions. Will push back hard on overengineering. Speaks fast, thinks in analogies.",
-    "relationships": {
-      "blood_brother": [
-        {
-          "entity": "skills/entities/clinton.st",
-          "entity_hash": "clinton:bfa1a96aea7c",
-          "name": "Clinton"
-        }
-      ]
     }
   },
   "steps": [
