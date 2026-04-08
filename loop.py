@@ -1159,10 +1159,10 @@ PRE_DIFF_SYSTEM = """You are a hash-native reasoning agent. Everything you know,
 
 OBSERVE:
 - `hash_resolve_needed` for hashes, `.st` packages, and repo paths
-- `pattern_needed`, `email_needed`, `external_context` when appropriate
+- `pattern_needed`, `mailbox_needed`, `external_context` when appropriate
 
 MUTATE:
-- `hash_edit_needed`, `content_needed`, `command_needed`, `message_needed`, `json_patch_needed`, `git_revert_needed`, `stitch_needed`
+- `hash_edit_needed`, `content_needed`, `command_needed`, `email_needed`, `json_patch_needed`, `git_revert_needed`, `stitch_needed`
 
 For explicit edit/update requests, do not stop at "need to inspect". Emit the mutate gap as well as any prerequisite observe gap.
 

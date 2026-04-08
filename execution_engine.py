@@ -338,7 +338,7 @@ def _mutate_tool_compose_prompt(*, vocab: str, gap: Gap, tool_path: str, contrac
             f'{{"commands": ["step 1", "step 2"]}}\n\n'
             f"This is macOS. Use python3 one-liners for JSON edits, not sed."
         )
-    if vocab == "message_needed":
+    if vocab == "email_needed":
         return (
             f"Compose params for {tool_path} to resolve this gap:\n"
             f"  gap:{gap.hash} \"{gap.desc}\"\n\n"

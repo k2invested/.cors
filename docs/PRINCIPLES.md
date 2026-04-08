@@ -242,7 +242,7 @@ step
 | --- | --- | --- |
 | `hash_resolve_needed` | 20 | Resolve hash/path/git refs into observable context. |
 | `pattern_needed` | 20 | Search workspace content deterministically. |
-| `email_needed` | 20 | Read email-related state. |
+| `mailbox_needed` | 20 | Read email-related state. |
 | `external_context` | 20 | Passive external-context injection only. |
 
 #### Mutate
@@ -253,7 +253,7 @@ step
 | `content_needed` | 40 | New workspace content through the hash primitive. |
 | `stitch_needed` | 40 | UI artifact generation. |
 | `command_needed` | 40 | Shell mutation. |
-| `message_needed` | 40 | Email/message send. |
+| `email_needed` | 40 | Email/message send. |
 | `json_patch_needed` | 40 | Structured JSON mutation via hash manifest. |
 | `git_revert_needed` | 40 | Git revert operations. |
 
@@ -315,14 +315,14 @@ vocab
 ├─ observe
 │  ├─ hash_resolve_needed
 │  ├─ pattern_needed
-│  ├─ email_needed
+│  ├─ mailbox_needed
 │  └─ external_context
 ├─ mutate
 │  ├─ hash_edit_needed
 │  ├─ content_needed
 │  ├─ stitch_needed
 │  ├─ command_needed
-│  ├─ message_needed
+│  ├─ email_needed
 │  ├─ json_patch_needed
 │  └─ git_revert_needed
 └─ foundational bridges

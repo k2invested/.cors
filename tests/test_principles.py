@@ -398,7 +398,7 @@ P2_CASES += [
     ))(build_origin_context())),
     ("readmit_cross_turn_preserves_gap_hash", lambda: (lambda comp, gap: (comp.readmit_cross_turn([gap], "origin"), comp.ledger.peek().gap.hash == gap.hash)[1])(Compiler(seed_trajectory("blob_a"), current_turn=2), make_gap("carry", relevance=0.9, confidence=0.7, vocab="pattern_needed", content_refs=["blob_a"], turn_id=1))),
     ("readmit_cross_turn_creates_one_new_entry", lambda: (lambda comp, gap: (comp.readmit_cross_turn([gap], "origin"), comp.ledger.size() == 1)[1])(Compiler(seed_trajectory("blob_a"), current_turn=2), make_gap("carry", relevance=0.9, confidence=0.7, vocab="pattern_needed", content_refs=["blob_a"], turn_id=1))),
-    ("emit_origin_multiple_gaps_create_multiple_chains", lambda: (lambda traj, step: (lambda comp: (traj.append(step), comp.emit_origin_gaps(step), len(traj.chains) == 2)[2])(Compiler(traj)))(Trajectory(), make_step("origin", gaps=[make_gap("a", vocab="pattern_needed", content_refs=["blob_a"], relevance=0.8, confidence=0.8), make_gap("b", vocab="email_needed", content_refs=["blob_b"], relevance=0.8, confidence=0.8)]))),
+    ("emit_origin_multiple_gaps_create_multiple_chains", lambda: (lambda traj, step: (lambda comp: (traj.append(step), comp.emit_origin_gaps(step), len(traj.chains) == 2)[2])(Compiler(traj)))(Trajectory(), make_step("origin", gaps=[make_gap("a", vocab="pattern_needed", content_refs=["blob_a"], relevance=0.8, confidence=0.8), make_gap("b", vocab="mailbox_needed", content_refs=["blob_b"], relevance=0.8, confidence=0.8)]))),
     ("ledger_pop_reduces_stack", lambda: (lambda ctx: (ctx.compiler.ledger.pop(), ctx.compiler.ledger.size() == 0)[1])(build_origin_context())),
     ("same_turn_gap_uses_fresh_threshold", lambda: build_origin_context(relevance=0.5, confidence=0.6, current_turn=2, gap_turn_id=2, refs=[]).compiler.gap_count() == 1),
 ]
@@ -407,7 +407,7 @@ P2_CASES += [
 P3_CASES = [
     ("observe_pattern_needed", lambda: is_observe("pattern_needed")),
     ("observe_hash_resolve_needed", lambda: is_observe("hash_resolve_needed")),
-    ("observe_email_needed", lambda: is_observe("email_needed")),
+    ("observe_mailbox_needed", lambda: is_observe("mailbox_needed")),
     ("observe_external_context", lambda: is_observe("external_context")),
     ("bridge_clarify_needed", lambda: is_bridge("clarify_needed")),
     ("mutate_hash_edit_needed", lambda: is_mutate("hash_edit_needed")),
@@ -416,11 +416,11 @@ P3_CASES = [
     ("bridge_tool_needed", lambda: is_bridge("tool_needed")),
     ("bridge_vocab_reg_needed", lambda: is_bridge("vocab_reg_needed")),
     ("mutate_command_needed", lambda: is_mutate("command_needed")),
-    ("mutate_message_needed", lambda: is_mutate("message_needed")),
+    ("mutate_email_needed", lambda: is_mutate("email_needed")),
     ("mutate_json_patch_needed", lambda: is_mutate("json_patch_needed")),
     ("mutate_git_revert_needed", lambda: is_mutate("git_revert_needed")),
     ("step_render_classifies_stitch_as_mutate", lambda: step_module.vocab_class("stitch_needed") == "m"),
-    ("step_render_classifies_message_as_mutate", lambda: step_module.vocab_class("message_needed") == "m"),
+    ("step_render_classifies_email_as_mutate", lambda: step_module.vocab_class("email_needed") == "m"),
     ("step_render_unknown_trigger_term_is_unknown", lambda: step_module.vocab_class("research_needed") == "_"),
     ("bridge_reason_needed", lambda: is_bridge("reason_needed")),
     ("bridge_await_needed", lambda: is_bridge("await_needed")),
@@ -5083,7 +5083,7 @@ def test_p12_extract_written_path_reads_first_json_artifact():
     assert loop._extract_written_path(output) == "assets/clip1.mp4"
 
 
-def test_p12_message_needed_executes_tool_and_post_observes_written_artifact():
+def test_p12_email_needed_executes_tool_and_post_observes_written_artifact():
     class FakeSession:
         def inject(self, content: str, role: str = "user"):
             pass
@@ -5101,7 +5101,7 @@ def test_p12_message_needed_executes_tool_and_post_observes_written_artifact():
     traj = Trajectory()
     compiler = Compiler(traj)
     origin_step = make_step("origin")
-    gap = make_gap("send an email update", vocab="message_needed")
+    gap = make_gap("send an email update", vocab="email_needed")
     entry = SimpleNamespace(gap=gap, chain_id="chain1")
 
     hooks = execution_engine_module.ExecutionHooks(

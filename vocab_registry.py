@@ -38,8 +38,8 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         target_kind="tool",
         target_ref="d5b8c72f9e8c",
     ),
-    "email_needed": VocabSpec(
-        name="email_needed",
+    "mailbox_needed": VocabSpec(
+        name="mailbox_needed",
         category="observe",
         priority=20,
         tool="tools/email_check.py",
@@ -101,8 +101,8 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         target_kind="tool",
         target_ref="52f151625add",
     ),
-    "message_needed": VocabSpec(
-        name="message_needed",
+    "email_needed": VocabSpec(
+        name="email_needed",
         category="mutate",
         priority=40,
         tool="tools/email_send.py",

@@ -43,7 +43,7 @@ The main routed public tools are now:
 - `hash_edit_needed` -> [tools/hash_manifest.py](/Users/k2invested/Desktop/cors/tools/hash_manifest.py)
 - `content_needed` -> [tools/hash_manifest.py](/Users/k2invested/Desktop/cors/tools/hash_manifest.py)
 - `command_needed` -> [tools/code_exec.py](/Users/k2invested/Desktop/cors/tools/code_exec.py)
-- `message_needed` -> [tools/email_send.py](/Users/k2invested/Desktop/cors/tools/email_send.py)
+- `email_needed` -> [tools/email_send.py](/Users/k2invested/Desktop/cors/tools/email_send.py)
 - `git_revert_needed` -> [tools/git_ops.py](/Users/k2invested/Desktop/cors/tools/git_ops.py)
 
 Other external or domain-specific tools remain separate public tools until vocab maps them.

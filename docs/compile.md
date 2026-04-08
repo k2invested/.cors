@@ -36,7 +36,7 @@ Observe:
 
 - `pattern_needed`
 - `hash_resolve_needed`
-- `email_needed`
+- `mailbox_needed`
 - `external_context`
 
 Mutate:
@@ -45,7 +45,7 @@ Mutate:
 - `stitch_needed`
 - `content_needed`
 - `command_needed`
-- `message_needed`
+- `email_needed`
 - `json_patch_needed`
 - `git_revert_needed`
 
