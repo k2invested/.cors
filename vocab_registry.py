@@ -97,7 +97,7 @@ CONFIGURABLE_VOCABS: dict[str, VocabSpec] = {
         priority=40,
         tool="tools/code_exec.py",
         post_observe="bot.log",
-        desc="Execute a shell command to mutate state.",
+        desc="Execute a shell command for shell-level workspace mutation, including delete, remove, unlink, move, and rename operations.",
         target_kind="tool",
         target_ref="52f151625add",
     ),
