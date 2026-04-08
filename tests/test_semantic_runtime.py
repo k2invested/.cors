@@ -73,6 +73,20 @@ def test_render_step_network_shows_entities_packages_and_commands(tmp_path):
     assert package_hash in network
 
 
+def test_render_step_network_ignores_aggregate_background_json(tmp_path):
+    reg = registry()
+    package_hash = me.persist_chain_package(tmp_path, example_stepchain())
+    (tmp_path / "background_run.chains.json").write_text(json.dumps([{"hash": "abc123"}]))
+    (tmp_path / "background_run.trajectory.json").write_text(json.dumps([{"desc": "step"}]))
+
+    network = me.render_step_network(tmp_path, reg, loop._is_entity_skill, loop._skill_payload)
+
+    assert network.startswith("step_network")
+    assert package_hash in network
+    assert "background_run.chains" not in network
+    assert "background_run.trajectory" not in network
+
+
 def example_stepchain() -> dict:
     return {
         "version": "stepchain.v1",

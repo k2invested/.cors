@@ -1000,10 +1000,14 @@ def render_step_network(chains_dir: Path, registry: SkillRegistry, is_entity_ski
     compiled_paths = sorted(chains_dir.glob("*.json")) if chains_dir.exists() else []
     compiled_any = False
     for path in compiled_paths:
+        if path.name.endswith(".chains.json") or path.name.endswith(".trajectory.json"):
+            continue
         try:
             with open(path) as f:
                 package = json.load(f)
         except json.JSONDecodeError:
+            continue
+        if not isinstance(package, dict):
             continue
         if package.get("version") != "stepchain.v1":
             continue
