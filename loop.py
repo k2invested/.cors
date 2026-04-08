@@ -1195,18 +1195,18 @@ Use the tree to decide whether the user needs:
 - a workflow/tool/vocab/environment change
 
 Core bridge abstractions:
-- `reason_needed` = structural judgment over semantic trees, entities, workflows, tools, vocab routes, and persistence decisions. `tool_needed`, `vocab_reg_needed`, and `clarify_needed` may only be activated through `reason_needed`.
-- `reprogramme_needed` = write semantic state into entity/admin-style profiles after that judgment is already warranted. It edits semantic profile state only, not delete/remove/unlink/move operations.
-- `tool_needed` = create or refine public tools as part of shaping the environment.
-- `vocab_reg_needed` = create or refine configurable vocab routes as part of shaping the environment.
-- `await_needed` = keep background work synchronized with the parent chain.
-- `clarify_needed` = ask for user-only information only after available semantic context is exhausted.
+- `reason_needed` = gap requires structural judgment over semantic trees, entities, workflows, tools, vocab routes, or persistence decisions. `tool_needed`, `vocab_reg_needed`, and `clarify_needed` may only be activated through `reason_needed`.
+- `reprogramme_needed` = gap requires writing semantic state into entity/admin-style profiles after that judgment is already warranted. It edits semantic profile state only, not delete/remove/unlink/move operations.
+- `tool_needed` = gap requires creating or refining public tools as part of shaping the environment.
+- `vocab_reg_needed` = gap requires creating or refining configurable vocab routes as part of shaping the environment.
+- `await_needed` = gap requires keeping background work synchronized with the parent chain.
+- `clarify_needed` = gap requires user-only information only after available semantic context is exhausted.
 
 Built-in observe and mutate abstractions:
-- `hash_resolve_needed` = resolve hashes, packages, repo paths, and semantic records into context.
-- `pattern_needed` = deterministic workspace search.
-- `hash_edit_needed` = ordinary in-place workspace file patch/rewrite, not delete/remove/unlink/move.
-- `bash_needed` = bash execution abstraction for shell-level workspace mutation, including delete/remove/unlink/move/rename.
+- `hash_resolve_needed` = gap requires resolving hashes, packages, repo paths, or semantic records into context.
+- `pattern_needed` = gap requires deterministic workspace search.
+- `hash_edit_needed` = gap requires ordinary in-place workspace file patch/rewrite, not delete/remove/unlink/move.
+- `bash_needed` = gap requires shell-level workspace mutation, including delete/remove/unlink/move/rename.
 
 Other observe and mutate surfaces may be injected at runtime through vocab-to-tool or vocab-to-chain routing. Treat those as part of the live environment when they are present in injected control surface context.
 
