@@ -689,6 +689,41 @@ def test_p13_rogue_step_signature_and_render():
     assert "policy_violation, tree_policy" in rendered
 
 
+def test_p6_resolve_all_refs_carries_content_refs_from_step_refs():
+    setattr(loop, "_skill_registry", registry())
+    traj = Trajectory()
+    parent = make_step("parent", content_refs=[skill("admin").hash])
+    traj.append(parent)
+
+    rendered = loop.resolve_all_refs([parent.hash], [], traj)
+
+    assert f"── resolved {skill('admin').hash} ──" in rendered
+
+
+def test_p6_resolve_all_refs_dedupes_explicit_and_carried_content_refs():
+    setattr(loop, "_skill_registry", registry())
+    traj = Trajectory()
+    parent = make_step("parent", content_refs=[skill("admin").hash])
+    traj.append(parent)
+
+    rendered = loop.resolve_all_refs([parent.hash], [skill("admin").hash], traj)
+
+    assert rendered.count(f"── resolved {skill('admin').hash} ──") == 1
+
+
+def test_p6_resolve_all_refs_step_ref_expansion_is_shallow():
+    setattr(loop, "_skill_registry", registry())
+    traj = Trajectory()
+    grandparent = make_step("grandparent", content_refs=[skill("admin").hash])
+    traj.append(grandparent)
+    parent = make_step("parent", step_refs=[grandparent.hash], content_refs=[])
+    traj.append(parent)
+
+    rendered = loop.resolve_all_refs([parent.hash], [], traj)
+
+    assert f"── resolved {skill('admin').hash} ──" not in rendered
+
+
 def test_p13_reprogramme_failure_materializes_rogue_step():
     class FakeSession:
         def __init__(self):

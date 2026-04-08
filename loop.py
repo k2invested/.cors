@@ -1010,6 +1010,29 @@ def _render_gap_tree(gap, _trajectory: Trajectory = None) -> str:
     return "\n".join(lines)
 
 
+def _expand_content_refs_from_step_refs(step_refs: list[str], trajectory: Trajectory) -> list[str]:
+    carried: list[str] = []
+    seen: set[str] = set()
+    for ref in step_refs:
+        if not isinstance(ref, str):
+            continue
+        candidate = ref.strip()
+        if candidate.startswith("step:"):
+            candidate = candidate.split(":", 1)[1].strip()
+        if not candidate:
+            continue
+        step = trajectory.resolve(candidate)
+        if not step:
+            continue
+        for content_ref in step.content_refs:
+            normalized = str(content_ref).strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            carried.append(normalized)
+    return carried
+
+
 def resolve_all_refs(step_refs: list[str], content_refs: list[str],
                      trajectory: Trajectory) -> str:
     """Resolve all hash references and format as injection block."""
@@ -1018,7 +1041,15 @@ def resolve_all_refs(step_refs: list[str], content_refs: list[str],
         data = resolve_hash(ref, trajectory)
         if data:
             blocks.append(f"── resolved step:{ref} ──\n{data}")
-    for ref in content_refs:
+    merged_content_refs: list[str] = []
+    seen_content_refs: set[str] = set()
+    for ref in list(content_refs) + _expand_content_refs_from_step_refs(step_refs, trajectory):
+        normalized = str(ref).strip()
+        if not normalized or normalized in seen_content_refs:
+            continue
+        seen_content_refs.add(normalized)
+        merged_content_refs.append(normalized)
+    for ref in merged_content_refs:
         data = resolve_hash(ref, trajectory)
         if data:
             blocks.append(f"── resolved {ref} ──\n{data}")
