@@ -180,7 +180,7 @@ FOUNDATIONAL_BRIDGES: dict[str, VocabSpec] = {
         name="reprogramme_needed",
         category="bridge",
         priority=99,
-        desc="Stateless semantic persistence primitive.",
+        desc="Stateless semantic persistence primitive for editing entity/admin semantic state. Do not use this for delete, remove, unlink, move, or rename operations.",
     ),
 }
 # END FOUNDATIONAL_BRIDGES

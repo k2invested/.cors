@@ -1196,7 +1196,7 @@ Use the tree to decide whether the user needs:
 
 Core bridge abstractions:
 - `reason_needed` = structural judgment over semantic trees, entities, workflows, tools, vocab routes, and persistence decisions. `tool_needed`, `vocab_reg_needed`, and `clarify_needed` may only be activated through `reason_needed`.
-- `reprogramme_needed` = write semantic state into entity/admin-style profiles after that judgment is already warranted.
+- `reprogramme_needed` = write semantic state into entity/admin-style profiles after that judgment is already warranted. It edits semantic profile state only, not delete/remove/unlink/move operations.
 - `tool_needed` = create or refine public tools as part of shaping the environment.
 - `vocab_reg_needed` = create or refine configurable vocab routes as part of shaping the environment.
 - `await_needed` = keep background work synchronized with the parent chain.
