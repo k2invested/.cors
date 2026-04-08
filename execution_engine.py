@@ -125,6 +125,26 @@ def _extract_reason_activation_intent(raw: str, hooks: ExecutionHooks) -> dict[s
     }
 
 
+def _reason_controller_prompt(gap: Gap) -> str:
+    return (
+        f"Reason over the current semantic tree for gap:{gap.hash} \"{gap.desc}\".\n"
+        "Treat the injected trajectory and active chain as your historical progress while processing the user's message.\n"
+        "Choose the next abstraction required in the current turn.\n"
+        "If a child workflow should run, you may respond with JSON only:\n"
+        '{"activate_ref": "<workflow-hash>", "prompt": "task for the child workflow", "await_needed": true, "content_refs": ["relevant content hash or path"], "step_refs": ["relevant step hash"]}\n'
+        "or the same shape with await_needed=false.\n"
+        "Use only public workflow hashes.\n"
+        "- If judgment and existing context are enough, emit the next clarified gap(s) or no gaps.\n"
+        "- Use reason_needed for structural ambiguity, competing interpretations, semantic boundary crossing, and deciding the next concrete abstraction.\n"
+        "- tool_needed, vocab_reg_needed, and clarify_needed may only be surfaced through reason_needed.\n"
+        "- reprogramme_needed may only be surfaced when semantic persistence into entity/admin state is already warranted.\n"
+        "- For deletion, removal, move, or other shell-level destructive workspace operations, prefer bash_needed rather than hash_edit_needed or reprogramme_needed.\n"
+        "- Use clarify_needed only for genuinely user-only blockers after available semantic context is exhausted.\n"
+        "- If a tool or workflow should exist but does not yet, emit the concrete creation or edit gap(s) needed to make that happen.\n"
+        "Keep reasoning stateful and current-turn; do not defer by scheduling background work unless background execution is actually required."
+    )
+
+
 def _render_public_tool_registry(cors_root: Path) -> str:
     return render_public_tool_registry(cors_root)
 
@@ -1874,21 +1894,7 @@ def execute_iteration(
         print("  → reason controller")
         if resolved_data:
             session.inject(f"## Context\n{resolved_data}")
-        raw = session.call(
-            f"Reason inline about: gap:{gap.hash} \"{gap.desc}\".\n"
-            "Choose the next lawful move in the current turn.\n"
-            "If a child workflow should run, you may respond with JSON only:\n"
-            '{"activate_ref": "<workflow-hash>", "prompt": "task for the child workflow", "await_needed": true, "content_refs": ["relevant content hash or path"], "step_refs": ["relevant step hash"]}\n'
-            "or the same shape with await_needed=false.\n"
-            "Use only public workflow hashes.\n"
-            "- If judgment is enough, emit the next clarified gap(s) or no gaps.\n"
-            "- Use reason_needed for open specifications, competing interpretations, and deciding the next concrete move.\n"
-            "- If a tool or workflow should exist but does not yet, emit the concrete creation or edit gap(s) needed to make that happen.\n"
-            "- Do not use clarify_needed as an easy exit; only surface a clarification gap when the user must answer before a safe next move is possible.\n"
-            "- reprogramme_needed may only be surfaced from reason_needed for entity-tree persistence.\n"
-            "- If an existing workflow should be triggered, emit the activation gap(s) for that path.\n"
-            "Keep reasoning stateful and current-turn; do not defer by scheduling background work unless a later gap explicitly does so."
-        )
+        raw = session.call(_reason_controller_prompt(gap))
         activation_intent = _extract_reason_activation_intent(raw, hooks)
         if activation_intent:
             activate_ref = activation_intent["activate_ref"]
