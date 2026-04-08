@@ -162,6 +162,54 @@ def _merge_dedupe_refs(*groups: list[str] | tuple[str, ...] | None) -> list[str]
     return refs
 
 
+def _step_ref_content_refs(step_refs: list[str], trajectory: Any) -> list[str]:
+    carried: list[str] = []
+    for ref in step_refs:
+        if not isinstance(ref, str):
+            continue
+        candidate = ref.strip()
+        if candidate.startswith("step:"):
+            candidate = candidate.split(":", 1)[1].strip()
+        if not candidate:
+            continue
+        step = trajectory.resolve(candidate)
+        if not step:
+            continue
+        carried = _merge_dedupe_refs(carried, step.content_refs)
+    return carried
+
+
+def _ground_emitted_gaps_for_admission(
+    child_gaps: list[Gap],
+    *,
+    trajectory: Any,
+    hooks: ExecutionHooks,
+) -> list[tuple[Gap, str]]:
+    grounded: list[tuple[Gap, str]] = []
+    for child_gap in child_gaps:
+        carried_content_refs = _step_ref_content_refs(child_gap.step_refs, trajectory)
+        if carried_content_refs:
+            child_gap.content_refs = _merge_dedupe_refs(child_gap.content_refs, carried_content_refs)
+        resolved = hooks.resolve_all_refs(child_gap.step_refs, child_gap.content_refs, trajectory)
+        grounded.append((child_gap, resolved))
+    return grounded
+
+
+def _inject_candidate_gap_grounding(
+    session: Any,
+    grounded: list[tuple[Gap, str]],
+) -> None:
+    lines: list[str] = []
+    for child_gap, resolved in grounded:
+        if not resolved:
+            continue
+        lines.append(f"### gap:{child_gap.hash}")
+        lines.append(child_gap.desc)
+        lines.append(resolved)
+    if lines:
+        session.inject("## Candidate Gap Grounding\n" + "\n\n".join(lines))
+
+
 def _public_tool_path_for_ref(tool_ref: str | None, cors_root: Path) -> str | None:
     if not isinstance(tool_ref, str) or not tool_ref:
         return None
@@ -1282,6 +1330,12 @@ def execute_iteration(
                 content_refs=gap.content_refs,
                 chain_id=entry.chain_id,
             )
+            grounded_child_gaps = _ground_emitted_gaps_for_admission(
+                child_gaps,
+                trajectory=trajectory,
+                hooks=hooks,
+            )
+            _inject_candidate_gap_grounding(session, grounded_child_gaps)
             compiler.record_execution("hash_resolve_needed", False)
             if child_gaps:
                 compiler.emit(step_result)
@@ -1463,6 +1517,12 @@ def execute_iteration(
             content_refs=gap.content_refs,
             chain_id=entry.chain_id,
         )
+        grounded_child_gaps = _ground_emitted_gaps_for_admission(
+            child_gaps,
+            trajectory=trajectory,
+            hooks=hooks,
+        )
+        _inject_candidate_gap_grounding(session, grounded_child_gaps)
         if child_gaps:
             compiler.emit(step_result)
         else:
@@ -1990,6 +2050,12 @@ def execute_iteration(
             content_refs=gap.content_refs,
             chain_id=entry.chain_id,
         )
+        grounded_child_gaps = _ground_emitted_gaps_for_admission(
+            child_gaps,
+            trajectory=trajectory,
+            hooks=hooks,
+        )
+        _inject_candidate_gap_grounding(session, grounded_child_gaps)
         compiler.record_execution(vocab, False)
         if child_gaps:
             compiler.emit(step_result)
@@ -2166,6 +2232,12 @@ def execute_iteration(
                 content_refs=gap.content_refs,
                 chain_id=entry.chain_id,
             )
+            grounded_child_gaps = _ground_emitted_gaps_for_admission(
+                child_gaps,
+                trajectory=trajectory,
+                hooks=hooks,
+            )
+            _inject_candidate_gap_grounding(session, grounded_child_gaps)
             rewrites = _sanitize_reason_child_gaps(
                 child_gaps,
                 registry=registry,
@@ -2216,6 +2288,12 @@ def execute_iteration(
                 content_refs=gap.content_refs,
                 chain_id=entry.chain_id,
             )
+            grounded_child_gaps = _ground_emitted_gaps_for_admission(
+                child_gaps,
+                trajectory=trajectory,
+                hooks=hooks,
+            )
+            _inject_candidate_gap_grounding(session, grounded_child_gaps)
             if child_gaps:
                 compiler.emit(step_result)
             else:
@@ -2515,6 +2593,12 @@ def execute_iteration(
             content_refs=gap.content_refs,
             chain_id=entry.chain_id,
         )
+        grounded_child_gaps = _ground_emitted_gaps_for_admission(
+            child_gaps,
+            trajectory=trajectory,
+            hooks=hooks,
+        )
+        _inject_candidate_gap_grounding(session, grounded_child_gaps)
         if child_gaps:
             compiler.emit(step_result)
         else:

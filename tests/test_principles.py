@@ -724,6 +724,80 @@ def test_p6_resolve_all_refs_step_ref_expansion_is_shallow():
     assert f"── resolved {skill('admin').hash} ──" not in rendered
 
 
+def test_p6_ground_emitted_gaps_for_admission_carries_step_content_refs():
+    setattr(loop, "_skill_registry", registry())
+    traj = Trajectory()
+    parent = make_step("parent", content_refs=[skill("admin").hash])
+    traj.append(parent)
+    child_gap = make_gap("child", step_refs=[parent.hash], content_refs=[])
+
+    grounded = loop._ground_emitted_gaps_for_admission([child_gap], traj)
+
+    assert child_gap.content_refs == [skill("admin").hash]
+    assert f"── resolved {skill('admin').hash} ──" in grounded[0][1]
+
+
+def test_p6_render_candidate_gap_grounding_includes_resolved_refs():
+    setattr(loop, "_skill_registry", registry())
+    traj = Trajectory()
+    parent = make_step("parent", content_refs=[skill("admin").hash])
+    traj.append(parent)
+    child_gap = make_gap("child", step_refs=[parent.hash], content_refs=[])
+
+    rendered = loop._render_candidate_gap_grounding(
+        loop._ground_emitted_gaps_for_admission([child_gap], traj)
+    )
+
+    assert rendered is not None
+    assert "## Candidate Gap Grounding" in rendered
+    assert f"### gap:{child_gap.hash}" in rendered
+    assert f"── resolved {skill('admin').hash} ──" in rendered
+
+
+def test_p6_execution_engine_candidate_grounding_mutates_child_refs():
+    traj = Trajectory()
+    parent = make_step("parent", content_refs=["skills/admin.st"])
+    traj.append(parent)
+    child_gap = make_gap("child", step_refs=[parent.hash], content_refs=[])
+
+    hooks = SimpleNamespace(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: (
+            f"refs:{','.join(step_refs)}|content:{','.join(content_refs)}"
+        )
+    )
+
+    grounded = execution_engine_module._ground_emitted_gaps_for_admission(
+        [child_gap],
+        trajectory=traj,
+        hooks=hooks,
+    )
+
+    assert child_gap.content_refs == ["skills/admin.st"]
+    assert grounded[0][1] == f"refs:{parent.hash}|content:skills/admin.st"
+
+
+def test_p6_execution_engine_injects_candidate_gap_grounding():
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+    gap = make_gap("child", content_refs=["skills/admin.st"])
+    session = FakeSession()
+
+    execution_engine_module._inject_candidate_gap_grounding(
+        session,
+        [(gap, "resolved admin context")],
+    )
+
+    assert session.injected
+    assert "## Candidate Gap Grounding" in session.injected[0]
+    assert f"### gap:{gap.hash}" in session.injected[0]
+    assert "resolved admin context" in session.injected[0]
+
+
 def test_p13_reprogramme_failure_materializes_rogue_step():
     class FakeSession:
         def __init__(self):
