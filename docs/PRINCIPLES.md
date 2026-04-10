@@ -85,6 +85,31 @@ That trajectory contains:
 
 There is no separate “memory subsystem” for execution concerns. The trajectory is the memory substrate.
 
+### Step notes are first-class semantic state
+
+Every step may carry an explicit `StepNote`.
+
+That note is not cosmetic metadata. It is the persisted semantic comparison surface the runtime uses so later reasoning can understand what an artifact, entity, or judgment step actually contained without always reopening the full resolved source.
+
+The current runtime split is:
+
+- observation steps
+  - may receive stateless rich artifact/entity notes
+- reasoning steps
+  - should persist explicit judgment notes
+
+So a step is no longer just:
+
+- desc
+- refs
+- emitted gaps
+
+It is also:
+
+- a durable semantic note
+- a compare/contrast record
+- a local drift and mutation assessment
+
 ### Mechanism tree
 
 ```text
@@ -92,7 +117,8 @@ step primitive
 ├─ semantic articulation
 │  ├─ user-facing intent
 │  ├─ model judgment
-│  └─ proposed next movement
+│  ├─ proposed next movement
+│  └─ persisted step note
 ├─ structural actualization
 │  ├─ step hash
 │  ├─ refs
@@ -101,7 +127,8 @@ step primitive
 └─ persistence substrate
    ├─ trajectory.json
    ├─ chains.json
-   └─ extracted chain stores
+   ├─ extracted chain stores
+   └─ note-rich semantic history
 ```
 
 ### Code mechanisms
@@ -168,15 +195,19 @@ gap emission
 │  ├─ vocab
 │  ├─ desc
 │  ├─ relevance/confidence
-│  └─ refs
+│  ├─ step refs
+│  ├─ content refs
+│  └─ carry-forward eligibility
 ├─ compiler admission
 │  ├─ score
 │  ├─ priority
-│  └─ stack placement
+│  ├─ stack placement
+│  └─ dormancy or activation
 └─ chain formation
    ├─ child gaps
    ├─ depth-first branch
-   └─ persistent concern
+   ├─ persistent concern
+   └─ note-bearing step lineage
 ```
 
 ### Code mechanisms
@@ -220,6 +251,13 @@ The current ownership model is:
   - semantic persistence for entity/admin state
 
 `chain_needed` is planned but not implemented yet.
+
+The note layer cuts across that ownership split:
+
+- `hash_resolve_needed`
+  - resolves artifacts/entities and may attach rich observation notes
+- `reason_needed`
+  - reasons over the semantic tree and persists explicit judgment notes
 
 This layer matters because not every step-shaped thing should be handled by the same branch:
 
@@ -311,27 +349,33 @@ post-observe law
 ### Mechanism tree
 
 ```text
-vocab
-├─ observe
-│  ├─ hash_resolve_needed
-│  ├─ pattern_needed
-│  ├─ mailbox_needed
-│  └─ external_context
-├─ mutate
-│  ├─ hash_edit_needed
-│  ├─ content_needed
-│  ├─ stitch_needed
-│  ├─ bash_needed
-│  ├─ email_needed
-│  ├─ json_patch_needed
-│  └─ git_revert_needed
-└─ foundational bridges
-   ├─ clarify_needed
-   ├─ reason_needed
-   ├─ tool_needed
-   ├─ vocab_reg_needed
-   ├─ await_needed
-   └─ reprogramme_needed
+manifestation layer
+├─ vocab
+│  ├─ observe
+│  │  ├─ hash_resolve_needed
+│  │  ├─ pattern_needed
+│  │  ├─ mailbox_needed
+│  │  └─ external_context
+│  ├─ mutate
+│  │  ├─ hash_edit_needed
+│  │  ├─ content_needed
+│  │  ├─ stitch_needed
+│  │  ├─ bash_needed
+│  │  ├─ email_needed
+│  │  ├─ json_patch_needed
+│  │  └─ git_revert_needed
+│  └─ foundational bridges
+│     ├─ clarify_needed
+│     ├─ reason_needed
+│     ├─ tool_needed
+│     ├─ vocab_reg_needed
+│     ├─ await_needed
+│     └─ reprogramme_needed
+└─ note layer
+   ├─ observation notes
+   │  └─ stateless artifact/entity note generation
+   └─ reasoning notes
+      └─ explicit judgment notes persisted by reason_needed
 ```
 
 ### Registry tree
@@ -345,6 +389,11 @@ system/tool_registry.py
 system/chain_registry.py
 ├─ public action-chain contracts by blob hash
 ├─ activation/default-gap/OMO derivation
+├─ activation payload defaults
+│  ├─ activate_ref
+│  ├─ prompt
+│  ├─ content refs
+│  └─ step refs
 └─ embedded public tool refs
 
 system/hash_registry.py
@@ -418,13 +467,15 @@ The kernel may admit, defer, suspend, or close it, but it does not retroactively
 gap configuration
 ├─ authored fields
 │  ├─ vocab
-│  ├─ refs
+│  ├─ step refs
+│  ├─ content refs
 │  ├─ scores
 │  └─ carry-forward signal
 ├─ derived execution truth
 │  ├─ tool contract
 │  ├─ chain contract
-│  └─ tree-policy route
+│  ├─ tree-policy route
+│  └─ carried content expansion through cited steps
 └─ compiler controls
    ├─ admission threshold
    ├─ dormancy
@@ -511,12 +562,31 @@ Examples:
 
 Paths may still be accepted at resolution time, but they are not the preferred persistent identity surface.
 
+### Step refs carry content forward
+
+`step_refs` are not just citations to earlier reasoning. They are also a lawful way to carry forward the observable content already grounded by those cited steps.
+
+At resolution time the runtime now:
+
+- resolves the cited step lineage
+- expands `content_refs` from the referenced steps
+- merges and deduplicates those carried refs with the current `content_refs`
+
+So referred context is now two-layered:
+
+- direct cited execution lineage through `step_refs`
+- direct and carried observable artifacts through `content_refs`
+
+This matters because later reasoning can follow the semantic lineage of a prior step and still inherit the concrete artifact surface that step was grounded in.
+
 ### Citation rule
 
 Every nontrivial step should be grounded in one or more of:
 
 - prior step refs
 - content refs
+- carried content refs inherited from cited steps
+- persisted step notes
 - resolved observable state
 - direct user input
 
@@ -534,11 +604,13 @@ referred context
 │  └─ gap refs
 ├─ resolution surfaces
 │  ├─ hash_resolve
+│  ├─ carried content expansion from step refs
 │  ├─ manifest lookup
 │  └─ git/path convenience inputs
 └─ grounding rule
    ├─ prior execution
    ├─ resolved content
+   ├─ persisted step notes
    ├─ user input
    └─ cited semantic state
 ```
@@ -562,6 +634,7 @@ observation may emit child gaps
 mutation may not directly expand the ledger
 successful mutation yields a post-observe surface
 that surface may emit child gaps
+observation and reasoning steps persist notes that become the next semantic surface
 ```
 
 ### Where `post_diff` still matters
@@ -590,6 +663,7 @@ post-observation loop
 ├─ observation
 │  ├─ resolve
 │  ├─ inspect
+│  ├─ persist rich observation note
 │  └─ emit child gaps if needed
 ├─ mutation
 │  ├─ execute
@@ -598,7 +672,8 @@ post-observation loop
 ├─ post-observe surface
 │  ├─ hash_resolve_needed
 │  ├─ explicit artifact/log override
-│  └─ reason reintegration for bridge writers
+│  ├─ reason reintegration for bridge writers
+│  └─ note-rich semantic state for follow-on comparison
 └─ closure or renewed frontier
    ├─ new observe gap
    ├─ new bridge gap
@@ -708,7 +783,8 @@ compiler law layer
 ├─ reintegration law
 │  ├─ await checkpoint
 │  ├─ inline child-chain closure
-│  └─ parent-side post-observe reason review
+│  ├─ parent-side post-observe reason review
+│  └─ resolved child tree folded into parent turn render
 └─ validator surface
    ├─ validate_chain.py
    └─ compiler bookkeeping
@@ -767,6 +843,9 @@ chain extraction
 │  └─ closed
 ├─ derived chain signature
 │  └─ updated as steps accumulate
+├─ note-bearing steps
+│  ├─ observation notes
+│  └─ reasoning notes
 ├─ extraction threshold
 │  └─ CHAIN_EXTRACT_LENGTH
 ├─ index layer
@@ -816,7 +895,9 @@ The current child-activation contract is:
 {
   "activate_ref": "<workflow-hash>",
   "prompt": "task for the child workflow",
-  "await_needed": true
+  "await_needed": true,
+  "content_refs": ["relevant content hash or path"],
+  "step_refs": ["relevant step hash"]
 }
 ```
 
@@ -864,6 +945,14 @@ That review point is where the parent:
 - reopen if needed
 - trigger further work if needed
 
+The review gap now carries:
+
+- the child workflow ref
+- the resolved child chain hash
+- the full child step lineage in `step_refs`
+
+So parent review is grounded in the actual completed child branch, not just a thin completion marker.
+
 Background/isolated child work still reintegrates through explicit await checkpoints.
 
 ### Storage separation
@@ -874,6 +963,8 @@ Isolated child flows use:
 - [trajectory_store/subagent](/Users/k2invested/Desktop/cors/trajectory_store/subagent)
 - [trajectory_store/background_agent](/Users/k2invested/Desktop/cors/trajectory_store/background_agent)
 
+Execution storage may remain separate while the semantic render does not. Resolved inline child workflows now fold back into the parent turn tree render once the child closes.
+
 ### Mechanism tree
 
 ```text
@@ -882,9 +973,12 @@ reason_needed
 ├─ emits tool_needed
 ├─ emits vocab_reg_needed
 ├─ emits reprogramme_needed
+├─ persists explicit reasoning note
 └─ emits child activation
    ├─ activate_ref
    ├─ prompt
+   ├─ content refs
+   ├─ step refs
    └─ await_needed
       ├─ true
       │  ├─ isolated/background runtime
@@ -897,7 +991,8 @@ child workflow lineage
 ├─ activation handoff step
 ├─ child chain phases
 └─ child closure
-   └─ semantic tree exposed back to parent review
+   ├─ semantic tree exposed back to parent review
+   └─ resolved subtree folded into parent turn render
 ```
 
 ### Code mechanisms
@@ -928,6 +1023,8 @@ The compact render uses:
 - explicit state when runtime-derived
 - inline refs
 - inline timestamps when realized
+- explicit persisted `StepNote` fields where available
+- resolved child-chain inlining in parent turn history once closure occurs
 
 ### Purpose
 
@@ -940,6 +1037,8 @@ The tree should show:
 - reintegration points
 - child-chain branching
 - stable runtime lineage
+- step notes rich enough to stand in for reopening raw source
+- carried context inherited through cited steps
 
 without reintroducing verbose legacy gap config noise.
 
@@ -951,6 +1050,8 @@ So the semantic tree is not just a renderer. It is the compressed interface wher
 - reintegration
 - temporal progress
 - parent/child workflow family shape
+- persisted comparison notes
+- carried observable context
 
 all become simultaneously legible.
 
@@ -970,13 +1071,16 @@ semantic tree surface
 ├─ runtime signals
 │  ├─ state
 │  ├─ refs
+│  ├─ note fields
 │  ├─ timestamps
 │  ├─ reintegration markers
-│  └─ parent/child chain lineage
+│  ├─ parent/child chain lineage
+│  └─ carried content provenance
 └─ render consumers
    ├─ main agent context
    ├─ await/reason review
-   └─ trace/security comparison
+   ├─ trace/security comparison
+   └─ post-closure parent turn render
 ```
 
 ### Code mechanisms
@@ -996,8 +1100,10 @@ They matter because the core principles only become real when the infrastructure
 user input
   -> origin step
   -> context injection
+  -> semantic tree and note-rich history render
   -> compiler admission
   -> execution iteration
+  -> note persistence
   -> synthesis
   -> persistence
 ```
@@ -1013,6 +1119,10 @@ Specialized handlers stay internal:
 
 - [tools/hash](/Users/k2invested/Desktop/cors/tools/hash)
 - [system/hash_registry.py](/Users/k2invested/Desktop/cors/system/hash_registry.py)
+
+Semantic note enrichment for observation steps lives in:
+
+- [note_engine.py](/Users/k2invested/Desktop/cors/note_engine.py)
 
 ### Infrastructure split
 
@@ -1038,7 +1148,8 @@ support infrastructure
 │  ├─ loop.py
 │  ├─ execution_engine.py
 │  ├─ env_loader.py
-│  └─ discord_bot.py
+│  ├─ discord_bot.py
+│  └─ note_engine.py
 ├─ immutable system core
 │  ├─ registries
 │  ├─ builders
@@ -1048,6 +1159,11 @@ support infrastructure
 │  ├─ workspace tools
 │  ├─ external tools
 │  └─ hash primitives
+├─ semantic support layer
+│  ├─ step-note persistence
+│  ├─ carried ref expansion
+│  ├─ semantic tree rendering
+│  └─ resolved child-chain inlining
 └─ schemas and tests
    ├─ schema json files
    └─ principle/runtime test suite
@@ -1126,6 +1242,7 @@ cors/
 ├─ compile.py
 ├─ loop.py
 ├─ execution_engine.py
+├─ note_engine.py
 ├─ manifest_engine.py
 ├─ vocab_registry.py
 ├─ trajectory.json
@@ -1181,6 +1298,7 @@ Every live module in the current system surface belongs to one of the principle 
 - §3 / §7 / §10 / §12
   - [execution_engine.py](/Users/k2invested/Desktop/cors/execution_engine.py)
   - [loop.py](/Users/k2invested/Desktop/cors/loop.py)
+  - [note_engine.py](/Users/k2invested/Desktop/cors/note_engine.py)
   - [manifest_engine.py](/Users/k2invested/Desktop/cors/manifest_engine.py)
 - §12
   - [env_loader.py](/Users/k2invested/Desktop/cors/env_loader.py)
