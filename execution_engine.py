@@ -26,6 +26,7 @@ from typing import Any, Callable
 
 from compile import ChainState, GovernorSignal, is_mutate, is_observe
 import manifest_engine as me
+import note_engine
 from step import Chain, Epistemic, Gap, Step
 from system.chain_registry import public_chain_ref_map, render_public_chain_registry
 from system.control_surface import render_admin_surface, render_system_control_surface
@@ -79,6 +80,13 @@ class ExecutionConfig:
 class ExecutionOutcome:
     control: str = "continue"
     step_result: Step | None = None
+
+
+def _compact_line(text: str, limit: int = 220) -> str:
+    line = " ".join(str(text).strip().split())
+    if len(line) <= limit:
+        return line
+    return line[: limit - 3].rstrip() + "..."
 
 
 def _canonical_workflow_ref(ref: str | None) -> str | None:
@@ -181,6 +189,73 @@ def _step_ref_content_refs(step_refs: list[str], trajectory: Any) -> list[str]:
             continue
         carried = _merge_dedupe_refs(carried, step.content_refs)
     return carried
+
+
+def _resolve_step_ref(step_ref: str, trajectory: Any) -> Step | None:
+    if not isinstance(step_ref, str):
+        return None
+    candidate = step_ref.strip()
+    if candidate.startswith("step:"):
+        candidate = candidate.split(":", 1)[1].strip()
+    if not candidate:
+        return None
+    return trajectory.resolve(candidate)
+
+
+def _render_step_note_summary(step_ref: str, trajectory: Any) -> str | None:
+    step = _resolve_step_ref(step_ref, trajectory)
+    if step is None:
+        return None
+    note = step.effective_note()
+    lines = [f"step:{step.hash} {_compact_line(step.desc, 160)}"]
+    if note.summary:
+        lines.append(f"note.summary: {_compact_line(note.summary, 200)}")
+    if note.drift:
+        lines.append(f"note.drift: {_compact_line(note.drift[0], 200)}")
+    if note.mutation_implications:
+        lines.append(f"note.mutation: {_compact_line(note.mutation_implications[0], 200)}")
+    if step.commit:
+        lines.append(f"commit: {step.commit}")
+    if step.content_refs:
+        lines.append(f"content_refs: {step.content_refs[:4]}")
+    return "\n".join(lines)
+
+
+def _render_reason_context(gap: Gap, *, trajectory: Any, hooks: ExecutionHooks) -> str:
+    blocks: list[str] = []
+
+    direct_content = hooks.resolve_all_refs([], gap.content_refs, trajectory)
+    if direct_content:
+        blocks.append(f"## Current Gap Resolved Content\n{direct_content}")
+
+    step_blocks: list[str] = []
+    for step_ref in gap.step_refs:
+        rendered = _render_step_note_summary(step_ref, trajectory)
+        if rendered:
+            step_blocks.append(rendered)
+    if step_blocks:
+        blocks.append("## Referenced Step Notes\n" + "\n\n".join(step_blocks))
+
+    return "\n\n".join(blocks)
+
+
+def _attach_generated_note(
+    step_result: Step | None,
+    *,
+    gap: Gap,
+    resolved_data: str,
+) -> Step | None:
+    if step_result is None or step_result.note is not None:
+        return step_result
+    note = note_engine.generate_step_note(
+        gap_desc=gap.desc,
+        resolved_data=resolved_data,
+        step_refs=list(gap.step_refs or []),
+        content_refs=list(gap.content_refs or []),
+    )
+    if note is not None:
+        step_result.note = note
+    return step_result
 
 
 def _public_tool_path_for_ref(tool_ref: str | None, cors_root: Path) -> str | None:
@@ -1303,6 +1378,8 @@ def execute_iteration(
                 content_refs=gap.content_refs,
                 chain_id=entry.chain_id,
             )
+            if resolved_data:
+                step_result = _attach_generated_note(step_result, gap=gap, resolved_data=resolved_data)
             compiler.record_execution("hash_resolve_needed", False)
             if child_gaps:
                 compiler.emit(step_result)
@@ -1451,6 +1528,8 @@ def execute_iteration(
             content_refs=gap.content_refs,
             chain_id=entry.chain_id,
         )
+        if resolved_data:
+            step_result = _attach_generated_note(step_result, gap=gap, resolved_data=resolved_data)
         compiler.resolve_current_gap(gap.hash)
 
     elif vocab and vocab in config.deterministic_vocab:
@@ -1484,6 +1563,8 @@ def execute_iteration(
             content_refs=gap.content_refs,
             chain_id=entry.chain_id,
         )
+        if vocab == "hash_resolve_needed" and resolved_data:
+            step_result = _attach_generated_note(step_result, gap=gap, resolved_data=resolved_data)
         if child_gaps:
             compiler.emit(step_result)
         else:
@@ -2019,8 +2100,9 @@ def execute_iteration(
 
     elif vocab == "reason_needed":
         print("  → reason controller")
-        if resolved_data:
-            session.inject(f"## Context\n{resolved_data}")
+        reason_context = _render_reason_context(gap, trajectory=trajectory, hooks=hooks)
+        if reason_context:
+            session.inject(reason_context)
         raw = session.call(_reason_controller_prompt(gap))
         activation_intent = _extract_reason_activation_intent(raw, hooks)
         if activation_intent:

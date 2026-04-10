@@ -8,6 +8,8 @@ sys.path.insert(0, str(ROOT))
 
 import loop
 import manifest_engine as me
+import note_engine
+import execution_engine
 from compile import Compiler
 from step import Gap, Step, StepNote, Trajectory
 from skills.loader import Skill, SkillStep, load_all, load_skill
@@ -56,6 +58,92 @@ def test_render_entity_tree_shows_entity_space():
     assert "admin:" in tree
     assert "admin.st" in tree
     assert "clinton.st" in tree
+
+
+def test_parse_step_note_accepts_fenced_json():
+    raw = """```json
+    {
+      "summary": "resolved current artifact",
+      "material_points": ["artifact defines runtime routing"],
+      "relations": [
+        {"type": "references", "from_ref": "step123", "to_ref": "blob456", "note": "direct evidence"}
+      ],
+      "drift": ["document does not mention this route"]
+    }
+    ```"""
+
+    note = note_engine.parse_step_note(raw)
+
+    assert note is not None
+    assert note.summary == "resolved current artifact"
+    assert note.material_points == ["artifact defines runtime routing"]
+    assert note.drift == ["document does not mention this route"]
+    assert len(note.relations) == 1
+    assert note.relations[0].type == "references"
+    assert note.relations[0].from_ref == "step123"
+    assert note.relations[0].to_ref == "blob456"
+
+
+def test_attach_generated_note_prefers_explicit_note(monkeypatch):
+    gap = Gap.create(desc="resolve docs/PRINCIPLES.md", content_refs=["docs/PRINCIPLES.md"], step_refs=["step:abc123"])
+    step = Step.create(desc="resolved: resolve docs/PRINCIPLES.md")
+    explicit = StepNote(
+        summary="principles doc reviewed against resolved evidence",
+        material_points=["docs section omits current runtime route"],
+        drift=["principles drift detected in routing section"],
+    )
+
+    monkeypatch.setattr(
+        execution_engine.note_engine,
+        "generate_step_note",
+        lambda **kwargs: explicit,
+    )
+
+    enriched = execution_engine._attach_generated_note(
+        step,
+        gap=gap,
+        resolved_data="── resolved docs/PRINCIPLES.md ──\n...",
+    )
+
+    assert enriched is step
+    assert enriched.note is explicit
+    assert enriched.effective_note().summary == "principles doc reviewed against resolved evidence"
+
+
+def test_render_reason_context_prefers_step_notes_over_expanded_step_refs(monkeypatch):
+    traj = Trajectory()
+    parent = Step.create(
+        desc="compare runtime against principles",
+        content_refs=["compile.py", "docs/PRINCIPLES.md"],
+        note=StepNote(
+            summary="compile sequencing differs from documented flow",
+            drift=["PRINCIPLES.md omits current compile sequencing rule"],
+            mutation_implications=["docs/PRINCIPLES.md likely needs a targeted update"],
+        ),
+    )
+    traj.append(parent)
+
+    gap = Gap.create(
+        desc="decide whether principles edit is needed",
+        content_refs=["docs/PRINCIPLES.md"],
+        step_refs=[parent.hash],
+    )
+
+    class Hooks:
+        @staticmethod
+        def resolve_all_refs(step_refs, content_refs, trajectory):
+            assert step_refs == []
+            return "── resolved docs/PRINCIPLES.md ──\ncurrent principles content"
+
+    rendered = execution_engine._render_reason_context(gap, trajectory=traj, hooks=Hooks())
+
+    assert "## Current Gap Resolved Content" in rendered
+    assert "## Referenced Step Notes" in rendered
+    assert f"step:{parent.hash}" in rendered
+    assert "compile sequencing differs from documented flow" in rendered
+    assert "PRINCIPLES.md likely needs a targeted update" in rendered
+    assert "compile.py" in rendered
+    assert "resolved step:" not in rendered
 
 
 def test_render_step_network_shows_entities_packages_and_commands(tmp_path):
