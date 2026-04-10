@@ -1,6 +1,6 @@
-"""Stateless step-note generation for local artifact observations.
+"""Stateless step-note generation for artifact/entity observations.
 
-This module is intentionally narrow:
+This module is intentionally narrow in ownership, but not in note quality:
 
 - input: one local resolved evidence pack for the current gap
 - output: a structured StepNote, or None on failure
@@ -26,11 +26,19 @@ ENABLE_STATELESS_NOTES = os.environ.get("ENABLE_STATELESS_NOTES", "1").strip().l
 
 def build_note_context(*, gap_desc: str, resolved_data: str, step_refs: list[str], content_refs: list[str]) -> str:
     return (
-        "Write a compact structured note for a single observation step.\n"
+        "Write a rich structured note for a single observation step.\n"
+        "The note should be comprehensive enough that a later reasoning step can read this note and understand what the artifact or entity is, what it contains, what matters in it, and how it compares to directly referenced context without reopening the raw source unless necessary.\n"
         "The note must be grounded only in the provided resolved evidence.\n"
-        "Do not infer beyond the evidence.\n"
-        "Do not propose edits unless the evidence directly supports them.\n"
-        "Compare only against directly referenced prior context already present in the resolved block.\n"
+        "You may make careful comparative inferences only when they are directly supported by the resolved evidence and cited refs.\n"
+        "When multiple content refs are present, compare them explicitly and use `deltas`, `drift`, and `relations` to explain the semantic differences, agreements, dependencies, and tensions between them.\n"
+        "Summarize the artifact or entity itself, not just the workflow step around it.\n"
+        "Do not propose edits unless the evidence directly supports them, but do surface precise mutation implications when the evidence supports a concrete follow-on change, clarification, or preservation constraint.\n"
+        "Use `salient_observations` for the most important contents and claims inside the artifact.\n"
+        "Use `material_points` for the details a later model would need in order to reason about this artifact without rereading the whole resolved block.\n"
+        "Use `deltas` for changes in emphasis, scope, implementation detail, or wording between referenced artifacts.\n"
+        "Use `drift` for mismatches, incompleteness, partial implementation, ambiguity, or places where one artifact is more or less specific than another in a way that may matter later.\n"
+        "Use `relations` liberally when the evidence supports clear links such as supports, conflicts, depends_on, updates, aliases, or references.\n"
+        "Use `open_questions` only for real unresolved issues that remain after reading the evidence, not generic future work.\n"
         "Return JSON only with this shape:\n"
         '{'
         '"summary":"...",'
@@ -156,7 +164,9 @@ def generate_step_note(*, gap_desc: str, resolved_data: str, step_refs: list[str
                 {
                     "role": "system",
                     "content": (
-                        "You write compact evidence-grounded semantic notes for a runtime.\n"
+                        "You write rich evidence-grounded semantic notes for a runtime.\n"
+                        "Your notes should preserve enough artifact detail and comparative analysis that a later reasoning step can rely on the note as a semantic substitute for reopening the raw resolved source.\n"
+                        "When multiple artifacts or refs are present, compare them explicitly and capture the meaningful semantic differences.\n"
                         "Return strict JSON only.\n"
                         "Never include markdown fences unless unavoidable."
                     ),
@@ -170,4 +180,3 @@ def generate_step_note(*, gap_desc: str, resolved_data: str, step_refs: list[str
 
     raw = response.choices[0].message.content if response.choices else None
     return parse_step_note(raw or "")
-

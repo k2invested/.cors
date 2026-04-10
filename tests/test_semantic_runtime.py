@@ -84,6 +84,21 @@ def test_parse_step_note_accepts_fenced_json():
     assert note.relations[0].to_ref == "blob456"
 
 
+def test_build_note_context_requests_rich_multi_ref_comparison():
+    prompt = note_engine.build_note_context(
+        gap_desc="compare principles against runtime",
+        resolved_data="resolved artifact block",
+        step_refs=["step:abc123"],
+        content_refs=["docs/PRINCIPLES.md", "step.py"],
+    )
+
+    assert "rich structured note" in prompt
+    assert "comprehensive enough" in prompt
+    assert "When multiple content refs are present, compare them explicitly" in prompt
+    assert "Summarize the artifact or entity itself" in prompt
+    assert "Use `drift` for mismatches, incompleteness, partial implementation" in prompt
+
+
 def test_attach_generated_note_prefers_explicit_note(monkeypatch):
     gap = Gap.create(desc="resolve docs/PRINCIPLES.md", content_refs=["docs/PRINCIPLES.md"], step_refs=["step:abc123"])
     step = Step.create(desc="resolved: resolve docs/PRINCIPLES.md")
