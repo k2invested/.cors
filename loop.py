@@ -2106,6 +2106,32 @@ def _turn_text(step: Step, prefix: str) -> str:
     return step.desc[len(prefix):].strip()
 
 
+def _turn_chain_roots(trajectory: Trajectory, chain_ids: list[str]) -> list[str]:
+    chain_set = set(chain_ids)
+    gap_to_chain: dict[str, str] = {}
+    for chain_id in chain_ids:
+        chain = trajectory.chains.get(chain_id)
+        if chain is None:
+            continue
+        for step_hash in chain.steps:
+            step = trajectory.steps.get(step_hash)
+            if step is None:
+                continue
+            for gap in step.gaps:
+                gap_to_chain[gap.hash] = chain_id
+
+    child_chains: set[str] = set()
+    for chain_id in chain_ids:
+        chain = trajectory.chains.get(chain_id)
+        if chain is None:
+            continue
+        parent_id = gap_to_chain.get(chain.origin_gap)
+        if parent_id and parent_id != chain_id and parent_id in chain_set:
+            child_chains.add(chain_id)
+
+    return [chain_id for chain_id in chain_ids if chain_id not in child_chains]
+
+
 def _render_conversation_history(
     trajectory: Trajectory,
     registry: SkillRegistry,
@@ -2147,8 +2173,21 @@ def _render_conversation_history(
         lines = [f"User: {user_text}"]
         lines.append("Semantic Tree:")
         if turn_chains:
-            for _t, chain_id in turn_chains:
-                lines.append(trajectory.render_chain(chain_id, registry=registry, mode="collapsed"))
+            ordered_chain_ids = [chain_id for _t, chain_id in turn_chains]
+            root_chain_ids = _turn_chain_roots(trajectory, ordered_chain_ids)
+            if not root_chain_ids:
+                root_chain_ids = ordered_chain_ids
+            allowed_chain_ids = set(ordered_chain_ids)
+            for chain_id in root_chain_ids:
+                lines.append(
+                    trajectory.render_chain(
+                        chain_id,
+                        registry=registry,
+                        mode="collapsed",
+                        include_resolved_children=True,
+                        allowed_chain_ids=allowed_chain_ids,
+                    )
+                )
         else:
             lines.append("(no semantic tree recorded)")
         lines.append(f"Response: {response_text}")

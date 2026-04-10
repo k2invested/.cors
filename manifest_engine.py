@@ -345,10 +345,20 @@ def _runtime_child_chain_summary(chain) -> dict:
     }
 
 
-def _active_child_chain_map(traj: Trajectory, *, exclude_chain_id: str | None = None) -> dict[str, list[dict]]:
+def _child_chain_map(
+    traj: Trajectory,
+    *,
+    exclude_chain_id: str | None = None,
+    include_resolved: bool = False,
+    allowed_chain_ids: set[str] | None = None,
+) -> dict[str, list[dict]]:
     child_map: dict[str, list[dict]] = {}
     for chain in traj.chains.values():
-        if chain.hash == exclude_chain_id or chain.resolved:
+        if chain.hash == exclude_chain_id:
+            continue
+        if allowed_chain_ids is not None and chain.hash not in allowed_chain_ids:
+            continue
+        if chain.resolved and not include_resolved:
             continue
         child_map.setdefault(chain.origin_gap, []).append(_runtime_child_chain_summary(chain))
     return child_map
@@ -360,12 +370,15 @@ def _runtime_frontier_for_chain(
     current_chain_id: str,
     inline_gap_hashes: set[str],
     child_chain_map: dict[str, list[dict]],
+    allowed_chain_ids: set[str] | None = None,
     limit: int = 5,
 ) -> list[dict]:
     frontier: list[dict] = []
     seen: set[str] = set()
     for chain in traj.chains.values():
         if chain.hash == current_chain_id or chain.resolved:
+            continue
+        if allowed_chain_ids is not None and chain.hash not in allowed_chain_ids:
             continue
         for step_hash in chain.steps:
             step = traj.steps.get(step_hash)
@@ -516,11 +529,15 @@ def build_runtime_semantic_tree(steps: list[dict], *, source_type: str, source_r
         ]
         for gap in gaps:
             gap_hash = gap.get("hash")
-            active_children = list((child_chain_map or {}).get(gap_hash, []) or [])
+            child_chains = list((child_chain_map or {}).get(gap_hash, []) or [])
+            active_children = [child for child in child_chains if not child.get("resolved")]
+            resolved_children = [child for child in child_chains if child.get("resolved")]
             if gap.get("status") == "active":
                 gap["status"] = "open" if active_children else "pending"
             if active_children:
                 gap["child_chains"] = active_children
+            if resolved_children:
+                gap["resolved_child_chains"] = resolved_children
         primary_gap = next((gap for gap in gaps if gap.get("status") == "active"), None)
         if primary_gap is None:
             primary_gap = next((gap for gap in gaps if gap.get("status") == "open"), None)
@@ -713,7 +730,9 @@ def build_semantic_tree_from_trajectory(traj: Trajectory, *, chain_id: str | Non
                                         recent_n: int = 5, registry: SkillRegistry | None = None,
                                         chains_dir: Path = CHAINS_DIR, cors_root: Path = ROOT,
                                         tool_map: dict[str, dict] | None = None,
-                                        git: Any = None) -> dict:
+                                        git: Any = None,
+                                        include_resolved_children: bool = False,
+                                        allowed_chain_ids: set[str] | None = None) -> dict:
     git = git or _git_text
     if chain_id:
         chain = traj.chains.get(chain_id)
@@ -721,7 +740,12 @@ def build_semantic_tree_from_trajectory(traj: Trajectory, *, chain_id: str | Non
             chain = next((candidate for candidate in traj.chains.values() if candidate.hash == chain_id), None)
         if chain:
             steps = [traj.steps[step_hash].to_dict() for step_hash in chain.steps if step_hash in traj.steps]
-            child_chain_map = _active_child_chain_map(traj, exclude_chain_id=chain.hash)
+            child_chain_map = _child_chain_map(
+                traj,
+                exclude_chain_id=chain.hash,
+                include_resolved=include_resolved_children,
+                allowed_chain_ids=allowed_chain_ids,
+            )
             inline_gap_hashes = {
                 gap.hash
                 for step_hash in chain.steps
@@ -745,6 +769,7 @@ def build_semantic_tree_from_trajectory(traj: Trajectory, *, chain_id: str | Non
                     current_chain_id=chain.hash,
                     inline_gap_hashes=inline_gap_hashes,
                     child_chain_map=child_chain_map,
+                    allowed_chain_ids=allowed_chain_ids,
                 ),
             )
     steps = [step.to_dict() for step in traj.recent(recent_n)]

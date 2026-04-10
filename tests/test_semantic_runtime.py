@@ -759,6 +759,43 @@ def test_render_chain_marks_gap_open_and_shows_child_chain():
     assert f'chain:{child_chain.hash}  "child review in progress" (active, 1 steps)' in rendered
 
 
+def test_render_chain_can_inline_resolved_child_chain_into_parent_tree():
+    traj = Trajectory()
+    parent_gap = Gap.create(desc="spawn child review", content_refs=["blob:parent"])
+    parent_gap.vocab = "reason_needed"
+    parent_gap.resolved = True
+    parent_step = Step.create(desc="parent origin", gaps=[parent_gap])
+    traj.append(parent_step)
+
+    from step import Chain
+    parent_chain = Chain.create(origin_gap=parent_gap.hash, first_step=parent_step.hash)
+    parent_chain.resolved = True
+    traj.add_chain(parent_chain)
+
+    child_origin_step = Step.create(
+        desc="child activated",
+        note=StepNote(summary="child chain note"),
+    )
+    traj.append(child_origin_step)
+    child_chain = Chain.create(origin_gap=parent_gap.hash, first_step=child_origin_step.hash)
+    child_chain.desc = "child review complete"
+    child_chain.resolved = True
+    child_origin_step.chain_id = child_chain.hash
+    traj.add_chain(child_chain)
+
+    rendered = traj.render_chain(
+        parent_chain.hash,
+        mode="collapsed",
+        include_resolved_children=True,
+        allowed_chain_ids={parent_chain.hash, child_chain.hash},
+    )
+
+    assert f"gap:{parent_gap.hash}" in rendered
+    assert f'chain:{child_chain.hash}  "child review complete" (resolved)' in rendered
+    assert "child activated" in rendered
+    assert "child chain note" in rendered
+
+
 def test_render_chain_appends_remote_frontier_footer_for_other_unresolved_chains():
     traj = Trajectory()
 

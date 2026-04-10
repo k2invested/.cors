@@ -1047,12 +1047,35 @@ class Trajectory:
             return self._resolved_gap_status_label(gap)
         return "pending"
 
-    def _render_child_chain_lines(self, child_chains: list[dict], *, indent: str) -> list[str]:
+    def _render_child_chain_lines(
+        self,
+        child_chains: list[dict],
+        *,
+        indent: str,
+        registry=None,
+        mode: str = "full",
+        include_resolved_children: bool = False,
+        allowed_chain_ids: set[str] | None = None,
+        expand: bool = False,
+    ) -> list[str]:
         lines: list[str] = []
         for index, chain in enumerate(child_chains):
             branch = "└" if index == len(child_chains) - 1 else "├"
             desc = chain.get("desc") or "in progress"
             status = "resolved" if chain.get("resolved") else f"active, {chain.get('step_count', 0)} steps"
+            if expand and chain.get("resolved") and chain.get("id"):
+                rendered = self.render_chain(
+                    chain.get("id"),
+                    registry=registry,
+                    mode=mode,
+                    include_resolved_children=include_resolved_children,
+                    allowed_chain_ids=allowed_chain_ids,
+                ).splitlines()
+                if rendered:
+                    lines.append(f"{indent}{branch}─ {rendered[0]}")
+                    child_indent = f"{indent}{'   ' if index == len(child_chains) - 1 else '│  '}"
+                    lines.extend(f"{child_indent}{line}" for line in rendered[1:])
+                    continue
             lines.append(f"{indent}{branch}─ chain:{chain.get('id')}  \"{desc}\" ({status})")
         return lines
 
@@ -1168,8 +1191,15 @@ class Trajectory:
 
         return "\n".join(lines)
 
-    def render_chain(self, chain_id: str, registry=None, highlight_gap: str | None = None,
-                     mode: str = "full") -> str:
+    def render_chain(
+        self,
+        chain_id: str,
+        registry=None,
+        highlight_gap: str | None = None,
+        mode: str = "full",
+        include_resolved_children: bool = False,
+        allowed_chain_ids: set[str] | None = None,
+    ) -> str:
         """Render one chain as a semantic tree.
 
         Used for active-chain injection during iteration. Optionally marks
@@ -1179,12 +1209,30 @@ class Trajectory:
         if not chain:
             return f"(missing chain: {chain_id})"
         import manifest_engine as manifest_engine_module
-        tree = manifest_engine_module.build_semantic_tree_from_trajectory(self, chain_id=chain_id, registry=registry, cors_root=ROOT)
-        return "\n".join(self._render_semantic_tree_lines(tree, registry=registry, highlight_gap=highlight_gap, mode=mode))
+        tree = manifest_engine_module.build_semantic_tree_from_trajectory(
+            self,
+            chain_id=chain_id,
+            registry=registry,
+            cors_root=ROOT,
+            include_resolved_children=include_resolved_children,
+            allowed_chain_ids=allowed_chain_ids,
+        )
+        return "\n".join(
+            self._render_semantic_tree_lines(
+                tree,
+                registry=registry,
+                highlight_gap=highlight_gap,
+                mode=mode,
+                include_resolved_children=include_resolved_children,
+                allowed_chain_ids=allowed_chain_ids,
+            )
+        )
 
     def _render_semantic_tree_lines(self, tree: dict, registry=None,
                                     highlight_gap: str | None = None,
-                                    mode: str = "full") -> list[str]:
+                                    mode: str = "full",
+                                    include_resolved_children: bool = False,
+                                    allowed_chain_ids: set[str] | None = None) -> list[str]:
         nodes = list(tree.get("nodes", []) or [])
         if tree.get("source_type") == "realized_chain":
             desc = tree.get("desc") or "in progress"
@@ -1274,6 +1322,16 @@ class Trajectory:
                             f"  {cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
                             f"gap:{gap_obj.hash}{desc_part}{gref_str} ({self._resolved_gap_status_label(gap_obj)}){focus}"
                         )
+                        resolved_child_lines = self._render_child_chain_lines(
+                            list(gap.get("resolved_child_chains", []) or []),
+                            indent=f"  {cont}   {' ' if is_last_gap else '│'}  ",
+                            registry=registry,
+                            mode=mode,
+                            include_resolved_children=include_resolved_children,
+                            allowed_chain_ids=allowed_chain_ids,
+                            expand=include_resolved_children,
+                        )
+                        lines.extend(resolved_child_lines)
                     else:
                         vocab_str = f" [{gap_obj.vocab}]" if gap_obj.vocab else ""
                         desc_part = f" \"{gap_desc}\"" if gap_desc else ""
@@ -1285,8 +1343,23 @@ class Trajectory:
                         child_lines = self._render_child_chain_lines(
                             list(gap.get("child_chains", []) or []),
                             indent=f"  {cont}   {' ' if is_last_gap else '│'}  ",
+                            registry=registry,
+                            mode=mode,
+                            include_resolved_children=include_resolved_children,
+                            allowed_chain_ids=allowed_chain_ids,
+                            expand=False,
                         )
                         lines.extend(child_lines)
+                        resolved_child_lines = self._render_child_chain_lines(
+                            list(gap.get("resolved_child_chains", []) or []),
+                            indent=f"  {cont}   {' ' if is_last_gap else '│'}  ",
+                            registry=registry,
+                            mode=mode,
+                            include_resolved_children=include_resolved_children,
+                            allowed_chain_ids=allowed_chain_ids,
+                            expand=include_resolved_children,
+                        )
+                        lines.extend(resolved_child_lines)
             frontier_lines = self._render_frontier_lines(list(tree.get("frontier", []) or []), registry=registry)
             if frontier_lines:
                 lines.append("  frontier")
@@ -1356,6 +1429,16 @@ class Trajectory:
                         f"{cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
                         f"gap:{gap_obj.hash}{desc_part}{gref_str} ({self._resolved_gap_status_label(gap_obj)})"
                     )
+                    resolved_child_lines = self._render_child_chain_lines(
+                        list(gap.get("resolved_child_chains", []) or []),
+                        indent=f"{cont}   {' ' if is_last_gap else '│'}  ",
+                        registry=registry,
+                        mode=mode,
+                        include_resolved_children=include_resolved_children,
+                        allowed_chain_ids=allowed_chain_ids,
+                        expand=include_resolved_children,
+                    )
+                    lines.extend(resolved_child_lines)
                 else:
                     vocab_str = f" [{gap_obj.vocab}]" if gap_obj.vocab else ""
                     gap_desc = self._gap_desc_for_render(node.get("goal", ""), gap_obj.desc)
@@ -1368,8 +1451,23 @@ class Trajectory:
                     child_lines = self._render_child_chain_lines(
                         list(gap.get("child_chains", []) or []),
                         indent=f"{cont}   {' ' if is_last_gap else '│'}  ",
+                        registry=registry,
+                        mode=mode,
+                        include_resolved_children=include_resolved_children,
+                        allowed_chain_ids=allowed_chain_ids,
+                        expand=False,
                     )
                     lines.extend(child_lines)
+                    resolved_child_lines = self._render_child_chain_lines(
+                        list(gap.get("resolved_child_chains", []) or []),
+                        indent=f"{cont}   {' ' if is_last_gap else '│'}  ",
+                        registry=registry,
+                        mode=mode,
+                        include_resolved_children=include_resolved_children,
+                        allowed_chain_ids=allowed_chain_ids,
+                        expand=include_resolved_children,
+                    )
+                    lines.extend(resolved_child_lines)
         frontier_lines = self._render_frontier_lines(list(tree.get("frontier", []) or []), registry=registry)
         if frontier_lines:
             lines.extend(frontier_lines)
