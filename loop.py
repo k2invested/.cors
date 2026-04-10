@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from env_loader import load_env
-from step import Step, Gap, Epistemic, Trajectory, Chain
+from step import Step, Gap, Epistemic, Trajectory, Chain, StepNote
 from compile import (
     ChainState, Compiler, GovernorSignal, is_mutate, is_observe,
 )
@@ -1869,9 +1869,11 @@ def _parse_step_output(raw: str, step_refs: list[str], content_refs: list[str],
     Extract the gaps from the JSON, build a Step.
     """
     gaps = []
+    note: StepNote | None = None
     data, json_start = _extract_json_block(raw)
     try:
         if data:
+            note = StepNote.from_dict(data.get("note"))
             for g in data.get("gaps", []):
                 canonical_content_refs = _canonicalize_content_refs(g.get("content_refs", []))
                 gap = Gap.create(
@@ -1904,6 +1906,7 @@ def _parse_step_output(raw: str, step_refs: list[str], content_refs: list[str],
         content_refs=_canonicalize_content_refs(content_refs),
         gaps=gaps,
         chain_id=chain_id,
+        note=note,
     )
 
     return step, gaps

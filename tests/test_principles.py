@@ -1135,6 +1135,7 @@ P12_CASES = [
     ("parse_step_output_sets_turn_id", lambda: (lambda old: (setattr(loop, "_turn_counter", 9), loop._parse_step_output('x {\"gaps\":[{\"desc\":\"g\"}]}', [], [])[1][0].turn_id, setattr(loop, "_turn_counter", old))[1] == 9)(loop._turn_counter)),
     ("parse_step_output_zeros_grounded", lambda: loop._parse_step_output('x {"gaps":[{"desc":"g","grounded":1.0}]}', [], [])[1][0].scores.grounded == 0.0),
     ("parse_step_output_uses_prefix_desc", lambda: loop._parse_step_output('observed issue {"gaps":[]}', [], [])[0].desc == "observed issue"),
+    ("parse_step_output_persists_top_level_note", lambda: (lambda step: step.note is not None and step.note.summary == "reasoned over chain" and step.note.drift == ["runtime/doc mismatch"])(loop._parse_step_output('reason {"note":{"summary":"reasoned over chain","drift":["runtime/doc mismatch"]},"gaps":[]}', [], [])[0])),
     ("extract_json_parses_block", lambda: loop._extract_json('text {"a": 1}') == {"a": 1}),
     ("extract_json_invalid_returns_none", lambda: loop._extract_json("not json") is None),
     ("extract_command_reads_command_field", lambda: loop._extract_command('{"command": "echo hi"}') == "echo hi"),

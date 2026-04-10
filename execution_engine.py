@@ -142,12 +142,16 @@ def _reason_controller_prompt(gap: Gap) -> str:
         "Treat resolved files and hashes as already-observed evidence that has been summarized into the chain; do not reframe the task as raw file review unless a fresh observation gap is actually needed.\n"
         "Use the accumulated step notes to compare, contrast, detect drift, and decide whether a targeted edit or follow-on abstraction is required.\n"
         "Choose the next abstraction required in the current turn.\n"
-        "If a child workflow should run, you may respond with JSON only:\n"
-        '{"activate_ref": "<workflow-hash>", "prompt": "task for the child workflow", "await_needed": true, "content_refs": ["relevant content hash or path"], "step_refs": ["relevant step hash"]}\n'
+        "Always include a top-level `note` object in your JSON so the reasoning step persists its judgment.\n"
+        "Use this note shape:\n"
+        '{"note":{"summary":"...","salient_observations":["..."],"material_points":["..."],"deltas":["..."],"relations":[{"type":"supports|conflicts|depends_on|updates|aliases|references","from_ref":"...","to_ref":"...","note":"..."}],"drift":["..."],"mutation_implications":["..."],"open_questions":["..."]},"gaps":[...]}\n'
+        "If a child workflow should run, you may respond with JSON only in this shape:\n"
+        '{"note":{"summary":"...","salient_observations":["..."],"material_points":["..."],"deltas":["..."],"relations":[{"type":"supports|conflicts|depends_on|updates|aliases|references","from_ref":"...","to_ref":"...","note":"..."}],"drift":["..."],"mutation_implications":["..."],"open_questions":["..."]},"activate_ref":"<workflow-hash>","prompt":"task for the child workflow","await_needed":true,"content_refs":["relevant content hash or path"],"step_refs":["relevant step hash"]}\n'
         "or the same shape with await_needed=false.\n"
         "Use only public workflow hashes.\n"
         "- If judgment and existing context are enough, emit the next clarified gap(s) or no gaps.\n"
         "- Prefer reasoning from the existing chain and note structure over surfacing another observation gap when the needed evidence is already present in the semantic tree.\n"
+        "- Use the note as your explicit reasoning record: summarize what mattered, what drift exists or does not exist, and what edit or no-edit decision follows from the evidence.\n"
         "- Use reason_needed for structural ambiguity, competing interpretations, semantic boundary crossing, and deciding the next concrete abstraction.\n"
         "- tool_needed, vocab_reg_needed, and clarify_needed may only be surfaced through reason_needed.\n"
         "- reprogramme_needed may only be surfaced when semantic persistence into entity/admin state is already warranted; it edits semantic profile state only and should not be used for delete, remove, unlink, move, or rename operations.\n"
