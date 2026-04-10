@@ -58,7 +58,7 @@ from compile import (
     vocab_priority,
 )
 from skills.loader import Skill, SkillRegistry, SkillStep, load_all, load_skill
-from step import Chain, Epistemic, Gap, Step, Trajectory, absolute_time, blob_hash, chain_hash, relative_time
+from step import Chain, Epistemic, Gap, RelationNote, Step, StepNote, Trajectory, absolute_time, blob_hash, chain_hash, relative_time
 from system import chain_registry as chain_registry_module
 from system import control_surface as control_surface_module
 from system import hash_registry as hash_registry_module
@@ -302,6 +302,22 @@ P1_CASES = [
     ).all_refs()) == {"step_parent", "blob_parent", "step_child", "blob_child"}),
     ("step_roundtrip_desc", lambda: Step.from_dict(make_step("roundtrip").to_dict()).desc == "roundtrip"),
     ("step_roundtrip_commit", lambda: Step.from_dict(make_step("roundtrip", commit="abc").to_dict()).commit == "abc"),
+    ("step_roundtrip_note_summary", lambda: (
+        lambda restored: restored.note is not None and restored.note.summary == "roundtrip"
+    )(Step.from_dict(make_step("roundtrip").to_dict()))),
+    ("step_preserves_explicit_note_relations", lambda: (
+        lambda restored: restored.note is not None and restored.note.relations[0].type == "conflicts"
+    )(
+        Step.from_dict(
+            Step.create(
+                "explicit note",
+                note=StepNote(
+                    summary="compare docs to runtime",
+                    relations=[RelationNote(type="conflicts", from_ref="docs", to_ref="runtime", note="priority mismatch")],
+                ),
+            ).to_dict()
+        )
+    )),
     ("step_roundtrip_rogue", lambda: (lambda restored: restored.rogue and restored.rogue_kind == "policy_violation")(
         Step.from_dict(Step.create("rogue", rogue=True, rogue_kind="policy_violation", failure_source="tree_policy").to_dict())
     )),

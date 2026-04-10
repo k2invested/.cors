@@ -32,6 +32,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 from vocab_registry import BRIDGE_VOCAB, MUTATE_VOCAB, OBSERVE_VOCAB
 
 
@@ -133,6 +134,189 @@ class Epistemic:
 
     def magnitude(self) -> float:
         return sum(v ** 2 for v in self.as_vector()) ** 0.5
+
+
+@dataclass
+class RelationNote:
+    """Compact relation extracted while comparing resolved refs."""
+
+    type: str
+    from_ref: str
+    to_ref: str
+    note: str = ""
+
+    def to_dict(self) -> dict:
+        data = {
+            "type": self.type,
+            "from_ref": self.from_ref,
+            "to_ref": self.to_ref,
+        }
+        if self.note:
+            data["note"] = self.note
+        return data
+
+    @staticmethod
+    def from_dict(data: dict) -> "RelationNote":
+        return RelationNote(
+            type=str(data.get("type", "")),
+            from_ref=str(data.get("from_ref", "")),
+            to_ref=str(data.get("to_ref", "")),
+            note=str(data.get("note", "")),
+        )
+
+
+@dataclass
+class StepNote:
+    """Persisted working note for later compare/contrast over the trajectory."""
+
+    summary: str = ""
+    salient_observations: list[str] = field(default_factory=list)
+    material_points: list[str] = field(default_factory=list)
+    deltas: list[str] = field(default_factory=list)
+    relations: list[RelationNote] = field(default_factory=list)
+    drift: list[str] = field(default_factory=list)
+    mutation_implications: list[str] = field(default_factory=list)
+    open_questions: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        data: dict[str, object] = {}
+        if self.summary:
+            data["summary"] = self.summary
+        if self.salient_observations:
+            data["salient_observations"] = list(self.salient_observations)
+        if self.material_points:
+            data["material_points"] = list(self.material_points)
+        if self.deltas:
+            data["deltas"] = list(self.deltas)
+        if self.relations:
+            data["relations"] = [relation.to_dict() for relation in self.relations]
+        if self.drift:
+            data["drift"] = list(self.drift)
+        if self.mutation_implications:
+            data["mutation_implications"] = list(self.mutation_implications)
+        if self.open_questions:
+            data["open_questions"] = list(self.open_questions)
+        return data
+
+    @staticmethod
+    def from_dict(data: dict | None) -> "StepNote" | None:
+        if not isinstance(data, dict):
+            return None
+        return StepNote(
+            summary=str(data.get("summary", "")),
+            salient_observations=list(data.get("salient_observations", []) or []),
+            material_points=list(data.get("material_points", []) or []),
+            deltas=list(data.get("deltas", []) or []),
+            relations=[
+                RelationNote.from_dict(item)
+                for item in list(data.get("relations", []) or [])
+                if isinstance(item, dict)
+            ],
+            drift=list(data.get("drift", []) or []),
+            mutation_implications=list(data.get("mutation_implications", []) or []),
+            open_questions=list(data.get("open_questions", []) or []),
+        )
+
+
+def _compact_line(text: str, limit: int = 200) -> str:
+    line = " ".join(str(text).strip().split())
+    if len(line) <= limit:
+        return line
+    return line[: limit - 3].rstrip() + "..."
+
+
+def _first_nonempty_line(text: str | None) -> str | None:
+    if not text:
+        return None
+    for line in str(text).splitlines():
+        stripped = line.strip()
+        if stripped:
+            return _compact_line(stripped)
+    return None
+
+
+def _extract_drift_lines(assessment: list[str]) -> list[str]:
+    drift: list[str] = []
+    for line in assessment:
+        normalized = line.strip()
+        if not normalized:
+            continue
+        lowered = normalized.lower()
+        if "drift" in lowered or "conflict" in lowered or "violation" in lowered or "rejected" in lowered:
+            drift.append(_compact_line(normalized))
+    return drift[:4]
+
+
+def _derive_step_note(step: "Step") -> StepNote:
+    summary = _compact_line(step.desc, limit=240)
+    assessment_lines = [_compact_line(line) for line in list(step.assessment or []) if str(line).strip()]
+    salient_observations = assessment_lines[:3]
+
+    material_points: list[str] = []
+    if step.step_refs or step.content_refs:
+        material_points.append(
+            f"grounded in {len(step.step_refs)} step ref(s) and {len(step.content_refs)} content ref(s)"
+        )
+    active = len(step.active_gaps())
+    resolved = len([gap for gap in step.gaps if gap.resolved])
+    dormant = len(step.dormant_gaps())
+    if step.gaps:
+        material_points.append(
+            f"surfaced {len(step.gaps)} gap(s): active={active}, resolved={resolved}, dormant={dormant}"
+        )
+
+    deltas: list[str] = []
+    if step.commit:
+        deltas.append(f"mutation committed at {step.commit}")
+    if step.rogue:
+        failure_parts = [part for part in [step.rogue_kind, step.failure_source, _first_nonempty_line(step.failure_detail)] if part]
+        if failure_parts:
+            deltas.append(_compact_line("rogue transition: " + " | ".join(failure_parts), limit=220))
+
+    relations: list[RelationNote] = []
+    for ref in step.step_refs[:3]:
+        relations.append(
+            RelationNote(
+                type="follows",
+                from_ref=step.hash,
+                to_ref=ref,
+                note="current step follows cited execution provenance",
+            )
+        )
+    relation_type = "updates" if step.commit else "references"
+    relation_note = "mutation touches referenced content" if step.commit else "current step grounded in referenced content"
+    for ref in step.content_refs[:4]:
+        relations.append(
+            RelationNote(
+                type=relation_type,
+                from_ref=step.hash,
+                to_ref=ref,
+                note=relation_note,
+            )
+        )
+
+    drift = _extract_drift_lines(assessment_lines)
+
+    mutation_implications: list[str] = []
+    if step.commit:
+        mutation_implications.append("re-resolve touched content before any follow-on reasoning or mutation")
+    elif active:
+        mutation_implications.append(f"{active} active gap(s) remain before local closure")
+
+    open_questions: list[str] = []
+    for gap in step.active_gaps()[:3]:
+        open_questions.append(_compact_line(gap.desc))
+
+    return StepNote(
+        summary=summary,
+        salient_observations=salient_observations,
+        material_points=material_points,
+        deltas=deltas,
+        relations=relations,
+        drift=drift,
+        mutation_implications=mutation_implications,
+        open_questions=open_questions,
+    )
 
 
 # ── Gap ───────────────────────────────────────────────────────────────────
@@ -257,6 +441,7 @@ class Step:
     failure_source: Optional[str] = None  # which tool/runtime path failed
     failure_detail: Optional[str] = None  # compact machine-visible failure summary
     assessment:   list[str] = field(default_factory=list)  # deterministic post-observation / commit assessment
+    note:         StepNote | None = None  # persisted compare/contrast note for later reasoning
 
     @staticmethod
     def create(desc: str,
@@ -270,7 +455,8 @@ class Step:
                rogue_kind: str | None = None,
                failure_source: str | None = None,
                failure_detail: str | None = None,
-               assessment: list[str] | None = None) -> "Step":
+               assessment: list[str] | None = None,
+               note: StepNote | None = None) -> "Step":
         t = time.time()
         srefs = step_refs or []
         crefs = content_refs or []
@@ -290,6 +476,7 @@ class Step:
             failure_source=failure_source,
             failure_detail=failure_detail,
             assessment=assessment or [],
+            note=note,
         )
 
     def is_mutation(self) -> bool:
@@ -321,6 +508,9 @@ class Step:
             refs.extend(g.step_refs)
         return refs
 
+    def effective_note(self) -> StepNote:
+        return self.note if self.note is not None else _derive_step_note(self)
+
     def to_dict(self) -> dict:
         d = {
             "hash": self.hash,
@@ -346,6 +536,9 @@ class Step:
             d["failure_detail"] = self.failure_detail
         if self.assessment:
             d["assessment"] = self.assessment
+        note = self.effective_note()
+        if note:
+            d["note"] = note.to_dict()
         return d
 
     @staticmethod
@@ -394,6 +587,7 @@ class Step:
             failure_source=d.get("failure_source"),
             failure_detail=d.get("failure_detail"),
             assessment=d.get("assessment", []),
+            note=StepNote.from_dict(d.get("note")),
         )
 
 
@@ -760,6 +954,53 @@ class Trajectory:
             "resolved -> rogue handoff = original gap closed by explicit failure handoff"
         )
 
+    def _coerce_step_note(self, raw: StepNote | dict | None) -> StepNote | None:
+        if isinstance(raw, StepNote):
+            return raw
+        if isinstance(raw, dict):
+            return StepNote.from_dict(raw)
+        return None
+
+    def _render_step_note_collapsed_lines(self, raw: StepNote | dict | None, indent: str) -> list[str]:
+        note = self._coerce_step_note(raw)
+        if note is None or not note.summary:
+            return []
+        lines = [f"{indent}note.summary: {note.summary}"]
+        drift = note.drift[:1]
+        for line in drift:
+            lines.append(f"{indent}note.drift: {line}")
+        mutation = note.mutation_implications[:1]
+        for line in mutation:
+            lines.append(f"{indent}note.mutation: {line}")
+        return lines
+
+    def _render_step_note_full_lines(self, raw: StepNote | dict | None, indent: str) -> list[str]:
+        note = self._coerce_step_note(raw)
+        if note is None or not note.summary:
+            return []
+        lines = [f"{indent}note.summary: {note.summary}"]
+        for section_name, values in (
+            ("material", note.material_points),
+            ("observed", note.salient_observations),
+            ("deltas", note.deltas),
+            ("drift", note.drift),
+            ("mutation", note.mutation_implications),
+            ("open", note.open_questions),
+        ):
+            for line in values:
+                lines.append(f"{indent}note.{section_name}: {line}")
+        for relation in note.relations:
+            relation_line = f"{relation.type} {relation.from_ref} -> {relation.to_ref}"
+            if relation.note:
+                relation_line += f" \"{relation.note}\""
+            lines.append(f"{indent}note.relation: {relation_line}")
+        return lines
+
+    def _render_step_note_lines(self, raw: StepNote | dict | None, indent: str, mode: str) -> list[str]:
+        if mode == "collapsed":
+            return self._render_step_note_collapsed_lines(raw, indent)
+        return self._render_step_note_full_lines(raw, indent)
+
     def _compact_contract_suffix(self, node: dict) -> str:
         effective = dict(node.get("effective_contract", {}) or {})
         if not effective:
@@ -990,6 +1231,7 @@ class Trajectory:
                 )
                 for assessment_line in meta.get("assessment", []) or []:
                     lines.append(f"  {cont}   assessment: {assessment_line}")
+                lines.extend(self._render_step_note_lines(meta.get("note"), f"  {cont}   ", mode))
                 gaps = list(node.get("gaps", []) or ([] if not node.get("gap") else [node.get("gap")]))
                 active = [gap for gap in gaps if gap.get("status") in {"active", "open", "pending"}]
                 open_gaps = [gap for gap in active if gap.get("status") == "open"]
@@ -1072,6 +1314,7 @@ class Trajectory:
             )
             for assessment_line in meta.get("assessment", []) or []:
                 lines.append(f"{cont}   assessment: {assessment_line}")
+            lines.extend(self._render_step_note_lines(meta.get("note"), f"{cont}   ", mode))
             gaps = list(node.get("gaps", []) or ([] if not node.get("gap") else [node.get("gap")]))
             active = [gap for gap in gaps if gap.get("status") in {"active", "open", "pending"}]
             open_gaps = [gap for gap in active if gap.get("status") == "open"]
@@ -1168,6 +1411,7 @@ class Trajectory:
             )
             for assessment_line in step.assessment:
                 lines.append(f"  {cont}   assessment: {assessment_line}")
+            lines.extend(self._render_step_note_lines(step.effective_note(), f"  {cont}   ", "full"))
 
             active = [g for g in step.gaps if not g.dormant and not g.resolved]
             resolved = [g for g in step.gaps if g.resolved]
@@ -1221,6 +1465,7 @@ class Trajectory:
             )
             for assessment_line in step.assessment:
                 lines.append(f"{cont}   assessment: {assessment_line}")
+            lines.extend(self._render_step_note_lines(step.effective_note(), f"{cont}   ", "collapsed"))
 
             for j, gap in enumerate(step.gaps):
                 is_last_gap = (j == len(step.gaps) - 1)
@@ -1264,4 +1509,5 @@ class Trajectory:
             )
             for assessment_line in step.assessment:
                 lines.append(f"  │   assessment: {assessment_line}")
+            lines.extend(self._render_step_note_lines(step.effective_note(), "  │   ", "collapsed"))
         return lines

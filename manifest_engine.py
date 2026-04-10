@@ -586,6 +586,7 @@ def build_runtime_semantic_tree(steps: list[dict], *, source_type: str, source_r
                     "failure_source": step.get("failure_source"),
                     "failure_detail": step.get("failure_detail"),
                     "assessment": list(step.get("assessment", []) or []),
+                    "note": dict(step.get("note", {}) or {}),
                 },
             }
         )

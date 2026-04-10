@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT))
 import loop
 import manifest_engine as me
 from compile import Compiler
-from step import Gap, Step, Trajectory
+from step import Gap, Step, StepNote, Trajectory
 from skills.loader import Skill, SkillStep, load_all, load_skill
 
 
@@ -473,6 +473,64 @@ def test_render_chain_collapsed_mode_summarizes_history():
     assert "earlier resolved step(s) collapsed" in rendered
 
 
+def test_render_recent_collapsed_mode_shows_note_summary_only():
+    traj = Trajectory()
+    step = Step.create(
+        desc="compare docs to runtime",
+        note=StepNote(
+            summary="compared docs against runtime registry",
+            material_points=["docs say reason priority 90"],
+            drift=["priority mismatch detected"],
+            mutation_implications=["edit docs, do not mutate runtime"],
+        ),
+    )
+    traj.append(step)
+
+    rendered = traj.render_recent(5, mode="collapsed")
+    assert "note.summary: compared docs against runtime registry" in rendered
+    assert "note.drift: priority mismatch detected" in rendered
+    assert "note.material:" not in rendered
+
+
+def test_render_chain_full_mode_shows_full_step_note_sections():
+    traj = Trajectory()
+    origin_gap = Gap.create(desc="review principle drift", content_refs=["docs/PRINCIPLES.md"])
+    origin_gap.vocab = "reason_needed"
+    origin_step = Step.create(desc="origin", gaps=[origin_gap])
+    traj.append(origin_step)
+
+    from step import Chain
+    chain = Chain.create(origin_gap=origin_gap.hash, first_step=origin_step.hash)
+    traj.add_chain(chain)
+
+    work_gap = Gap.create(desc="edit docs", content_refs=["docs/PRINCIPLES.md"], step_refs=[origin_step.hash])
+    work_gap.vocab = "hash_edit_needed"
+    work_step = Step.create(
+        desc="compare docs to runtime",
+        step_refs=[origin_step.hash],
+        content_refs=["docs/PRINCIPLES.md", "vocab_registry.py"],
+        gaps=[work_gap],
+        note=StepNote(
+            summary="compared docs to runtime registry",
+            material_points=["docs list reason priority 90", "runtime registry sets 30"],
+            deltas=["observed a documented/runtime mismatch"],
+            drift=["priority mismatch", "architect_needed missing from docs"],
+            mutation_implications=["docs should be updated, runtime should remain unchanged"],
+        ),
+    )
+    traj.append(work_step)
+    old_hash = chain.hash
+    chain.add_step(work_step.hash)
+    del traj.chains[old_hash]
+    traj.chains[chain.hash] = chain
+
+    rendered = traj.render_chain(chain.hash, mode="full")
+    assert "note.summary: compared docs to runtime registry" in rendered
+    assert "note.material: docs list reason priority 90" in rendered
+    assert "note.drift: priority mismatch" in rendered
+    assert "note.mutation: docs should be updated, runtime should remain unchanged" in rendered
+
+
 def test_render_chain_keeps_refs_on_resolved_gap_lines():
     traj = Trajectory()
     origin_gap = Gap.create(desc="review target", content_refs=["blob:abc123"], step_refs=["seed123"])
@@ -623,3 +681,20 @@ def test_build_runtime_semantic_tree_attaches_effective_contract_for_foundation_
     assert node["effective_contract"]["ref"] == hash_edit.hash
     assert node["effective_contract"]["default_gap"] == "hash_edit_needed"
     assert node["effective_contract"]["effective_gap"] == "hash_edit_needed"
+
+
+def test_build_runtime_semantic_tree_carries_step_note_into_meta():
+    step = Step.create(
+        desc="compare docs to runtime",
+        note=StepNote(summary="compared docs to runtime registry", drift=["priority mismatch"]),
+    )
+
+    tree = me.build_runtime_semantic_tree(
+        [step.to_dict()],
+        source_type="trajectory_recent",
+        source_ref="recent",
+    )
+
+    node = tree["nodes"][0]
+    assert node["meta"]["note"]["summary"] == "compared docs to runtime registry"
+    assert node["meta"]["note"]["drift"] == ["priority mismatch"]

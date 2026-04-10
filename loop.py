@@ -955,6 +955,13 @@ def _render_step_tree(step, trajectory: Trajectory, depth: int = 0,
     lines = [f"{indent}{sig_prefix}step:{step.hash} \"{step.desc}\"{ref_str}{commit_str}{time_tag}{rogue_tag}"]
     for assessment_line in getattr(step, "assessment", []) or []:
         lines.append(f"{indent}  assessment: {assessment_line}")
+    note = step.effective_note() if hasattr(step, "effective_note") else getattr(step, "note", None)
+    if note and getattr(note, "summary", ""):
+        lines.append(f"{indent}  note.summary: {note.summary}")
+        for line in list(getattr(note, "material_points", []) or [])[:2]:
+            lines.append(f"{indent}  note.material: {line}")
+        for line in list(getattr(note, "drift", []) or [])[:1]:
+            lines.append(f"{indent}  note.drift: {line}")
 
     # Gaps as child branches
     for gap in step.gaps:
@@ -2642,7 +2649,7 @@ def _run_no_gap_discord_profile_sync(
         sync_session.inject(f"## Bound Contact Entity\n{entity_data}")
     sync_session.inject(
         "## Recent Trajectory\n"
-        f"{trajectory.render_recent(TRAJECTORY_WINDOW, registry=registry)}"
+        f"{trajectory.render_recent(TRAJECTORY_WINDOW, registry=registry, mode='collapsed')}"
     )
 
     frame = st_builder_module.semantic_skeleton_from_st(
