@@ -129,13 +129,17 @@ def _extract_reason_activation_intent(raw: str, hooks: ExecutionHooks) -> dict[s
 def _reason_controller_prompt(gap: Gap) -> str:
     return (
         f"Reason over the current semantic tree for gap:{gap.hash} \"{gap.desc}\".\n"
-        "Treat the injected trajectory and active chain as your historical progress while processing the user's message.\n"
+        "Treat the injected trajectory, active chain, and persisted step notes as your historical progress while processing the user's message.\n"
+        "Reason over the step trajectory and semantic tree first.\n"
+        "Treat resolved files and hashes as already-observed evidence that has been summarized into the chain; do not reframe the task as raw file review unless a fresh observation gap is actually needed.\n"
+        "Use the accumulated step notes to compare, contrast, detect drift, and decide whether a targeted edit or follow-on abstraction is required.\n"
         "Choose the next abstraction required in the current turn.\n"
         "If a child workflow should run, you may respond with JSON only:\n"
         '{"activate_ref": "<workflow-hash>", "prompt": "task for the child workflow", "await_needed": true, "content_refs": ["relevant content hash or path"], "step_refs": ["relevant step hash"]}\n'
         "or the same shape with await_needed=false.\n"
         "Use only public workflow hashes.\n"
         "- If judgment and existing context are enough, emit the next clarified gap(s) or no gaps.\n"
+        "- Prefer reasoning from the existing chain and note structure over surfacing another observation gap when the needed evidence is already present in the semantic tree.\n"
         "- Use reason_needed for structural ambiguity, competing interpretations, semantic boundary crossing, and deciding the next concrete abstraction.\n"
         "- tool_needed, vocab_reg_needed, and clarify_needed may only be surfaced through reason_needed.\n"
         "- reprogramme_needed may only be surfaced when semantic persistence into entity/admin state is already warranted; it edits semantic profile state only and should not be used for delete, remove, unlink, move, or rename operations.\n"
@@ -177,37 +181,6 @@ def _step_ref_content_refs(step_refs: list[str], trajectory: Any) -> list[str]:
             continue
         carried = _merge_dedupe_refs(carried, step.content_refs)
     return carried
-
-
-def _ground_emitted_gaps_for_admission(
-    child_gaps: list[Gap],
-    *,
-    trajectory: Any,
-    hooks: ExecutionHooks,
-) -> list[tuple[Gap, str]]:
-    grounded: list[tuple[Gap, str]] = []
-    for child_gap in child_gaps:
-        carried_content_refs = _step_ref_content_refs(child_gap.step_refs, trajectory)
-        if carried_content_refs:
-            child_gap.content_refs = _merge_dedupe_refs(child_gap.content_refs, carried_content_refs)
-        resolved = hooks.resolve_all_refs(child_gap.step_refs, child_gap.content_refs, trajectory)
-        grounded.append((child_gap, resolved))
-    return grounded
-
-
-def _inject_candidate_gap_grounding(
-    session: Any,
-    grounded: list[tuple[Gap, str]],
-) -> None:
-    lines: list[str] = []
-    for child_gap, resolved in grounded:
-        if not resolved:
-            continue
-        lines.append(f"### gap:{child_gap.hash}")
-        lines.append(child_gap.desc)
-        lines.append(resolved)
-    if lines:
-        session.inject("## Candidate Gap Grounding\n" + "\n\n".join(lines))
 
 
 def _public_tool_path_for_ref(tool_ref: str | None, cors_root: Path) -> str | None:
@@ -1330,12 +1303,6 @@ def execute_iteration(
                 content_refs=gap.content_refs,
                 chain_id=entry.chain_id,
             )
-            grounded_child_gaps = _ground_emitted_gaps_for_admission(
-                child_gaps,
-                trajectory=trajectory,
-                hooks=hooks,
-            )
-            _inject_candidate_gap_grounding(session, grounded_child_gaps)
             compiler.record_execution("hash_resolve_needed", False)
             if child_gaps:
                 compiler.emit(step_result)
@@ -1517,12 +1484,6 @@ def execute_iteration(
             content_refs=gap.content_refs,
             chain_id=entry.chain_id,
         )
-        grounded_child_gaps = _ground_emitted_gaps_for_admission(
-            child_gaps,
-            trajectory=trajectory,
-            hooks=hooks,
-        )
-        _inject_candidate_gap_grounding(session, grounded_child_gaps)
         if child_gaps:
             compiler.emit(step_result)
         else:
@@ -2050,12 +2011,6 @@ def execute_iteration(
             content_refs=gap.content_refs,
             chain_id=entry.chain_id,
         )
-        grounded_child_gaps = _ground_emitted_gaps_for_admission(
-            child_gaps,
-            trajectory=trajectory,
-            hooks=hooks,
-        )
-        _inject_candidate_gap_grounding(session, grounded_child_gaps)
         compiler.record_execution(vocab, False)
         if child_gaps:
             compiler.emit(step_result)
@@ -2232,12 +2187,6 @@ def execute_iteration(
                 content_refs=gap.content_refs,
                 chain_id=entry.chain_id,
             )
-            grounded_child_gaps = _ground_emitted_gaps_for_admission(
-                child_gaps,
-                trajectory=trajectory,
-                hooks=hooks,
-            )
-            _inject_candidate_gap_grounding(session, grounded_child_gaps)
             rewrites = _sanitize_reason_child_gaps(
                 child_gaps,
                 registry=registry,
@@ -2288,12 +2237,6 @@ def execute_iteration(
                 content_refs=gap.content_refs,
                 chain_id=entry.chain_id,
             )
-            grounded_child_gaps = _ground_emitted_gaps_for_admission(
-                child_gaps,
-                trajectory=trajectory,
-                hooks=hooks,
-            )
-            _inject_candidate_gap_grounding(session, grounded_child_gaps)
             if child_gaps:
                 compiler.emit(step_result)
             else:
@@ -2593,12 +2536,6 @@ def execute_iteration(
             content_refs=gap.content_refs,
             chain_id=entry.chain_id,
         )
-        grounded_child_gaps = _ground_emitted_gaps_for_admission(
-            child_gaps,
-            trajectory=trajectory,
-            hooks=hooks,
-        )
-        _inject_candidate_gap_grounding(session, grounded_child_gaps)
         if child_gaps:
             compiler.emit(step_result)
         else:

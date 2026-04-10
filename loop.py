@@ -1055,32 +1055,6 @@ def _merge_unique_refs(*groups: list[str] | tuple[str, ...] | None) -> list[str]
     return merged
 
 
-def _ground_emitted_gaps_for_admission(gaps: list[Gap], trajectory: Trajectory) -> list[tuple[Gap, str]]:
-    grounded: list[tuple[Gap, str]] = []
-    for gap in gaps:
-        carried_content_refs = _expand_content_refs_from_step_refs(gap.step_refs, trajectory)
-        if carried_content_refs:
-            gap.content_refs = _canonicalize_content_refs(
-                _merge_unique_refs(gap.content_refs, carried_content_refs)
-            )
-        resolved = resolve_all_refs(gap.step_refs, gap.content_refs, trajectory)
-        grounded.append((gap, resolved))
-    return grounded
-
-
-def _render_candidate_gap_grounding(grounded: list[tuple[Gap, str]]) -> str | None:
-    lines: list[str] = []
-    for gap, resolved in grounded:
-        if not resolved:
-            continue
-        lines.append(f"### gap:{gap.hash}")
-        lines.append(f"{gap.desc}")
-        lines.append(resolved)
-    if not lines:
-        return None
-    return "## Candidate Gap Grounding\n" + "\n\n".join(lines)
-
-
 def resolve_all_refs(step_refs: list[str], content_refs: list[str],
                      trajectory: Trajectory) -> str:
     """Resolve all hash references and format as injection block."""
@@ -1632,11 +1606,6 @@ def run_turn(
     origin_step, origin_gaps = _parse_step_output(
         raw, step_refs=[], content_refs=[head]
     )
-    candidate_grounding = _render_candidate_gap_grounding(
-        _ground_emitted_gaps_for_admission(origin_gaps, trajectory)
-    )
-    if candidate_grounding:
-        session.inject(candidate_grounding)
     trajectory.append(origin_step)
 
     print(f"  step:{origin_step.hash} | gaps: {len(origin_gaps)}")
