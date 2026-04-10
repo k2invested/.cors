@@ -135,7 +135,7 @@ def test_render_reason_context_prefers_step_notes_over_expanded_step_refs(monkey
             assert step_refs == []
             return "── resolved docs/PRINCIPLES.md ──\ncurrent principles content"
 
-    rendered = execution_engine._render_reason_context(gap, trajectory=traj, hooks=Hooks())
+    rendered = execution_engine._render_reason_context(gap, trajectory=traj, hooks=Hooks(), registry=registry())
 
     assert "## Current Gap Resolved Content" in rendered
     assert "## Referenced Step Notes" in rendered
@@ -144,6 +144,58 @@ def test_render_reason_context_prefers_step_notes_over_expanded_step_refs(monkey
     assert "PRINCIPLES.md likely needs a targeted update" in rendered
     assert "compile.py" in rendered
     assert "resolved step:" not in rendered
+
+
+def test_render_reason_context_injects_referenced_child_chain_when_resolved():
+    traj = Trajectory()
+    parent = Step.create(desc="activate child flow")
+    traj.append(parent)
+
+    child_first = Step.create(
+        desc="observe architecture drift",
+        step_refs=[parent.hash],
+        note=StepNote(summary="architecture note"),
+    )
+    traj.append(child_first)
+
+    child_second = Step.create(
+        desc="compare principles against audit notes",
+        step_refs=[child_first.hash],
+        note=StepNote(
+            summary="principles compare note",
+            drift=["post-diff section may drift from runtime"],
+            mutation_implications=["review child chain before deciding no-edit"],
+        ),
+    )
+    traj.append(child_second)
+
+    from step import Chain
+    chain = Chain.create("gap-child", child_first.hash)
+    chain.steps = [child_first.hash, child_second.hash]
+    chain.resolved = True
+    child_first.chain_id = chain.hash
+    child_second.chain_id = chain.hash
+    traj.add_chain(chain)
+
+    gap = Gap.create(
+        desc="post-observe review for child flow",
+        content_refs=["workflow:debug", chain.hash],
+        step_refs=[child_first.hash, child_second.hash],
+    )
+
+    class Hooks:
+        @staticmethod
+        def resolve_all_refs(step_refs, content_refs, trajectory):
+            assert step_refs == []
+            return "── resolved workflow:debug ──\nworkflow metadata"
+
+    rendered = execution_engine._render_reason_context(gap, trajectory=traj, hooks=Hooks(), registry=registry())
+
+    assert "## Current Gap Resolved Content" in rendered
+    assert "## Referenced Child Chain" in rendered
+    assert f"chain:{chain.hash}" in rendered
+    assert "principles compare note" in rendered
+    assert "review child chain before deciding no-edit" in rendered
 
 
 def test_render_step_network_shows_entities_packages_and_commands(tmp_path):

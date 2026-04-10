@@ -5888,7 +5888,12 @@ def test_p12_inline_child_chain_close_emits_parent_post_observe_reason():
     assert review_entry.gap.vocab == "reason_needed"
     assert "post-observe review" in review_entry.gap.desc
     assert skill("debug").hash in review_entry.gap.content_refs
+    assert child_chain.hash in review_entry.gap.content_refs
     assert child_step.hash in review_entry.gap.step_refs
+
+    review_step = traj.steps[parent_chain.steps[-1]]
+    assert child_chain.hash in review_step.content_refs
+    assert child_step.hash in review_step.step_refs
 
 
 def test_p12_chain_backed_vocab_injects_workflow_inline():

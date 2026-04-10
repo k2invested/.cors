@@ -580,7 +580,7 @@ class Compiler:
                 "correcting or continuing gaps if more work is needed, or emit no gaps "
                 "if the workflow outcome is sound and synthesis may proceed."
             ),
-            content_refs=[chain.activation_ref],
+            content_refs=[chain.activation_ref, chain.hash],
             step_refs=list(chain.steps),
             origin=chain.steps[-1],
         )
@@ -590,8 +590,8 @@ class Compiler:
 
         review_step = Step.create(
             desc=f"post-observe review for inline workflow:{chain.activation_ref}",
-            step_refs=[chain.steps[-1]],
-            content_refs=[chain.activation_ref],
+            step_refs=list(chain.steps),
+            content_refs=[chain.activation_ref, chain.hash],
             gaps=[review_gap],
             chain_id=parent_chain.hash,
             parent=chain.steps[-1],

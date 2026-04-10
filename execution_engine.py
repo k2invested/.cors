@@ -221,20 +221,47 @@ def _render_step_note_summary(step_ref: str, trajectory: Any) -> str | None:
     return "\n".join(lines)
 
 
-def _render_reason_context(gap: Gap, *, trajectory: Any, hooks: ExecutionHooks) -> str:
+def _referenced_resolved_chain(gap: Gap, trajectory: Any) -> Chain | None:
+    if not gap.step_refs or len(gap.step_refs) < 2:
+        return None
+    resolved_steps: list[Step] = []
+    for step_ref in gap.step_refs:
+        step = _resolve_step_ref(step_ref, trajectory)
+        if step is None or not step.chain_id:
+            return None
+        resolved_steps.append(step)
+    chain_ids = {step.chain_id for step in resolved_steps if step.chain_id}
+    if len(chain_ids) != 1:
+        return None
+    chain = trajectory.chains.get(next(iter(chain_ids)))
+    if chain is None or not chain.resolved:
+        return None
+    if not all(step.hash in chain.steps for step in resolved_steps):
+        return None
+    return chain
+
+
+def _render_reason_context(gap: Gap, *, trajectory: Any, hooks: ExecutionHooks, registry: Any) -> str:
     blocks: list[str] = []
 
     direct_content = hooks.resolve_all_refs([], gap.content_refs, trajectory)
     if direct_content:
         blocks.append(f"## Current Gap Resolved Content\n{direct_content}")
 
-    step_blocks: list[str] = []
-    for step_ref in gap.step_refs:
-        rendered = _render_step_note_summary(step_ref, trajectory)
-        if rendered:
-            step_blocks.append(rendered)
-    if step_blocks:
-        blocks.append("## Referenced Step Notes\n" + "\n\n".join(step_blocks))
+    referenced_chain = _referenced_resolved_chain(gap, trajectory)
+    if referenced_chain is not None:
+        blocks.append(
+            "## Referenced Child Chain\n"
+            f"{trajectory.render_chain(referenced_chain.hash, registry=registry, mode='full')}"
+        )
+    else:
+        step_blocks: list[str] = []
+        for step_ref in gap.step_refs:
+            rendered = _render_step_note_summary(step_ref, trajectory)
+            if rendered:
+                step_blocks.append(rendered)
+        if step_blocks:
+            blocks.append("## Referenced Step Notes\n" + "\n\n".join(step_blocks))
 
     return "\n\n".join(blocks)
 
@@ -2100,7 +2127,7 @@ def execute_iteration(
 
     elif vocab == "reason_needed":
         print("  → reason controller")
-        reason_context = _render_reason_context(gap, trajectory=trajectory, hooks=hooks)
+        reason_context = _render_reason_context(gap, trajectory=trajectory, hooks=hooks, registry=registry)
         if reason_context:
             session.inject(reason_context)
         raw = session.call(_reason_controller_prompt(gap))
