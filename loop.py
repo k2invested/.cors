@@ -1286,6 +1286,9 @@ Hash grounding is mandatory because it is what allows you to traverse and extend
 - step refs show the reasoning path you followed.
 - content refs show the evidence or workspace objects you need.
 - If the target already exists in loaded entity/workflow space, reference it directly instead of inventing a vague observe gap.
+- Do not emit another `hash_resolve_needed` for the same hash, path, package, or content surface when that surface has already been resolved into the current chain.
+- If the current evidence already shows that a resolved surface is sparse, scaffolded, partial, or missing internal payloads, prefer `reason_needed` and then `clarify_needed` or a mutate gap as appropriate rather than recursively re-resolving the same surface.
+- Only emit a fresh `hash_resolve_needed` when you need genuinely new evidence, new content refs, or a different unresolved surface.
 
 As you produce steps, you extend the semantic tree. This lets you scale prior reasoning, inspect branch state, and identify causal structure that should shape current judgment.
 

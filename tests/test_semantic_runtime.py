@@ -414,6 +414,42 @@ def test_execute_iteration_injects_pre_step_note_for_reason(monkeypatch):
     assert any("## Pre-step note for gap:" in content for content in session.injected)
 
 
+def test_sanitize_observation_child_gaps_rewrites_same_surface_recursion():
+    parent = Gap.create(
+        desc="resolve clinton entity",
+        content_refs=["fb5882f9e052"],
+    )
+    parent.vocab = "hash_resolve_needed"
+    child = Gap.create(
+        desc="resolve missing surfaces in same entity package",
+        content_refs=["fb5882f9e052"],
+    )
+    child.vocab = "hash_resolve_needed"
+
+    rewrites = execution_engine._sanitize_observation_child_gaps(parent, [child])
+
+    assert rewrites == 1
+    assert child.vocab == "reason_needed"
+
+
+def test_sanitize_observation_child_gaps_keeps_novel_refs():
+    parent = Gap.create(
+        desc="resolve architecture doc",
+        content_refs=["docs/ARCHITECTURE.md"],
+    )
+    parent.vocab = "hash_resolve_needed"
+    child = Gap.create(
+        desc="resolve separate test surface",
+        content_refs=["tests/test_principles.py"],
+    )
+    child.vocab = "hash_resolve_needed"
+
+    rewrites = execution_engine._sanitize_observation_child_gaps(parent, [child])
+
+    assert rewrites == 0
+    assert child.vocab == "hash_resolve_needed"
+
+
 def test_render_step_network_shows_entities_packages_and_commands(tmp_path):
     reg = registry()
     package_hash = me.persist_chain_package(tmp_path, example_stepchain())

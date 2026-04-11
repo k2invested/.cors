@@ -142,6 +142,7 @@ def _reason_controller_prompt(gap: Gap) -> str:
         "Treat the injected trajectory, active chain, and persisted step notes as your historical progress while processing the user's message.\n"
         "Reason over the step trajectory and semantic tree first.\n"
         "Treat resolved files and hashes as already-observed evidence that has been summarized into the chain; do not reframe the task as raw file review unless a fresh observation gap is actually needed.\n"
+        "Do not emit another hash_resolve_needed for the same resolved hash, path, package, or content surface unless genuinely new refs or a different unresolved surface are required.\n"
         "Use the accumulated step notes to compare, contrast, detect drift, and decide whether a targeted edit or follow-on abstraction is required.\n"
         "Choose the next abstraction required in the current turn.\n"
         "Always include a top-level `note` object in your JSON so the reasoning step persists its judgment.\n"
@@ -1194,6 +1195,33 @@ def _sanitize_reason_child_gaps(child_gaps: list[Gap], *, registry: Any, policy:
     return rewrites
 
 
+def _sanitize_observation_child_gaps(parent_gap: Gap, child_gaps: list[Gap]) -> int:
+    """Prevent hash_resolve from recursively re-resolving the same scaffold surface.
+
+    Rich observation notes can legitimately surface that an artifact is sparse or
+    scaffolded. They should not cause the runtime to keep issuing
+    hash_resolve_needed for the same content refs with no novel evidence.
+    In that situation, collapse back to reason_needed so the next step can
+    decide whether to clarify, stop, or pursue a different abstraction.
+    """
+    rewrites = 0
+    parent_refs = {str(ref).strip() for ref in list(parent_gap.content_refs or []) if str(ref).strip()}
+    if not parent_refs:
+        return rewrites
+
+    for gap in child_gaps:
+        if gap.vocab != "hash_resolve_needed":
+            continue
+        child_refs = {str(ref).strip() for ref in list(gap.content_refs or []) if str(ref).strip()}
+        if not child_refs:
+            continue
+        if child_refs.issubset(parent_refs):
+            gap.vocab = "reason_needed"
+            gap.vocab_score = max(gap.vocab_score, 0.8)
+            rewrites += 1
+    return rewrites
+
+
 def _coerce_semantic_frame_for_mode(frame: dict | None, route_mode: str) -> dict | None:
     if not isinstance(frame, dict):
         return frame
@@ -1468,7 +1496,12 @@ def execute_iteration(
             )
             if pre_step_note is not None:
                 session.inject(_render_note_for_injection(pre_step_note, title=f"## Pre-step note for gap:{gap.hash}"))
-            raw = session.call(f"You resolved gap:{gap.hash} \"{gap.desc}\". What do you observe? Articulate any new gaps.")
+            raw = session.call(
+                f"You resolved gap:{gap.hash} \"{gap.desc}\". What do you observe? Articulate any new gaps.\n"
+                "Treat the resolved evidence and pre-step note as the observed surface.\n"
+                "Do not emit another hash_resolve_needed for the same hash, path, package, or content surface merely because the observed artifact is sparse, scaffolded, or missing internal payloads.\n"
+                "If the same surface is already observed and the remaining issue is interpretation, incompleteness, or user-only missing information, prefer reason_needed and then clarify_needed or a mutate gap as appropriate."
+            )
             print(f"  LLM: {raw[:150]}...")
             step_result, child_gaps = hooks.parse_step_output(
                 raw,
@@ -1479,6 +1512,9 @@ def execute_iteration(
             step_result = _attach_note(step_result, pre_step_note)
             if step_result is not None and step_result.note is None and resolved_data:
                 step_result = _attach_generated_note(step_result, gap=gap, resolved_data=resolved_data)
+            rewrites = _sanitize_observation_child_gaps(gap, child_gaps)
+            if rewrites:
+                print(f"  → rewrote {rewrites} recursive observe gap(s) to reason_needed")
             compiler.record_execution("hash_resolve_needed", False)
             if child_gaps:
                 compiler.emit(step_result)
@@ -1665,7 +1701,9 @@ def execute_iteration(
                 "For .st files, identities, profiles, preferences, and long-horizon semantic state, "
                 "use reprogramme_needed as the mutate gap.\n"
                 "For ordinary workspace file edits, use the relevant mutate vocab instead.\n"
-                "Do not answer with a future-action promise unless the next gap is actually surfaced."
+                "Do not answer with a future-action promise unless the next gap is actually surfaced.\n"
+                "Do not emit another hash_resolve_needed for the same hash, path, package, or content surface just because the observed artifact is sparse, scaffolded, or missing internal payloads.\n"
+                "If the same surface is already observed and the remaining issue is interpretation, incompleteness, or user-only missing information, prefer reason_needed and then clarify_needed or a mutate gap as appropriate."
             )
 
         raw = session.call(
@@ -1681,6 +1719,9 @@ def execute_iteration(
         step_result = _attach_note(step_result, pre_step_note)
         if vocab == "hash_resolve_needed" and step_result is not None and step_result.note is None and resolved_data:
             step_result = _attach_generated_note(step_result, gap=gap, resolved_data=resolved_data)
+        rewrites = _sanitize_observation_child_gaps(gap, child_gaps)
+        if rewrites:
+            print(f"  → rewrote {rewrites} recursive observe gap(s) to reason_needed")
         if child_gaps:
             compiler.emit(step_result)
         else:
