@@ -749,14 +749,14 @@ def resolve_hash(ref: str, trajectory: Trajectory) -> str | None:
     if _skill_registry:
         skill = _skill_registry.resolve(ref)
         if skill:
-            return _render_skill_package(skill)
+            return _render_entity(skill) if _is_entity_skill(skill) else _render_skill_package(skill)
         for candidate in _skill_registry.all_skills():
             try:
                 rel_source = str(Path(candidate.source).resolve().relative_to(CORS_ROOT))
             except ValueError:
                 rel_source = str(Path(candidate.source))
             if ref == rel_source or ref == Path(rel_source).name:
-                return _render_skill_package(candidate)
+                return _render_entity(candidate) if _is_entity_skill(candidate) else _render_skill_package(candidate)
 
     # Try trajectory step — render as semantic tree branch
     step = trajectory.resolve(ref)
@@ -2248,41 +2248,50 @@ def _render_entity(skill: Skill) -> str:
     """Render a .st entity's full data for session injection."""
     data = skill.payload
     if not data:
-        return f"## {skill.display_name}:{skill.hash}\n(unreadable)"
+        return f"semantic_tree:skill_package:{skill.hash}\npackage: name={skill.name}\n(unreadable)"
 
-    lines = [f"## Entity: {skill.display_name}:{skill.hash}"]
-    lines.append(f"  name: {skill.name}")
-    lines.append(f"  desc: {skill.desc}")
-    lines.append(f"  trigger: {skill.trigger}")
+    def _append_value(lines: list[str], value, indent: int = 0):
+        prefix = " " * indent
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if isinstance(child, (dict, list)):
+                    lines.append(f"{prefix}{key}:")
+                    _append_value(lines, child, indent + 2)
+                else:
+                    lines.append(f"{prefix}{key}: {child}")
+        elif isinstance(value, list):
+            for child in value:
+                if isinstance(child, (dict, list)):
+                    lines.append(f"{prefix}-")
+                    _append_value(lines, child, indent + 2)
+                else:
+                    lines.append(f"{prefix}- {child}")
+        else:
+            lines.append(f"{prefix}{value}")
 
-    # Identity fields (for people)
-    identity = data.get("identity", {})
-    if identity:
-        lines.append("  identity:")
-        for k, v in identity.items():
-            lines.append(f"    {k}: {v}")
+    lines = [f"semantic_tree:skill_package:{skill.hash}"]
+    lines.append(f"package: name={skill.name} display_name={skill.display_name} artifact=entity")
+    lines.append(f"desc: {skill.desc}")
+    lines.append(f"trigger: {skill.trigger}")
 
-    # Preferences
-    preferences = data.get("preferences", {})
-    if preferences:
-        lines.append("  preferences:")
-        for category, prefs in preferences.items():
-            lines.append(f"    {category}:")
-            if isinstance(prefs, dict):
-                for k, v in prefs.items():
-                    lines.append(f"      {k}: {v}")
-            else:
-                lines.append(f"      {prefs}")
-
-    # Refs
     refs = data.get("refs", {})
     if refs:
-        lines.append("  refs:")
-        for k, v in refs.items():
-            lines.append(f"    {k}: {v}")
+        lines.append("refs:")
+        _append_value(lines, refs, 2)
 
-    # Steps summary
-    lines.append(f"  steps: {' → '.join(s.action for s in skill.steps)}")
+    for section_name in ("identity", "preferences", "access_rules", "init", "constraints", "sources", "scope", "schema", "principles", "boundaries", "domain_knowledge"):
+        section = data.get(section_name)
+        if section:
+            lines.append(f"{section_name}:")
+            _append_value(lines, section, 2)
+
+    if skill.steps:
+        lines.append("steps:")
+        for step in skill.steps:
+            resolve_refs = list(step.resolve or [])
+            lines.append(
+                f"  - action={step.action} desc={step.desc} resolve={resolve_refs} post_diff={bool(step.post_diff)}"
+            )
 
     return "\n".join(lines)
 

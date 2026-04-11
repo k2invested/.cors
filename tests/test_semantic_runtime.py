@@ -46,9 +46,39 @@ def test_resolve_hash_injects_entity_but_reads_action_package():
 
     assert admin_rendered is not None and admin_rendered.startswith("semantic_tree:skill_package:")
     assert "package: name=admin" in admin_rendered
+    assert "identity:" in admin_rendered
+    assert "preferences:" in admin_rendered
     assert action_rendered is not None and action_rendered.startswith("semantic_tree:skill_package:")
     assert "trigger: on_vocab:hash_edit_needed" in action_rendered
-    assert "package: name=hash_edit" in action_rendered
+    assert "package:hash_edit" in action_rendered
+
+
+def test_resolve_hash_entity_includes_resolved_semantic_sections():
+    reg = registry()
+    loop._skill_registry = reg
+    traj = Trajectory()
+
+    clinton = reg.resolve_by_name("tinchy.stryka")
+    business = reg.resolve_by_name("Top Rate Estates LTD")
+
+    assert clinton is not None
+    assert business is not None
+
+    clinton_rendered = loop.resolve_hash(clinton.hash, traj)
+    business_rendered = loop.resolve_hash(business.hash, traj)
+
+    assert clinton_rendered is not None
+    assert "identity:" in clinton_rendered
+    assert "role: cyber security developer" in clinton_rendered
+    assert "preferences:" in clinton_rendered
+    assert "access_rules:" in clinton_rendered
+    assert "init:" in clinton_rendered
+
+    assert business_rendered is not None
+    assert "identity:" in business_rendered
+    assert "legal_name: Top Rate Estates LTD" in business_rendered
+    assert "preferences:" in business_rendered
+    assert "mission:" in business_rendered
 
 
 def test_render_entity_tree_shows_entity_space():
