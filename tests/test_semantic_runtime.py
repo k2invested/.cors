@@ -863,7 +863,7 @@ def test_render_active_chain_includes_compact_tree_signatures():
     rendered = traj.render_recent(5)
 
     assert "{o+1}" in rendered
-    assert "{?b872/0:1}" in rendered
+    assert "{b872/0:1}" in rendered
 
 
 def test_render_chain_collapsed_mode_summarizes_history():
@@ -1015,7 +1015,7 @@ def test_render_chain_marks_unresolved_sibling_gap_as_pending():
 
     rendered = traj.render_chain(chain.hash)
     assert f"gap:{pending_gap.hash}" in rendered
-    assert "(pending)" in rendered
+    assert "(pending)" not in rendered
 
 
 def test_render_chain_marks_gap_open_and_shows_child_chain():
@@ -1037,8 +1037,8 @@ def test_render_chain_marks_gap_open_and_shows_child_chain():
 
     rendered = traj.render_chain(parent_chain.hash)
     assert f"gap:{parent_gap.hash}" in rendered
-    assert "(open, child chain active)" in rendered
-    assert f'chain:{child_chain.hash}  "child review in progress" (active, 1 steps)' in rendered
+    assert "(open, child chain active)" not in rendered
+    assert f'chain:{child_chain.hash}  "child review in progress"' in rendered
 
 
 def test_render_chain_can_inline_resolved_child_chain_into_parent_tree():
@@ -1073,7 +1073,7 @@ def test_render_chain_can_inline_resolved_child_chain_into_parent_tree():
     )
 
     assert f"gap:{parent_gap.hash}" in rendered
-    assert f'chain:{child_chain.hash}  "child review complete" (resolved)' in rendered
+    assert f'chain:{child_chain.hash}  "child review complete"' in rendered
     assert "child activated" in rendered
     assert "child chain note" in rendered
 

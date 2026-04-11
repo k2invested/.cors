@@ -141,12 +141,9 @@ def _compact_frontier_code(node: dict) -> str:
             gaps = [gap]
 
     active = sum(1 for gap in gaps if gap.get("status") in {"active", "open", "pending"})
-    dormant = sum(1 for gap in gaps if gap.get("status") == "dormant")
     if active:
         return f"{kind}+{active}"
-    if dormant:
-        return f"{kind}~{dormant}"
-    return f"{kind}="
+    return f"{kind}"
 
 
 def _spawn_code(node: dict) -> str:
@@ -214,12 +211,6 @@ def _tree_latest_timestamp(nodes: list[dict]) -> float:
     return max(values) if values else 0.0
 
 
-def _tree_compact_status(tree: dict) -> str:
-    if tree.get("resolved") is True:
-        return "resolved"
-    return "active"
-
-
 def _flat_ref_surface(node: dict) -> str:
     refs = dict(node.get("refs", {}) or {})
     own_refs = _merged_refs(refs.get("step_refs", []) or [], refs.get("content_refs", []) or [])
@@ -231,13 +222,6 @@ def _grouped_gap_refs(gap: dict) -> str:
         f"step:{_render_ref_list(gap.get('step_refs', []) or [])}, "
         f"content:{_render_ref_list(gap.get('content_refs', []) or [])}"
     )
-
-
-def _render_gap_status(gap: dict, *, package_preview: bool) -> str:
-    status = gap.get("status")
-    if isinstance(status, str) and status not in {"", "(n/a)"}:
-        return status
-    return "planned" if package_preview else "active"
 
 
 def _format_semantic_value(value, *, max_inline: int = 3) -> str:
@@ -808,10 +792,10 @@ def render_semantic_tree(tree: dict) -> str:
             lines.append(f"trigger: {package.get('trigger')}")
     else:
         chain_desc = tree.get("desc") or source_ref or "semantic chain"
-        lines.append(f'chain:{source_ref} "{chain_desc}" ({_tree_compact_status(tree)}, {len(nodes)} steps){latest_suffix}')
+        lines.append(f'chain:{source_ref} "{chain_desc}" ({len(nodes)} steps){latest_suffix}')
         if tree.get("origin_gap"):
             lines.append(f"origin: {tree.get('origin_gap')}")
-    lines.append("legend: step{o/m/b/c + frontier}; gap{status + surface + ref-counts}")
+    lines.append("legend: step{o/m/b/c + active-frontier}; gap{surface + ref-counts}")
 
     if foundation:
         lines.append(
@@ -844,9 +828,8 @@ def render_semantic_tree(tree: dict) -> str:
             gap_role = (effective_contract.get("omo_role") if effective_contract else None) or vocab_class(gap_surface)
             if gap_role in {None, "", "_"}:
                 gap_role = _node_kind_code(node)
-            gap_status = _render_gap_status(gap, package_preview=bool(package))
             lines.append(
-                f"{cont}  └─ {{{gap_status}:{gap_role}}} gap:{gap_id}"
+                f"{cont}  └─ {{{gap_role}}} gap:{gap_id}"
                 f"{f' [{gap_surface}]' if gap_surface else ''} -> refs:[{_grouped_gap_refs(gap)}]"
             )
         if transitions:
@@ -863,9 +846,8 @@ def render_semantic_tree(tree: dict) -> str:
                 gap_role = vocab_class(gap_surface)
                 if gap_role in {None, "", "_"}:
                     gap_role = _node_kind_code(node)
-                gap_status = _render_gap_status(item, package_preview=bool(package))
                 lines.append(
-                    f"{cont}  {gbranch}─ {{{gap_status}:{gap_role}}} "
+                    f"{cont}  {gbranch}─ {{{gap_role}}} "
                     f"gap:{item.get('hash', '(none)')}{f' [{gap_surface}]' if gap_surface else ''} "
                     f"-> refs:[{_grouped_gap_refs(item)}]"
                 )

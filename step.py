@@ -933,25 +933,23 @@ class Trajectory:
     def _gap_signature(self, gap: "Gap") -> str:
         """Compact gap signature for tree rendering.
 
-        Format: {statusclassrcg/s:c}
-          status: ? active, = resolved, ~ dormant
+        Format: {classrcg/s:c}
           class:  o observe, m mutate, b bridge, c clarify, _ unknown
           rcg:    relevance/confidence/grounded compressed to 0-9 bands
           s:c:    step_refs:content_refs counts
         """
-        status = "~" if gap.dormant else "=" if gap.resolved else "?"
         klass = vocab_class(gap.vocab)
         rel = score_band(gap.scores.relevance)
         conf = score_band(gap.scores.confidence)
         gr = score_band(gap.scores.grounded)
-        return f"{{{status}{klass}{rel}{conf}{gr}/{len(gap.step_refs)}:{len(gap.content_refs)}}}"
+        return f"{{{klass}{rel}{conf}{gr}/{len(gap.step_refs)}:{len(gap.content_refs)}}}"
 
     def _runtime_tree_legend(self) -> str:
         return (
-            "legend: step{kindflowN}; gap{statusclassrcg/s:c}; "
+            "legend: step{kindflowN}; gap{classrcg/s:c}; "
             "refs use typed namespaces entity/action/codon/step plus raw content refs; "
             "step refs = execution provenance; gap refs = gap-surfacing provenance; "
-            "resolved -> rogue handoff = original gap closed by explicit failure handoff"
+            "pending gaps remain visible; lifecycle bookkeeping is intentionally hidden from the semantic render"
         )
 
     def _coerce_step_note(self, raw: StepNote | dict | None) -> StepNote | None:
@@ -1021,32 +1019,6 @@ class Trajectory:
             parts.append(f"omo={effective['omo_role']}")
         return f" ({', '.join(parts)})" if parts else ""
 
-    def _resolved_gap_status_label(self, gap: "Gap") -> str:
-        if gap.resolution_kind == "rogue_handoff":
-            return "resolved -> rogue handoff"
-        return "resolved"
-
-    def _gap_render_state_label(self, gap: dict | "Gap") -> str:
-        if isinstance(gap, dict):
-            status = gap.get("status")
-            child_chains = list(gap.get("child_chains", []) or [])
-            if status == "open" or child_chains:
-                return "open, child chain active"
-            if status == "pending":
-                return "pending"
-            if status == "dormant":
-                return "dormant"
-            if status == "resolved":
-                return "resolved"
-            if status == "planned":
-                return "planned"
-            return "active"
-        if gap.dormant:
-            return "dormant"
-        if gap.resolved:
-            return self._resolved_gap_status_label(gap)
-        return "pending"
-
     def _render_child_chain_lines(
         self,
         child_chains: list[dict],
@@ -1062,7 +1034,6 @@ class Trajectory:
         for index, chain in enumerate(child_chains):
             branch = "└" if index == len(child_chains) - 1 else "├"
             desc = chain.get("desc") or "in progress"
-            status = "resolved" if chain.get("resolved") else f"active, {chain.get('step_count', 0)} steps"
             if expand and chain.get("resolved") and chain.get("id"):
                 rendered = self.render_chain(
                     chain.get("id"),
@@ -1076,7 +1047,7 @@ class Trajectory:
                     child_indent = f"{indent}{'   ' if index == len(child_chains) - 1 else '│  '}"
                     lines.extend(f"{child_indent}{line}" for line in rendered[1:])
                     continue
-            lines.append(f"{indent}{branch}─ chain:{chain.get('id')}  \"{desc}\" ({status})")
+            lines.append(f"{indent}{branch}─ chain:{chain.get('id')}  \"{desc}\"")
         return lines
 
     def _render_frontier_lines(self, frontier: list[dict], registry=None) -> list[str]:
@@ -1089,9 +1060,8 @@ class Trajectory:
             desc_part = f" \"{gap.get('desc')}\"" if gap.get("desc") else ""
             gref_str = self._render_refs(gap.get("step_refs", []) or [], gap.get("content_refs", []) or [], registry)
             chain_hint = f" via chain:{gap.get('chain_id')}" if gap.get("chain_id") else ""
-            state = self._gap_render_state_label(gap)
             lines.append(
-                f"{branch}─ gap:{gap.get('hash')}{desc_part}{vocab_str}{gref_str} ({state}){chain_hint}"
+                f"{branch}─ gap:{gap.get('hash')}{desc_part}{vocab_str}{gref_str}{chain_hint}"
             )
         return lines
 
@@ -1112,8 +1082,6 @@ class Trajectory:
         mutate = 0
         bridge = 0
         clarify = 0
-        resolved = 0
-        active = 0
         for node in nodes:
             kind = node.get("kind")
             if kind == "mutate":
@@ -1124,13 +1092,8 @@ class Trajectory:
                 clarify += 1
             else:
                 observe += 1
-            gaps = list(node.get("gaps", []) or ([] if not node.get("gap") else [node.get("gap")]))
-            if any(gap.get("status") == "active" for gap in gaps):
-                active += 1
-            else:
-                resolved += 1
         return (
-            f"history: {resolved} resolved steps, {active} active steps, "
+            f"history: {len(nodes)} steps, "
             f"observe={observe}, bridge={bridge}, mutate={mutate}, clarify={clarify}"
         )
 
@@ -1148,13 +1111,13 @@ class Trajectory:
           refs:[admin:a1b2c3d4e5f6]  ← identity updated
 
         Structure:
-          chain:<hash>  "summary" (status)
+          chain:<hash>  "summary" (steps)
             origin: <gap_hash>
             ├─ {o+2} step:<hash> "desc" → refs:[admin:<hash>, commit:<sha>]
-            │   ├─ {?o862/1:2} gap:<hash> "what needs doing" [hash_resolve_needed]
-            │   └─ {~_210/0:1} gap:<hash> "low-value branch"
+            │   ├─ {o862/1:2} gap:<hash> "what needs doing" [hash_resolve_needed]
+            │   └─ {_210/0:1} gap:<hash> "low-value branch"
             ├─ {m=} step:<hash> "desc" → commit:<sha>
-            │   └─ {=o764/1:1} gap:<hash> "closed postcondition"
+            │   └─ {o764/1:1} gap:<hash> "closed postcondition"
             └─ ...
         """
         chains = self.recent_chains(n)
@@ -1236,13 +1199,12 @@ class Trajectory:
         nodes = list(tree.get("nodes", []) or [])
         if tree.get("source_type") == "realized_chain":
             desc = tree.get("desc") or "in progress"
-            status = "resolved" if tree.get("resolved") else f"active, {len(nodes)} steps"
             time_str = ""
             if nodes:
                 last_meta = dict(nodes[-1].get("meta", {}) or {})
                 if last_meta.get("timestamp", 0) > 0:
                     time_str = f" [{absolute_time(last_meta['timestamp'])}]"
-            lines = [f"chain:{tree.get('source_ref')}  \"{desc}\" ({status}){time_str}"]
+            lines = [f"chain:{tree.get('source_ref')}  \"{desc}\" ({len(nodes)} steps){time_str}"]
             origin_marker = " [focus]" if highlight_gap and tree.get("origin_gap") == highlight_gap else ""
             lines.append(f"  origin: {tree.get('origin_gap')}{origin_marker}")
             if mode == "collapsed" and nodes:
@@ -1268,14 +1230,13 @@ class Trajectory:
                 ref_str = self._render_refs(refs.get("step_refs", []) or [], refs.get("content_refs", []) or [], registry)
                 commit_str = f" → commit:{meta.get('commit')}" if meta.get("commit") else ""
                 time_tag = f" ({absolute_time(meta['timestamp'])})" if meta.get("timestamp", 0) > 0 else ""
-                state_tag = f" [{meta.get('state')}]" if meta.get("state") else ""
                 rogue_tag = ""
                 if meta.get("rogue"):
                     extras = [part for part in [meta.get("rogue_kind"), meta.get("failure_source")] if part]
                     rogue_tag = f" (rogue:{', '.join(extras)})" if extras else " (rogue)"
                 lines.append(
                     f"  {branch}─ {node.get('signature')} step:{node.get('id')} "
-                    f"\"{node.get('goal', '')}\"{state_tag}{ref_str}{commit_str}{time_tag}{rogue_tag}{self._compact_contract_suffix(node)}"
+                    f"\"{node.get('goal', '')}\"{ref_str}{commit_str}{time_tag}{rogue_tag}{self._compact_contract_suffix(node)}"
                 )
                 for assessment_line in meta.get("assessment", []) or []:
                     lines.append(f"  {cont}   assessment: {assessment_line}")
@@ -1309,18 +1270,11 @@ class Trajectory:
                     focus = " [focus]" if highlight_gap and gap_obj.hash == highlight_gap else ""
                     gap_desc = self._gap_desc_for_render(node.get("goal", ""), gap_obj.desc)
                     gref_str = self._render_refs(gap_obj.step_refs, gap_obj.content_refs, registry)
-                    if gap_obj.dormant:
-                        desc_part = f" \"{gap_desc}\"" if gap_desc else ""
-                        score = gap_obj.scores.magnitude()
-                        lines.append(
-                            f"  {cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                            f"gap:{gap_obj.hash}{desc_part}{gref_str} (dormant, score:{score:.2f}){focus}"
-                        )
-                    elif gap_obj.resolved:
+                    if gap_obj.resolved or gap_obj.dormant:
                         desc_part = f" \"{gap_desc}\"" if gap_desc else ""
                         lines.append(
                             f"  {cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                            f"gap:{gap_obj.hash}{desc_part}{gref_str} ({self._resolved_gap_status_label(gap_obj)}){focus}"
+                            f"gap:{gap_obj.hash}{desc_part}{gref_str}{focus}"
                         )
                         resolved_child_lines = self._render_child_chain_lines(
                             list(gap.get("resolved_child_chains", []) or []),
@@ -1335,10 +1289,9 @@ class Trajectory:
                     else:
                         vocab_str = f" [{gap_obj.vocab}]" if gap_obj.vocab else ""
                         desc_part = f" \"{gap_desc}\"" if gap_desc else ""
-                        state_label = self._gap_render_state_label(gap)
                         lines.append(
                             f"  {cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                            f"gap:{gap_obj.hash}{desc_part}{vocab_str}{gref_str} ({state_label}){focus}"
+                            f"gap:{gap_obj.hash}{desc_part}{vocab_str}{gref_str}{focus}"
                         )
                         child_lines = self._render_child_chain_lines(
                             list(gap.get("child_chains", []) or []),
@@ -1415,19 +1368,12 @@ class Trajectory:
                     dormant=gap.get("status") == "dormant",
                 )
                 gref_str = self._render_refs(gap_obj.step_refs, gap_obj.content_refs, registry)
-                if gap_obj.dormant:
+                if gap_obj.resolved or gap_obj.dormant:
                     gap_desc = self._gap_desc_for_render(node.get("goal", ""), gap_obj.desc)
                     desc_part = f" \"{gap_desc}\"" if gap_desc else ""
                     lines.append(
                         f"{cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                        f"gap:{gap_obj.hash}{desc_part}{gref_str} (dormant)"
-                    )
-                elif gap_obj.resolved:
-                    gap_desc = self._gap_desc_for_render(node.get("goal", ""), gap_obj.desc)
-                    desc_part = f" \"{gap_desc}\"" if gap_desc else ""
-                    lines.append(
-                        f"{cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                        f"gap:{gap_obj.hash}{desc_part}{gref_str} ({self._resolved_gap_status_label(gap_obj)})"
+                        f"gap:{gap_obj.hash}{desc_part}{gref_str}"
                     )
                     resolved_child_lines = self._render_child_chain_lines(
                         list(gap.get("resolved_child_chains", []) or []),
@@ -1443,10 +1389,9 @@ class Trajectory:
                     vocab_str = f" [{gap_obj.vocab}]" if gap_obj.vocab else ""
                     gap_desc = self._gap_desc_for_render(node.get("goal", ""), gap_obj.desc)
                     desc_part = f" \"{gap_desc}\"" if gap_desc else ""
-                    state_label = self._gap_render_state_label(gap)
                     lines.append(
                         f"{cont}   {gbranch}─ {self._gap_signature(gap_obj)} "
-                        f"gap:{gap_obj.hash}{desc_part}{vocab_str}{gref_str} ({state_label})"
+                        f"gap:{gap_obj.hash}{desc_part}{vocab_str}{gref_str}"
                     )
                     child_lines = self._render_child_chain_lines(
                         list(gap.get("child_chains", []) or []),
@@ -1476,13 +1421,12 @@ class Trajectory:
     def _render_chain_lines(self, chain: "Chain", registry=None,
                             highlight_gap: str | None = None) -> list[str]:
         lines = []
-        status = "resolved" if chain.resolved else f"active, {chain.length()} steps"
         desc = chain.desc or "in progress"
         last_step = self.steps.get(chain.steps[-1]) if chain.steps else None
         time_str = ""
         if last_step and last_step.t > 0:
             time_str = f" [{absolute_time(last_step.t)}]"
-        lines.append(f"chain:{chain.hash}  \"{desc}\" ({status}){time_str}")
+        lines.append(f"chain:{chain.hash}  \"{desc}\" ({chain.length()} steps){time_str}")
         origin_marker = " [focus]" if highlight_gap and chain.origin_gap == highlight_gap else ""
         lines.append(f"  origin: {chain.origin_gap}{origin_marker}")
 
@@ -1522,15 +1466,14 @@ class Trajectory:
                 focus = " [focus]" if highlight_gap and gap.hash == highlight_gap else ""
 
                 if gap.dormant:
-                    score = gap.scores.magnitude()
                     lines.append(
                         f"  {cont}   {gbranch}─ {self._gap_signature(gap)} "
-                        f"gap:{gap.hash} \"{gap.desc}\" (dormant, score:{score:.2f}){focus}"
+                        f"gap:{gap.hash} \"{gap.desc}\"{focus}"
                     )
                 elif gap.resolved:
                     lines.append(
                         f"  {cont}   {gbranch}─ {self._gap_signature(gap)} "
-                        f"gap:{gap.hash} \"{gap.desc}\" ({self._resolved_gap_status_label(gap)}){focus}"
+                        f"gap:{gap.hash} \"{gap.desc}\"{focus}"
                     )
                 else:
                     gref_str = self._render_refs(gap.step_refs, gap.content_refs, registry)
@@ -1572,12 +1515,12 @@ class Trajectory:
                 if gap.dormant:
                     lines.append(
                         f"{cont}   {gbranch}─ {self._gap_signature(gap)} "
-                        f"gap:{gap.hash} \"{gap.desc}\" (dormant)"
+                        f"gap:{gap.hash} \"{gap.desc}\""
                     )
                 elif gap.resolved:
                     lines.append(
                         f"{cont}   {gbranch}─ {self._gap_signature(gap)} "
-                        f"gap:{gap.hash} \"{gap.desc}\" ({self._resolved_gap_status_label(gap)})"
+                        f"gap:{gap.hash} \"{gap.desc}\""
                     )
                 else:
                     gref_str = self._render_refs(gap.step_refs, gap.content_refs, registry)

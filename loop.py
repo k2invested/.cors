@@ -968,13 +968,9 @@ def _render_step_tree(step, trajectory: Trajectory, depth: int = 0,
         gap_sig = trajectory._gap_signature(gap) if hasattr(trajectory, "_gap_signature") else ""
         gap_prefix = f"{gap_sig} " if gap_sig else ""
         if gap.dormant:
-            lines.append(
-                f"{indent}  └─ {gap_prefix}gap:{gap.hash} \"{gap.desc}\" "
-                f"(dormant, score:{gap.scores.magnitude():.2f})"
-            )
+            lines.append(f"{indent}  └─ {gap_prefix}gap:{gap.hash} \"{gap.desc}\"")
         elif gap.resolved:
-            resolved_label = "resolved -> rogue handoff" if getattr(gap, "resolution_kind", None) == "rogue_handoff" else "resolved"
-            lines.append(f"{indent}  └─ {gap_prefix}gap:{gap.hash} \"{gap.desc}\" ({resolved_label})")
+            lines.append(f"{indent}  └─ {gap_prefix}gap:{gap.hash} \"{gap.desc}\"")
         else:
             grefs = []
             for r in gap.step_refs:
@@ -1008,12 +1004,6 @@ def _render_gap_tree(gap, _trajectory: Trajectory = None) -> str:
     lines.append(f"  scores: rel={gap.scores.relevance:.2f} conf={gap.scores.confidence:.2f} gr={gap.scores.grounded:.2f}")
     if gap.vocab:
         lines.append(f"  vocab: {gap.vocab}")
-    if gap.dormant:
-        lines.append(f"  status: dormant")
-    elif gap.resolved:
-        lines.append(f"  status: resolved")
-    else:
-        lines.append(f"  status: active")
     return "\n".join(lines)
 
 

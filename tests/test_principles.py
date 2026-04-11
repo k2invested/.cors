@@ -658,9 +658,9 @@ P6_CASES = [
     ("resolve_hash_renders_step_branch", lambda: (lambda ctx: "semantic_tree:step_branch:" in loop.resolve_hash(ctx.step1.hash, ctx.traj))(build_chain_context())),
     ("resolve_hash_renders_gap_tree", lambda: (lambda ctx: "semantic_tree:gap_branch:" in loop.resolve_hash(ctx.gap.hash, ctx.traj))(build_chain_context())),
     ("resolve_hash_returns_none_for_unknown", lambda: loop.resolve_hash("not_a_real_hash", Trajectory()) is None),
-    ("render_gap_tree_active_status", lambda: "status: active" in loop._render_gap_tree(make_gap("g"))),
-    ("render_gap_tree_dormant_status", lambda: "status: dormant" in loop._render_gap_tree(make_gap("g", dormant=True))),
-    ("render_gap_tree_resolved_status", lambda: "status: resolved" in loop._render_gap_tree(make_gap("g", resolved=True))),
+    ("render_gap_tree_omits_active_status", lambda: "status:" not in loop._render_gap_tree(make_gap("g"))),
+    ("render_gap_tree_omits_dormant_status", lambda: "status:" not in loop._render_gap_tree(make_gap("g", dormant=True))),
+    ("render_gap_tree_omits_resolved_status", lambda: "status:" not in loop._render_gap_tree(make_gap("g", resolved=True))),
     ("step_refs_and_content_refs_render_separately", lambda: "step:prior_step" in build_chain_context().traj.render_recent(5, registry()) and "blob_cfg" in build_chain_context().traj.render_recent(5, registry())),
     ("gap_hash_encodes_content_citation", lambda: make_gap("g", content_refs=["blob_a"]).hash != make_gap("g", content_refs=["blob_b"]).hash),
     ("gap_hash_encodes_step_citation", lambda: make_gap("g", step_refs=["step_a"]).hash != make_gap("g", step_refs=["step_b"]).hash),
@@ -997,7 +997,7 @@ P9_CASES = [
     ("render_recent_flat_when_no_chains", lambda: "step:" in (lambda traj: (traj.append(make_step("loose")), traj.render_recent())[1])(Trajectory())),
     ("render_recent_chain_header", lambda: "chain:" in build_chain_context().traj.render_recent(5, registry())),
     ("render_recent_shows_commit", lambda: "commit:abc123" in build_chain_context().traj.render_recent(5, registry())),
-    ("render_recent_shows_resolved_status", lambda: "resolved" in build_chain_context().traj.render_recent(5, registry())),
+    ("render_recent_omits_resolved_status_words", lambda: "(resolved" not in build_chain_context().traj.render_recent(5, registry())),
     ("recent_chains_returns_chain_objects", lambda: isinstance(build_chain_context().traj.recent_chains(1)[0], Chain)),
     ("chain_summary_counts_steps", lambda: build_origin_context().compiler.chain_summary()[0]["steps"] >= 1),
     ("extract_threshold_marks_chain", lambda: (lambda traj, comp, chain, gap: (
@@ -4287,11 +4287,11 @@ def test_p13_runtime_semantic_tree_marks_parent_open_while_descendants_unresolve
     )
     rendered_tree = manifest_engine_module.render_semantic_tree(tree)
 
-    assert 'chain:chain_state_demo "authoring chain" (active, 2 steps)' in rendered_tree
-    assert f'{{o=}} step:{step1.hash} "inspect structure"' in rendered_tree
-    assert f'{{resolved:o}} gap:{parent_gap.hash} [hash_resolve_needed]' in rendered_tree
+    assert 'chain:chain_state_demo "authoring chain" (2 steps)' in rendered_tree
+    assert f'{{o}} step:{step1.hash} "inspect structure"' in rendered_tree
+    assert f'{{o}} gap:{parent_gap.hash} [hash_resolve_needed]' in rendered_tree
     assert f'{{m+1}} step:{step2.hash} "author test flow"' in rendered_tree
-    assert f'{{active:m}} gap:{child_gap.hash} [content_needed]' in rendered_tree
+    assert f'{{m}} gap:{child_gap.hash} [content_needed]' in rendered_tree
 
     traj = Trajectory()
     traj.append(step1)
@@ -4302,8 +4302,8 @@ def test_p13_runtime_semantic_tree_marks_parent_open_while_descendants_unresolve
     traj.add_chain(chain)
     rendered_chain = traj.render_chain(chain.hash, registry())
 
-    assert f"step:{step1.hash} \"inspect structure\" [open]" in rendered_chain
-    assert f"step:{step2.hash} \"author test flow\" [open]" in rendered_chain
+    assert f"step:{step1.hash} \"inspect structure\"" in rendered_chain
+    assert f"step:{step2.hash} \"author test flow\"" in rendered_chain
 
 
 def test_p13_runtime_semantic_tree_marks_branch_resolved_after_descendants_close():
@@ -4320,10 +4320,10 @@ def test_p13_runtime_semantic_tree_marks_branch_resolved_after_descendants_close
     )
     rendered_tree = manifest_engine_module.render_semantic_tree(tree)
 
-    assert 'chain:chain_state_resolved "authoring chain" (resolved, 2 steps)' in rendered_tree
-    assert f'{{o=}} step:{step1.hash} "inspect structure"' in rendered_tree
-    assert f'{{resolved:o}} gap:{parent_gap.hash} [hash_resolve_needed]' in rendered_tree
-    assert f'{{o=}} step:{step2.hash} "author test flow"' in rendered_tree
+    assert 'chain:chain_state_resolved "authoring chain" (2 steps)' in rendered_tree
+    assert f'{{o}} step:{step1.hash} "inspect structure"' in rendered_tree
+    assert f'{{o}} gap:{parent_gap.hash} [hash_resolve_needed]' in rendered_tree
+    assert f'{{o}} step:{step2.hash} "author test flow"' in rendered_tree
     assert f"gap:{step2.hash}.gap -> refs:[step:(none), content:(none)]" in rendered_tree
 
     traj = Trajectory()
@@ -4336,8 +4336,8 @@ def test_p13_runtime_semantic_tree_marks_branch_resolved_after_descendants_close
     traj.add_chain(chain)
     rendered_chain = traj.render_chain(chain.hash, registry())
 
-    assert f"step:{step1.hash} \"inspect structure\" [resolved]" in rendered_chain
-    assert f"step:{step2.hash} \"author test flow\" [resolved]" in rendered_chain
+    assert f"step:{step1.hash} \"inspect structure\"" in rendered_chain
+    assert f"step:{step2.hash} \"author test flow\"" in rendered_chain
 
 
 def test_p12_render_skill_package_surfaces_action_tree_details():
