@@ -27,7 +27,7 @@ from typing import Any, Callable
 from compile import ChainState, GovernorSignal, is_mutate, is_observe
 import manifest_engine as me
 import note_engine
-from step import Chain, Epistemic, Gap, Step
+from step import Chain, Epistemic, Gap, Step, StepNote
 from system.chain_registry import public_chain_ref_map, render_public_chain_registry
 from system.control_surface import render_admin_surface, render_system_control_surface
 from tools import st_builder as st_builder_module
@@ -125,12 +125,14 @@ def _extract_reason_activation_intent(raw: str, hooks: ExecutionHooks) -> dict[s
         step_refs = []
     if not isinstance(step_refs, list) or any(not isinstance(ref, str) or not ref.strip() for ref in step_refs):
         return None
+    note = StepNote.from_dict(data.get("note"))
     return {
         "activate_ref": activate_ref,
         "prompt": prompt.strip() if isinstance(prompt, str) and prompt.strip() else None,
         "await_needed": await_needed,
         "content_refs": [ref.strip() for ref in content_refs if ref.strip()],
         "step_refs": [ref.strip() for ref in step_refs if ref.strip()],
+        "note": note,
     }
 
 
@@ -271,6 +273,56 @@ def _render_reason_context(gap: Gap, *, trajectory: Any, hooks: ExecutionHooks, 
             blocks.append("## Referenced Step Notes\n" + "\n\n".join(step_blocks))
 
     return "\n\n".join(blocks)
+
+
+def _render_note_for_injection(note: StepNote, *, title: str) -> str:
+    lines = [title]
+    if note.summary:
+        lines.append(f"summary: {_compact_line(note.summary, 400)}")
+    for label, items in (
+        ("salient_observations", note.salient_observations[:4]),
+        ("material_points", note.material_points[:5]),
+        ("deltas", note.deltas[:4]),
+        ("drift", note.drift[:4]),
+        ("mutation_implications", note.mutation_implications[:4]),
+        ("open_questions", note.open_questions[:3]),
+    ):
+        if not items:
+            continue
+        lines.append(f"{label}:")
+        for item in items:
+            lines.append(f"- {_compact_line(item, 300)}")
+    if note.relations:
+        lines.append("relations:")
+        for relation in note.relations[:4]:
+            relation_line = (
+                f"- {relation.type}: {relation.from_ref} -> {relation.to_ref}"
+                + (f" | {_compact_line(relation.note, 220)}" if relation.note else "")
+            )
+            lines.append(relation_line)
+    return "\n".join(lines)
+
+
+def _generate_pre_step_note(
+    *,
+    gap: Gap,
+    note_context: str,
+) -> StepNote | None:
+    if not isinstance(note_context, str) or not note_context.strip():
+        return None
+    return note_engine.generate_step_note(
+        gap_desc=gap.desc,
+        resolved_data=note_context,
+        step_refs=list(gap.step_refs or []),
+        content_refs=list(gap.content_refs or []),
+    )
+
+
+def _attach_note(step_result: Step | None, note: StepNote | None) -> Step | None:
+    if step_result is None or note is None or step_result.note is not None:
+        return step_result
+    step_result.note = note
+    return step_result
 
 
 def _attach_generated_note(
@@ -1272,6 +1324,7 @@ def execute_iteration(
         return ExecutionOutcome(control="break", step_result=clarify_step)
 
     resolved_data = hooks.resolve_all_refs(gap.step_refs, gap.content_refs, trajectory)
+    pre_step_note: StepNote | None = None
     vocab = gap.vocab
     direct_tool_ref = _direct_tool_ref_from_gap(gap, config.cors_root)
     if not vocab and direct_tool_ref:
@@ -1404,6 +1457,17 @@ def execute_iteration(
             hooks=hooks,
         )
         if tool_contract.mode == "observe":
+            observe_context_parts: list[str] = []
+            if resolved_data:
+                observe_context_parts.append(f"## Resolved data\n{resolved_data}")
+            if output:
+                observe_context_parts.append(f"## Tool output ({tool_path})\n{output}")
+            pre_step_note = _generate_pre_step_note(
+                gap=gap,
+                note_context="\n\n".join(observe_context_parts),
+            )
+            if pre_step_note is not None:
+                session.inject(_render_note_for_injection(pre_step_note, title=f"## Pre-step note for gap:{gap.hash}"))
             raw = session.call(f"You resolved gap:{gap.hash} \"{gap.desc}\". What do you observe? Articulate any new gaps.")
             print(f"  LLM: {raw[:150]}...")
             step_result, child_gaps = hooks.parse_step_output(
@@ -1412,7 +1476,8 @@ def execute_iteration(
                 content_refs=gap.content_refs,
                 chain_id=entry.chain_id,
             )
-            if resolved_data:
+            step_result = _attach_note(step_result, pre_step_note)
+            if step_result is not None and step_result.note is None and resolved_data:
                 step_result = _attach_generated_note(step_result, gap=gap, resolved_data=resolved_data)
             compiler.record_execution("hash_resolve_needed", False)
             if child_gaps:
@@ -1556,13 +1621,17 @@ def execute_iteration(
         print(f"  → observation-only ({vocab})")
         if resolved_data:
             session.inject(f"## Resolved hash data for gap:{gap.hash}\n{resolved_data}")
+            pre_step_note = _generate_pre_step_note(gap=gap, note_context=resolved_data)
+            if pre_step_note is not None:
+                session.inject(_render_note_for_injection(pre_step_note, title=f"## Pre-step note for gap:{gap.hash}"))
         step_result = Step.create(
             desc=f"resolved: {gap.desc}",
             step_refs=[origin_step.hash],
             content_refs=gap.content_refs,
             chain_id=entry.chain_id,
         )
-        if resolved_data:
+        step_result = _attach_note(step_result, pre_step_note)
+        if step_result is not None and step_result.note is None and resolved_data:
             step_result = _attach_generated_note(step_result, gap=gap, resolved_data=resolved_data)
         compiler.resolve_current_gap(gap.hash)
 
@@ -1575,6 +1644,18 @@ def execute_iteration(
             session.inject(f"## Tool output ({vocab})\n{output}")
         elif resolved_data:
             session.inject(f"## Resolved data\n{resolved_data}")
+
+        observe_context_parts: list[str] = []
+        if resolved_data:
+            observe_context_parts.append(f"## Resolved data\n{resolved_data}")
+        if tool_path and 'output' in locals() and output:
+            observe_context_parts.append(f"## Tool output ({vocab})\n{output}")
+        pre_step_note = _generate_pre_step_note(
+            gap=gap,
+            note_context="\n\n".join(observe_context_parts),
+        )
+        if pre_step_note is not None:
+            session.inject(_render_note_for_injection(pre_step_note, title=f"## Pre-step note for gap:{gap.hash}"))
 
         follow_on_guidance = ""
         if vocab == "hash_resolve_needed":
@@ -1597,7 +1678,8 @@ def execute_iteration(
             content_refs=gap.content_refs,
             chain_id=entry.chain_id,
         )
-        if vocab == "hash_resolve_needed" and resolved_data:
+        step_result = _attach_note(step_result, pre_step_note)
+        if vocab == "hash_resolve_needed" and step_result is not None and step_result.note is None and resolved_data:
             step_result = _attach_generated_note(step_result, gap=gap, resolved_data=resolved_data)
         if child_gaps:
             compiler.emit(step_result)
@@ -2137,6 +2219,13 @@ def execute_iteration(
         reason_context = _render_reason_context(gap, trajectory=trajectory, hooks=hooks, registry=registry)
         if reason_context:
             session.inject(reason_context)
+        pre_reason_context = reason_context or (f"## Current Gap Resolved Content\n{resolved_data}" if resolved_data else "")
+        pre_step_note = _generate_pre_step_note(
+            gap=gap,
+            note_context=pre_reason_context,
+        )
+        if pre_step_note is not None:
+            session.inject(_render_note_for_injection(pre_step_note, title=f"## Pre-step note for gap:{gap.hash}"))
         raw = session.call(_reason_controller_prompt(gap))
         activation_intent = _extract_reason_activation_intent(raw, hooks)
         if activation_intent:
@@ -2145,6 +2234,7 @@ def execute_iteration(
             task_prompt = activation_intent["prompt"] or gap.desc
             activation_content_refs = activation_intent["content_refs"]
             activation_step_refs = activation_intent["step_refs"]
+            activation_note = activation_intent.get("note") or pre_step_note
             await_policy = "manual" if await_needed else "none"
             activation_context = None
             if activation_content_refs or activation_step_refs:
@@ -2229,6 +2319,7 @@ def execute_iteration(
                     step_refs=[origin_step.hash],
                     content_refs=[activate_ref] + activation_content_refs,
                     chain_id=entry.chain_id,
+                    note=activation_note,
                 )
             else:
                 skill = _resolve_workflow_skill(registry, activate_ref, config.cors_root)
@@ -2294,6 +2385,8 @@ def execute_iteration(
                     f"content_refs: {activation_content_refs or []}\n"
                     f"step_refs: {activation_step_refs or []}"
                 )
+                if activation_note is not None:
+                    step_result.note = activation_note
                 compiler.emit(step_result)
             compiler.resolve_current_gap(gap.hash)
         else:
@@ -2303,6 +2396,7 @@ def execute_iteration(
                 content_refs=gap.content_refs,
                 chain_id=entry.chain_id,
             )
+            step_result = _attach_note(step_result, pre_step_note)
             rewrites = _sanitize_reason_child_gaps(
                 child_gaps,
                 registry=registry,

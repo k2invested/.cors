@@ -213,6 +213,207 @@ def test_render_reason_context_injects_referenced_child_chain_when_resolved():
     assert "review child chain before deciding no-edit" in rendered
 
 
+def test_extract_reason_activation_intent_preserves_note():
+    raw = json.dumps(
+        {
+            "note": {
+                "summary": "docs drift requires inline workflow",
+                "drift": ["architecture doc stale"],
+                "mutation_implications": ["activate hash_edit"],
+            },
+            "activate_ref": "hash_edit:7dbcaa8a10ea",
+            "prompt": "update docs",
+            "await_needed": False,
+            "content_refs": ["docs/ARCHITECTURE.md"],
+            "step_refs": ["step:abc123"],
+        }
+    )
+
+    hooks = execution_engine.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda *args, **kwargs: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=lambda raw: None,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: Step.create("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+
+    intent = execution_engine._extract_reason_activation_intent(raw, hooks)
+
+    assert intent is not None
+    assert intent["activate_ref"] == "7dbcaa8a10ea"
+    assert intent["note"] is not None
+    assert intent["note"].summary == "docs drift requires inline workflow"
+    assert intent["note"].drift == ["architecture doc stale"]
+
+
+def test_execute_iteration_injects_pre_step_note_for_hash_resolve(monkeypatch):
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin = Step.create(desc="origin")
+    traj.append(origin)
+    gap = Gap.create(desc="resolve architecture doc", content_refs=["docs/ARCHITECTURE.md"])
+    gap.vocab = "hash_resolve_needed"
+    entry = type("Entry", (), {"gap": gap, "chain_id": "chain1"})()
+
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+            self.prompts = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            self.prompts.append(user_content or "")
+            return json.dumps({"note": {"summary": "final note"}, "gaps": []})
+
+    session = FakeSession()
+
+    monkeypatch.setattr(
+        execution_engine.note_engine,
+        "generate_step_note",
+        lambda **kwargs: StepNote(summary="pre observation note", material_points=["artifact summary"]),
+    )
+
+    hooks = execution_engine.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "resolved architecture body",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda *args, **kwargs: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=lambda raw: None,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: Step.create("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        render_session_context=lambda trajectory, registry_obj, user_message, active_chain_id=None, active_gap=None: "",
+    )
+    config = execution_engine.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "trajectory_store" / "command",
+        tool_map={},
+        deterministic_vocab={"hash_resolve_needed"},
+        observation_only_vocab=set(),
+    )
+
+    outcome = execution_engine.execute_iteration(
+        entry=entry,
+        signal=execution_engine.GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert outcome.step_result.effective_note().summary == "final note"
+    assert any("## Pre-step note for gap:" in content for content in session.injected)
+
+
+def test_execute_iteration_injects_pre_step_note_for_reason(monkeypatch):
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin = Step.create(desc="origin")
+    prior = Step.create(
+        desc="prior compare",
+        note=StepNote(summary="prior semantic note", drift=["possible docs drift"]),
+    )
+    traj.append(origin)
+    traj.append(prior)
+    gap = Gap.create(
+        desc="decide whether edit is needed",
+        content_refs=["docs/ARCHITECTURE.md"],
+        step_refs=[prior.hash],
+    )
+    gap.vocab = "reason_needed"
+    entry = type("Entry", (), {"gap": gap, "chain_id": "chain1"})()
+
+    class FakeSession:
+        def __init__(self):
+            self.injected = []
+            self.prompts = []
+
+        def inject(self, content: str, role: str = "user"):
+            self.injected.append(content)
+
+        def call(self, user_content: str = None) -> str:
+            self.prompts.append(user_content or "")
+            return json.dumps({"gaps": []})
+
+    session = FakeSession()
+
+    monkeypatch.setattr(
+        execution_engine.note_engine,
+        "generate_step_note",
+        lambda **kwargs: StepNote(summary="pre reason note", drift=["compare outstanding"]),
+    )
+
+    hooks = execution_engine.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "resolved architecture body",
+        execute_tool=lambda tool, params: ("", 0),
+        auto_commit=lambda *args, **kwargs: (None, None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=lambda raw: None,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: Step.create("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+        render_session_context=lambda trajectory, registry_obj, user_message, active_chain_id=None, active_gap=None: "",
+    )
+    config = execution_engine.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "trajectory_store" / "command",
+        tool_map={},
+        deterministic_vocab=set(),
+        observation_only_vocab=set(),
+    )
+
+    outcome = execution_engine.execute_iteration(
+        entry=entry,
+        signal=execution_engine.GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert outcome.step_result.effective_note().summary == "pre reason note"
+    assert any("## Pre-step note for gap:" in content for content in session.injected)
+
+
 def test_render_step_network_shows_entities_packages_and_commands(tmp_path):
     reg = registry()
     package_hash = me.persist_chain_package(tmp_path, example_stepchain())

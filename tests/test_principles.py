@@ -6019,6 +6019,90 @@ def test_p12_inline_skill_activation_only_admits_root_phase():
     }
 
 
+def test_p12_architect_workflow_predeclares_fixed_audit_surfaces():
+    data = skill_data("architect")
+    phases = {phase["id"]: phase for phase in data["phases"]}
+
+    assert phases["phase_resolve_source_1"]["gap_template"]["content_refs"] == [
+        "step.py",
+        "compile.py",
+        "loop.py",
+        "execution_engine.py",
+        "manifest_engine.py",
+        "skills/loader.py",
+        "system/tool_registry.py",
+        "system/chain_registry.py",
+        "system/hash_registry.py",
+        "system/security_compile.py",
+        "system/trace_tree_build.py",
+        "tools/hash_resolve.py",
+        "tools/hash_manifest.py",
+        "tools/validate_chain.py",
+    ]
+    assert phases["phase_resolve_principles_2"]["gap_template"]["content_refs"] == ["docs/PRINCIPLES.md"]
+    assert phases["phase_resolve_docs_3"]["gap_template"]["content_refs"] == [
+        "docs/ARCHITECTURE.md",
+        "docs/step.md",
+        "docs/compile.md",
+        "docs/loop.md",
+        "docs/execution_engine.md",
+        "docs/manifest_engine.md",
+        "docs/skills.md",
+        "docs/tools.md",
+        "docs/security_compile.md",
+        "docs/trace_tree.md",
+    ]
+    assert phases["phase_resolve_tests_4"]["gap_template"]["content_refs"] == [
+        "tests/test_principles.py",
+        "tests/test_semantic_runtime.py",
+        "tests/test_law9.py",
+        "tests/test_security_compile.py",
+        "tests/test_trace_tree_build.py",
+    ]
+
+    final_desc = phases["phase_analyse_and_handoff_fix_5"]["gap_template"]["desc"]
+    assert "fixed editable documentation/spec surface" in final_desc
+    assert "fixed corroborating test surface" in final_desc
+    assert "Do not include source-code files, tests, or PRINCIPLES.md in the edit set" in final_desc
+    assert "surface continuing work instead of claiming reconciliation" in final_desc
+
+
+def test_p12_inline_architect_activation_carries_fixed_root_and_test_refs():
+    reg = registry()
+    architect = skill("architect")
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    parent_origin = make_step("parent origin")
+    parent_gap = make_gap("activate architect", vocab="architect_needed")
+    parent_chain = Chain.create(origin_gap=parent_gap.hash, first_step=parent_origin.hash)
+    traj.add_chain(parent_chain)
+    compiler.active_chain = parent_chain
+
+    activation_step = manifest_engine_module.activate_skill_package(
+        architect,
+        architect.hash,
+        parent_gap,
+        parent_origin,
+        parent_chain.hash,
+        0,
+        task_prompt="run architect",
+        activation_content_refs=[architect.hash],
+        registry=reg,
+        chains_dir=ROOT / "trajectory_store" / "command",
+        cors_root=ROOT,
+        tool_map=loop.TOOL_MAP,
+    )
+
+    root_gap = next(gap for gap in activation_step.gaps if gap.phase_id == "phase_resolve_source_1")
+    tests_gap = next(gap for gap in activation_step.gaps if gap.phase_id == "phase_resolve_tests_4")
+
+    assert "step.py" in root_gap.content_refs
+    assert "execution_engine.py" in root_gap.content_refs
+    assert "tools/validate_chain.py" in root_gap.content_refs
+    assert "tests/test_principles.py" in tests_gap.content_refs
+    assert "tests/test_law9.py" in tests_gap.content_refs
+
+
 def test_p12_inline_skill_activation_promotes_successor_phase_on_resolution():
     reg = registry()
     architect = skill("architect")

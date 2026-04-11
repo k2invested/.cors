@@ -1,6 +1,6 @@
 {
   "name": "architect",
-  "desc": "Architecture analysis. Treats source as the canonical system surface, resolves principles for grounding, audits spec/docs against source, and may activate hash_edit only for stale documentation files.",
+  "desc": "Architecture analysis. Treats a fixed source audit set as the canonical system surface, resolves PRINCIPLES.md only for grounding, audits a fixed editable documentation/spec surface against that source and a fixed corroborating test surface, and may activate hash_edit only for stale documentation files.",
   "trigger": "on_vocab:architect_needed",
   "refs": {},
   "artifact": {
@@ -14,11 +14,26 @@
     {
       "id": "phase_resolve_source_1",
       "kind": "observe",
-      "goal": "resolve the source files relevant to architecture, runtime, registries, and execution flow",
+      "goal": "resolve the fixed source audit set for architecture, runtime, registries, execution flow, public registries, and validation surfaces",
       "action": "resolve_source",
       "gap_template": {
-        "desc": "resolve the source files relevant to architecture, runtime, registries, and execution flow",
-        "content_refs": [],
+        "desc": "resolve the fixed source audit set for architecture analysis: step.py, compile.py, loop.py, execution_engine.py, manifest_engine.py, skills/loader.py, system/tool_registry.py, system/chain_registry.py, system/hash_registry.py, system/security_compile.py, system/trace_tree_build.py, tools/hash_resolve.py, tools/hash_manifest.py, and tools/validate_chain.py. Do not substitute other files or treat this phase as an open-ended source search.",
+        "content_refs": [
+          "step.py",
+          "compile.py",
+          "loop.py",
+          "execution_engine.py",
+          "manifest_engine.py",
+          "skills/loader.py",
+          "system/tool_registry.py",
+          "system/chain_registry.py",
+          "system/hash_registry.py",
+          "system/security_compile.py",
+          "system/trace_tree_build.py",
+          "tools/hash_resolve.py",
+          "tools/hash_manifest.py",
+          "tools/validate_chain.py"
+        ],
         "step_refs": []
       },
       "manifestation": {
@@ -78,17 +93,21 @@
     {
       "id": "phase_resolve_docs_3",
       "kind": "observe",
-      "goal": "resolve ARCHITECTURE.md and the module docs that form the editable spec/documentation surface that should stay in sync with source",
+      "goal": "resolve the fixed editable documentation/spec surface that should stay in sync with the canonical source audit set",
       "action": "resolve_docs",
       "gap_template": {
-        "desc": "resolve ARCHITECTURE.md and the module docs that form the editable spec/documentation surface that should stay in sync with source",
+        "desc": "resolve the fixed editable documentation/spec surface for architecture analysis: docs/ARCHITECTURE.md, docs/step.md, docs/compile.md, docs/loop.md, docs/execution_engine.md, docs/manifest_engine.md, docs/skills.md, docs/tools.md, docs/security_compile.md, and docs/trace_tree.md. Do not substitute other docs or treat PRINCIPLES.md as part of the editable synchronization surface.",
         "content_refs": [
           "docs/ARCHITECTURE.md",
           "docs/step.md",
           "docs/compile.md",
           "docs/loop.md",
+          "docs/execution_engine.md",
+          "docs/manifest_engine.md",
           "docs/skills.md",
-          "docs/tools.md"
+          "docs/tools.md",
+          "docs/security_compile.md",
+          "docs/trace_tree.md"
         ],
         "step_refs": []
       },
@@ -116,11 +135,17 @@
     {
       "id": "phase_resolve_tests_4",
       "kind": "observe",
-      "goal": "resolve the tests that should reflect the current architectural and documentation surface",
+      "goal": "resolve the fixed corroborating test surface for architecture, runtime, law-9, security, and trace-tree behavior",
       "action": "resolve_tests",
       "gap_template": {
-        "desc": "resolve the tests that should reflect the current architectural and documentation surface",
-        "content_refs": [],
+        "desc": "resolve the fixed corroborating test surface for architecture analysis: tests/test_principles.py, tests/test_semantic_runtime.py, tests/test_law9.py, tests/test_security_compile.py, and tests/test_trace_tree_build.py. Do not treat this phase as an open-ended test search.",
+        "content_refs": [
+          "tests/test_principles.py",
+          "tests/test_semantic_runtime.py",
+          "tests/test_law9.py",
+          "tests/test_security_compile.py",
+          "tests/test_trace_tree_build.py"
+        ],
         "step_refs": []
       },
       "manifestation": {
@@ -147,10 +172,10 @@
     {
       "id": "phase_analyse_and_handoff_fix_5",
       "kind": "higher_order",
-      "goal": "treat the resolved source code as the canonical source of truth and use PRINCIPLES.md only as architectural grounding. Audit the editable documentation/spec surface against that source and grounding. This phase has only two lawful outcomes: 1. if no documentation edits are needed, emit no activation and close the workflow; 2. if documentation edits are needed, emit only a reason activation JSON for hash_edit using the hash_edit workflow ref, include only the concrete stale documentation/spec file refs that require mutation, and set await_needed=false by default. Do not activate architect again. Do not activate any workflow other than hash_edit. Do not include source-code files, tests, or PRINCIPLES.md in the edit set for this workflow. Do not emit reprogramme_needed from this phase unless the task explicitly changes entity state.",
+      "goal": "treat the fixed resolved source audit set as the canonical source of truth, use PRINCIPLES.md only as architectural grounding, and audit only the fixed editable documentation/spec surface against that source and the fixed corroborating test surface. This phase has only two lawful outcomes: 1. if no documentation edits are needed, emit no activation and close the workflow; 2. if documentation edits are needed, emit only a reason activation JSON for hash_edit using the hash_edit workflow ref, include only the concrete stale documentation/spec file refs from the fixed editable docs surface that require mutation, and set await_needed=false by default. Do not activate architect again. Do not activate any workflow other than hash_edit. Do not include source-code files, tests, or PRINCIPLES.md in the edit set for this workflow. If the fixed source, docs, or test phases are missing evidence or remain unresolved, surface continuing work instead of claiming reconciliation. Do not emit reprogramme_needed from this phase unless the task explicitly changes entity state.",
       "action": "analyse_and_handoff_fix",
       "gap_template": {
-        "desc": "treat the resolved source code as the canonical source of truth and use PRINCIPLES.md only as architectural grounding. Audit only the editable documentation/spec surface against that source and grounding. Only two outputs are lawful here: emit nothing if no documentation edits are needed, or emit only a reason activation JSON for hash_edit. If activating hash_edit, use the hash_edit workflow ref, include only the exact stale documentation/spec file refs that need mutation, and set await_needed=false by default. Do not reactivate architect. Do not activate any workflow other than hash_edit. Do not include source-code files, tests, or PRINCIPLES.md in the edit set for this workflow. Do not emit reprogramme_needed from this phase unless entity state persistence is explicitly required.",
+        "desc": "treat the fixed resolved source audit set as the canonical source of truth and use PRINCIPLES.md only as architectural grounding. Audit only the fixed editable documentation/spec surface against that source and the fixed corroborating test surface. Only two outputs are lawful here: emit nothing if no documentation edits are needed, or emit only a reason activation JSON for hash_edit. If activating hash_edit, use the hash_edit workflow ref, include only the exact stale documentation/spec file refs from the fixed editable docs surface that need mutation, and set await_needed=false by default. Do not reactivate architect. Do not activate any workflow other than hash_edit. Do not include source-code files, tests, or PRINCIPLES.md in the edit set for this workflow. If the fixed source, docs, or test phases are missing evidence or remain unresolved, surface continuing work instead of claiming reconciliation. Do not emit reprogramme_needed from this phase unless entity state persistence is explicitly required.",
         "content_refs": [],
         "step_refs": []
       },
@@ -185,9 +210,25 @@
   "steps": [
     {
       "action": "resolve_source",
-      "desc": "resolve the source files relevant to architecture, runtime, registries, and execution flow",
+      "desc": "resolve the fixed source audit set for architecture analysis: step.py, compile.py, loop.py, execution_engine.py, manifest_engine.py, skills/loader.py, system/tool_registry.py, system/chain_registry.py, system/hash_registry.py, system/security_compile.py, system/trace_tree_build.py, tools/hash_resolve.py, tools/hash_manifest.py, and tools/validate_chain.py. Do not substitute other files or treat this phase as an open-ended source search.",
       "vocab": "hash_resolve_needed",
-      "post_diff": false
+      "post_diff": false,
+      "resolve": [
+        "step.py",
+        "compile.py",
+        "loop.py",
+        "execution_engine.py",
+        "manifest_engine.py",
+        "skills/loader.py",
+        "system/tool_registry.py",
+        "system/chain_registry.py",
+        "system/hash_registry.py",
+        "system/security_compile.py",
+        "system/trace_tree_build.py",
+        "tools/hash_resolve.py",
+        "tools/hash_manifest.py",
+        "tools/validate_chain.py"
+      ]
     },
     {
       "action": "resolve_principles",
@@ -200,7 +241,7 @@
     },
     {
       "action": "resolve_docs",
-      "desc": "resolve ARCHITECTURE.md and the module docs that form the editable spec/documentation surface that should stay in sync with source",
+      "desc": "resolve the fixed editable documentation/spec surface for architecture analysis: docs/ARCHITECTURE.md, docs/step.md, docs/compile.md, docs/loop.md, docs/execution_engine.md, docs/manifest_engine.md, docs/skills.md, docs/tools.md, docs/security_compile.md, and docs/trace_tree.md. Do not substitute other docs or treat PRINCIPLES.md as part of the editable synchronization surface.",
       "vocab": "hash_resolve_needed",
       "post_diff": false,
       "resolve": [
@@ -208,19 +249,30 @@
         "docs/step.md",
         "docs/compile.md",
         "docs/loop.md",
+        "docs/execution_engine.md",
+        "docs/manifest_engine.md",
         "docs/skills.md",
-        "docs/tools.md"
+        "docs/tools.md",
+        "docs/security_compile.md",
+        "docs/trace_tree.md"
       ]
     },
     {
       "action": "resolve_tests",
-      "desc": "resolve the tests that should reflect the current architectural and documentation surface",
+      "desc": "resolve the fixed corroborating test surface for architecture analysis: tests/test_principles.py, tests/test_semantic_runtime.py, tests/test_law9.py, tests/test_security_compile.py, and tests/test_trace_tree_build.py. Do not treat this phase as an open-ended test search.",
       "vocab": "hash_resolve_needed",
-      "post_diff": false
+      "post_diff": false,
+      "resolve": [
+        "tests/test_principles.py",
+        "tests/test_semantic_runtime.py",
+        "tests/test_law9.py",
+        "tests/test_security_compile.py",
+        "tests/test_trace_tree_build.py"
+      ]
     },
     {
       "action": "analyse_and_handoff_fix",
-      "desc": "treat the resolved source code as the canonical source of truth and use PRINCIPLES.md only as architectural grounding. Audit only the editable documentation/spec surface against that source and grounding. Only two outputs are lawful here: emit nothing if no documentation edits are needed, or emit only a reason activation JSON for hash_edit. If activating hash_edit, use the hash_edit workflow ref, include only the exact stale documentation/spec file refs that need mutation, and set await_needed=false by default. Do not reactivate architect. Do not activate any workflow other than hash_edit. Do not include source-code files, tests, or PRINCIPLES.md in the edit set for this workflow. Do not emit reprogramme_needed from this phase unless entity state persistence is explicitly required.",
+      "desc": "treat the fixed resolved source audit set as the canonical source of truth and use PRINCIPLES.md only as architectural grounding. Audit only the fixed editable documentation/spec surface against that source and the fixed corroborating test surface. Only two outputs are lawful here: emit nothing if no documentation edits are needed, or emit only a reason activation JSON for hash_edit. If activating hash_edit, use the hash_edit workflow ref, include only the exact stale documentation/spec file refs from the fixed editable docs surface that need mutation, and set await_needed=false by default. Do not reactivate architect. Do not activate any workflow other than hash_edit. Do not include source-code files, tests, or PRINCIPLES.md in the edit set for this workflow. If the fixed source, docs, or test phases are missing evidence or remain unresolved, surface continuing work instead of claiming reconciliation. Do not emit reprogramme_needed from this phase unless entity state persistence is explicitly required.",
       "post_diff": true
     }
   ],
