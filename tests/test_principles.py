@@ -4522,6 +4522,28 @@ def test_p12_hash_manifest_bootstraps_repo_root_for_script_execution():
     assert "# Architecture" in result.stdout
 
 
+def test_p12_hash_manifest_accepts_batch_payloads():
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "hash_manifest.py")],
+        input=json.dumps(
+            [
+                {"action": "read", "path": "docs/ARCHITECTURE.md"},
+                {"action": "read", "path": "docs/step.md"},
+            ]
+        ),
+        text=True,
+        capture_output=True,
+        cwd=str(ROOT),
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["artifacts"] == ["docs/ARCHITECTURE.md", "docs/step.md"]
+    assert len(payload["results"]) == 2
+    assert payload["results"][0].startswith("# Architecture")
+
+
 def test_p12_hash_registry_captures_core_routes():
     assert hash_registry_module.HASH_CORE_TOOLS == (
         "tools/hash_resolve.py",
@@ -6235,6 +6257,105 @@ def test_p12_hash_edit_compose_prompt_includes_targeting_rules_and_refs():
     assert "Available step refs: ['deadbeef1234']" in prompt
     assert "Prefer concrete non-.st workspace files" in prompt
     assert "Treat workflow/entity .st refs as context only" in prompt
+
+
+def test_p12_hash_edit_accepts_multi_file_manifest_payload_and_reobserves_all_paths():
+    class FakeSession:
+        def __init__(self):
+            self.prompts = []
+
+        def inject(self, content: str, role: str = "user"):
+            pass
+
+        def call(self, user_content: str = None) -> str:
+            self.prompts.append(user_content or "")
+            return json.dumps(
+                [
+                    {
+                        "action": "patch",
+                        "path": "docs/ARCHITECTURE.md",
+                        "patch": {"old": "old-a", "new": "new-a"},
+                    },
+                    {
+                        "action": "patch",
+                        "path": "docs/step.md",
+                        "patch": {"old": "old-b", "new": "new-b"},
+                    },
+                ]
+            )
+
+    executed_tools: list[tuple[str, object]] = []
+    committed_paths: list[list[str] | None] = []
+    traj = Trajectory()
+    compiler = Compiler(traj)
+    origin_step = make_step("origin")
+    gap = make_gap(
+        "Update stale docs using the attached audit context.",
+        vocab="hash_edit_needed",
+        content_refs=["docs/ARCHITECTURE.md", "docs/step.md"],
+    )
+    entry = SimpleNamespace(gap=gap, chain_id="chain1")
+    session = FakeSession()
+
+    def fake_execute_tool(tool: str, params: object):
+        executed_tools.append((tool, params))
+        return (
+            json.dumps(
+                {
+                    "status": "ok",
+                    "artifacts": ["docs/ARCHITECTURE.md", "docs/step.md"],
+                }
+            ),
+            0,
+        )
+
+    hooks = execution_engine_module.ExecutionHooks(
+        resolve_all_refs=lambda step_refs, content_refs, trajectory: "resolved doc context",
+        execute_tool=fake_execute_tool,
+        auto_commit=lambda message, paths=None: (committed_paths.append(paths) or "abc123", None),
+        parse_step_output=loop._parse_step_output,
+        extract_json=lambda raw: json.loads(raw),
+        extract_command=lambda raw: None,
+        extract_written_path=loop._extract_written_path,
+        is_reprogramme_intent=lambda intent: False,
+        load_tree_policy=lambda: {},
+        match_policy=lambda path, policy: None,
+        resolve_entity=lambda content_refs, registry_obj, trajectory: None,
+        render_step_network=lambda registry_obj: "step_network",
+        emit_reason_skill=lambda reason_skill, gap_obj, origin, chain_id: make_step("reason"),
+        git=lambda cmd, cwd=None: "",
+        commit_assessment=lambda commit_sha: [],
+        step_assessment=lambda before, after, path=None: [],
+    )
+    config = execution_engine_module.ExecutionConfig(
+        cors_root=ROOT,
+        chains_dir=ROOT / "trajectory_store" / "command",
+        tool_map=loop.TOOL_MAP,
+        deterministic_vocab=loop.DETERMINISTIC_VOCAB,
+        observation_only_vocab=loop.OBSERVATION_ONLY_VOCAB,
+    )
+
+    outcome = execution_engine_module.execute_iteration(
+        entry=entry,
+        signal=GovernorSignal.ALLOW,
+        session=session,
+        origin_step=origin_step,
+        trajectory=traj,
+        compiler=compiler,
+        registry=registry(),
+        current_turn=0,
+        hooks=hooks,
+        config=config,
+    )
+
+    assert outcome.step_result is not None
+    assert executed_tools and executed_tools[0][0] == "tools/hash_manifest.py"
+    assert isinstance(executed_tools[0][1], list)
+    assert committed_paths == [["docs/ARCHITECTURE.md", "docs/step.md"]]
+    postcondition = next(step for step in reversed(traj.recent(5)) if step.gaps)
+    assert postcondition.gaps
+    assert postcondition.gaps[0].vocab == "hash_resolve_needed"
+    assert postcondition.gaps[0].content_refs == ["docs/ARCHITECTURE.md", "docs/step.md"]
 
 
 def test_p12_execution_failure_auto_activates_debug(monkeypatch):

@@ -13,6 +13,7 @@ Input (stdin JSON):
   "patch": {"old": "...", "new": "..."} (for patch),
   "ref": "commit_sha" (for diff — diffs against this ref)
 }
+or a JSON array of those operation objects for ordered batch execution.
 
 Output: file content, diff, or confirmation.
 """
@@ -107,6 +108,42 @@ def route_by_type(path: str, params: dict) -> str | None:
     return None
 
 
+def execute_operation(params: dict) -> str:
+    action = params.get("action", "read")
+    path = params.get("path", "")
+
+    if not path:
+        raise ValueError("missing 'path'")
+
+    if action == "read":
+        return read_file(path)
+    if action == "write":
+        # Route by file type first
+        routed = route_by_type(path, params)
+        if routed:
+            return routed
+        content = params.get("content", "")
+        if not content:
+            raise ValueError("missing 'content' for write")
+        return write_file(path, content)
+    if action == "patch":
+        # Route by file type first
+        routed = route_by_type(path, params)
+        if routed:
+            return routed
+        patch = params.get("patch", {})
+        old = patch.get("old", "")
+        new = patch.get("new", "")
+        if not old:
+            raise ValueError("missing patch.old")
+        return patch_file(path, old, new)
+    if action == "diff":
+        ref = params.get("ref", "HEAD")
+        result = diff_file(path, ref)
+        return result if result else "(no diff)"
+    raise ValueError(f"unknown action '{action}'")
+
+
 def main():
     try:
         params = json.load(sys.stdin)
@@ -114,45 +151,26 @@ def main():
         print(f"Error: invalid JSON — {e}")
         sys.exit(1)
 
-    action = params.get("action", "read")
-    path = params.get("path", "")
+    try:
+        if isinstance(params, list):
+            results: list[str] = []
+            artifacts: list[str] = []
+            for idx, item in enumerate(params):
+                if not isinstance(item, dict):
+                    raise ValueError(f"batch item {idx} must be an object")
+                result = execute_operation(item)
+                results.append(result)
+                path = item.get("path", "")
+                if isinstance(path, str) and path.strip():
+                    artifacts.append(path.strip())
+            print(json.dumps({"status": "ok", "artifacts": artifacts, "results": results}))
+            return
 
-    if not path:
-        print("Error: missing 'path'")
-        sys.exit(1)
-
-    if action == "read":
-        print(read_file(path))
-    elif action == "write":
-        # Route by file type first
-        routed = route_by_type(path, params)
-        if routed:
-            print(routed)
-        else:
-            content = params.get("content", "")
-            if not content:
-                print("Error: missing 'content' for write")
-                sys.exit(1)
-            print(write_file(path, content))
-    elif action == "patch":
-        # Route by file type first
-        routed = route_by_type(path, params)
-        if routed:
-            print(routed)
-        else:
-            patch = params.get("patch", {})
-            old = patch.get("old", "")
-            new = patch.get("new", "")
-            if not old:
-                print("Error: missing patch.old")
-                sys.exit(1)
-            print(patch_file(path, old, new))
-    elif action == "diff":
-        ref = params.get("ref", "HEAD")
-        result = diff_file(path, ref)
-        print(result if result else "(no diff)")
-    else:
-        print(f"Error: unknown action '{action}'")
+        if not isinstance(params, dict):
+            raise ValueError("top-level JSON must be an object or array of objects")
+        print(execute_operation(params))
+    except ValueError as e:
+        print(f"Error: {e}")
         sys.exit(1)
 
 

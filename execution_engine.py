@@ -465,15 +465,20 @@ def _bridge_reintegration_target(
     *,
     vocab: str | None,
     written_path: str | None,
+    written_paths: list[str] | None,
     commit_sha: str | None,
 ) -> tuple[list[str], str] | tuple[None, None]:
     next_vocab = FOUNDATIONAL_BRIDGE_POST_OBSERVE.get(vocab or "")
     if next_vocab != "reason_needed":
         return None, None
-    refs = [written_path] if isinstance(written_path, str) and written_path else ([commit_sha] if commit_sha else [])
+    refs = _dedupe_refs(written_paths or [])
+    if not refs and isinstance(written_path, str) and written_path:
+        refs = [written_path]
+    if not refs and commit_sha:
+        refs = [commit_sha]
     if not refs:
         return None, None
-    subject = written_path or f"commit:{commit_sha}"
+    subject = ", ".join(refs) if refs else f"commit:{commit_sha}"
     return refs, f"reintegrate {subject} after {vocab}"
 
 
@@ -587,6 +592,22 @@ def _infer_bash_commit_paths(intent: dict | None, cors_root: Path) -> list[str]:
                 seen.add(normalized)
                 inferred.append(normalized)
     return inferred
+
+
+def _infer_manifest_paths(intent: Any) -> list[str]:
+    paths: list[str] = []
+    if isinstance(intent, dict):
+        path = intent.get("path")
+        if isinstance(path, str) and path.strip():
+            paths.append(path.strip())
+    elif isinstance(intent, list):
+        for item in intent:
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path")
+            if isinstance(path, str) and path.strip():
+                paths.append(path.strip())
+    return _dedupe_refs(paths)
 
 
 def _mutate_tool_compose_prompt(*, vocab: str, gap: Gap, tool_path: str, contract: ToolContract | None) -> str:
@@ -1824,6 +1845,7 @@ def execute_iteration(
                 f"Respond with JSON params for hash_manifest.py:\n"
                 f'{{"action": "patch", "path": "relative/file/path", '
                 f'"patch": {{"old": "exact text to replace", "new": "replacement text"}}}}\n\n'
+                f"Or for multiple file edits in one step, respond with a JSON array of those objects.\n\n"
                 f"Or for a full rewrite:\n"
                 f'{{"action": "write", "path": "relative/file/path", "content": "full file content"}}\n\n'
                 f"Use the EXACT current file content for the 'old' field. Do not guess."
@@ -1893,13 +1915,15 @@ def execute_iteration(
         if vocab == "hash_edit_needed":
             intent = hooks.extract_json(raw)
             if intent:
+                manifest_paths = _infer_manifest_paths(intent)
                 output, code = hooks.execute_tool("tools/hash_manifest.py", intent)
                 print(f"  → hash_manifest: {output[:100]}")
                 written_path = hooks.extract_written_path(output)
-                if not written_path and isinstance(intent, dict):
-                    path = intent.get("path")
-                    if isinstance(path, str) and path:
-                        written_path = path
+                if not written_path and manifest_paths:
+                    written_path = manifest_paths[0]
+                if manifest_paths:
+                    commit_paths = manifest_paths
+                    runtime_refs = _dedupe_refs(runtime_refs + manifest_paths)
                 executed = True
                 exec_failed = code != 0
             else:
@@ -2030,6 +2054,7 @@ def execute_iteration(
                 postcond_refs, postcond_desc = _bridge_reintegration_target(
                     vocab=vocab,
                     written_path=written_path,
+                    written_paths=commit_paths,
                     commit_sha=commit_sha,
                 )
                 if not postcond_refs or not postcond_desc:
@@ -2177,6 +2202,7 @@ def execute_iteration(
                 postcond_refs, postcond_desc = _bridge_reintegration_target(
                     vocab=vocab,
                     written_path=written_path,
+                    written_paths=None,
                     commit_sha=None,
                 )
                 if not postcond_refs or not postcond_desc:
