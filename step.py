@@ -1097,7 +1097,39 @@ class Trajectory:
             f"observe={observe}, bridge={bridge}, mutate={mutate}, clarify={clarify}"
         )
 
-    def render_recent(self, n: int = 5, registry=None, mode: str = "full") -> str:
+    def _root_chain_ids(self, chain_ids: list[str]) -> list[str]:
+        chain_set = set(chain_ids)
+        gap_to_chain: dict[str, str] = {}
+        for chain_id in chain_ids:
+            chain = self.chains.get(chain_id)
+            if chain is None:
+                continue
+            for step_hash in chain.steps:
+                step = self.steps.get(step_hash)
+                if step is None:
+                    continue
+                for gap in step.gaps:
+                    gap_to_chain[gap.hash] = chain_id
+
+        child_chains: set[str] = set()
+        for chain_id in chain_ids:
+            chain = self.chains.get(chain_id)
+            if chain is None:
+                continue
+            parent_id = gap_to_chain.get(chain.origin_gap)
+            if parent_id and parent_id != chain_id and parent_id in chain_set:
+                child_chains.add(chain_id)
+
+        return [chain_id for chain_id in chain_ids if chain_id not in child_chains]
+
+    def render_recent(
+        self,
+        n: int = 5,
+        registry=None,
+        mode: str = "full",
+        highlight_gap: str | None = None,
+        include_resolved_children: bool = True,
+    ) -> str:
         """Render trajectory as a traversable hash tree.
 
         The LLM sees the same shape everywhere — git trees, trajectory,
@@ -1142,10 +1174,22 @@ class Trajectory:
                 return f"{rendered}\n\n" + "\n".join(rogue_lines)
             return rendered
 
+        ordered_chain_ids = [chain.hash for chain in chains]
+        root_chain_ids = self._root_chain_ids(ordered_chain_ids) or ordered_chain_ids
+        allowed_chain_ids = set(ordered_chain_ids)
+
         lines = []
-        for chain in chains:
-            tree = manifest_engine_module.build_semantic_tree_from_trajectory(self, chain_id=chain.hash, registry=registry, cors_root=ROOT)
-            lines.extend(self._render_semantic_tree_lines(tree, registry=registry, mode=mode))
+        for chain_id in root_chain_ids:
+            lines.append(
+                self.render_chain(
+                    chain_id,
+                    registry=registry,
+                    highlight_gap=highlight_gap,
+                    mode=mode,
+                    include_resolved_children=include_resolved_children,
+                    allowed_chain_ids=allowed_chain_ids,
+                )
+            )
 
         rogue_lines = self._render_rogue_lines(registry=registry)
         if rogue_lines:

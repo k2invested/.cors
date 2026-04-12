@@ -237,7 +237,7 @@ def test_render_reason_context_injects_referenced_child_chain_when_resolved():
     rendered = execution_engine._render_reason_context(gap, trajectory=traj, hooks=Hooks(), registry=registry())
 
     assert "## Current Gap Resolved Content" in rendered
-    assert "## Referenced Child Chain" in rendered
+    assert "## Referenced Semantic Tree" in rendered
     assert f"chain:{chain.hash}" in rendered
     assert "principles compare note" in rendered
     assert "review child chain before deciding no-edit" in rendered

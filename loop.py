@@ -1712,8 +1712,8 @@ def run_turn(
         print(f"  \"{gap.desc}\"")
         print(f"  signal: {signal.name} | vocab: {gap.vocab} | chain: {entry.chain_id[:8]}")
         session.inject(
-            "## Active Chain Tree\n"
-            f"{trajectory.render_chain(entry.chain_id, registry=registry, highlight_gap=gap.hash)}"
+            "## Active Semantic Tree\n"
+            f"{trajectory.render_recent(TRAJECTORY_WINDOW, registry=registry, mode='full', highlight_gap=gap.hash, include_resolved_children=True)}"
         )
         outcome = execute_iteration(
             entry=entry,
@@ -2070,8 +2070,16 @@ def _render_session_context(
     lines.append(_render_conversation_history(trajectory, registry, current_user_message=user_message))
 
     if active_chain_id:
-        lines.append("### Active Branch")
-        lines.append(trajectory.render_chain(active_chain_id, registry=registry, highlight_gap=active_gap, mode="collapsed"))
+        lines.append("### Active Semantic Tree")
+        lines.append(
+            trajectory.render_recent(
+                TRAJECTORY_WINDOW,
+                registry=registry,
+                mode="collapsed",
+                highlight_gap=active_gap,
+                include_resolved_children=True,
+            )
+        )
 
     attempts = _recent_structural_attempts(trajectory)
     if attempts:
@@ -3053,8 +3061,8 @@ def run_isolated_workflow_ref(
             break
         gap = entry.gap
         session.inject(
-            "## Active Chain Tree\n"
-            f"{trajectory.render_chain(entry.chain_id, registry=registry, highlight_gap=gap.hash)}"
+            "## Active Semantic Tree\n"
+            f"{trajectory.render_recent(TRAJECTORY_WINDOW, registry=registry, mode='full', highlight_gap=gap.hash, include_resolved_children=True)}"
         )
         outcome = execute_iteration(
             entry=entry,
@@ -3166,8 +3174,8 @@ def run_command(cmd_name: str, args: str = "") -> str:
         gap = entry.gap
         print(f"  [{iteration+1}] gap:{gap.hash[:8]} \"{gap.desc}\" [{gap.vocab}]")
         session.inject(
-            "## Active Chain Tree\n"
-            f"{trajectory.render_chain(entry.chain_id, registry=registry, highlight_gap=gap.hash)}"
+            "## Active Semantic Tree\n"
+            f"{trajectory.render_recent(TRAJECTORY_WINDOW, registry=registry, mode='full', highlight_gap=gap.hash, include_resolved_children=True)}"
         )
         outcome = execute_iteration(
             entry=entry,

@@ -261,8 +261,8 @@ def _render_reason_context(gap: Gap, *, trajectory: Any, hooks: ExecutionHooks, 
     referenced_chain = _referenced_resolved_chain(gap, trajectory)
     if referenced_chain is not None:
         blocks.append(
-            "## Referenced Child Chain\n"
-            f"{trajectory.render_chain(referenced_chain.hash, registry=registry, mode='full')}"
+            "## Referenced Semantic Tree\n"
+            f"{trajectory.render_recent(10, registry=registry, mode='full', highlight_gap=gap.hash, include_resolved_children=True)}"
         )
     else:
         step_blocks: list[str] = []
