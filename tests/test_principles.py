@@ -4508,6 +4508,20 @@ def test_p12_hash_manifest_routes_package_office_formats_through_office_manifest
     assert hash_manifest_module.TOOL_ROUTES[".xlsx"] == "tools/hash/office_manifest.py"
 
 
+def test_p12_hash_manifest_bootstraps_repo_root_for_script_execution():
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "hash_manifest.py")],
+        input=json.dumps({"action": "read", "path": "docs/ARCHITECTURE.md"}),
+        text=True,
+        capture_output=True,
+        cwd=str(ROOT),
+    )
+
+    assert result.returncode == 0
+    assert "ModuleNotFoundError" not in result.stderr
+    assert "# Architecture" in result.stdout
+
+
 def test_p12_hash_registry_captures_core_routes():
     assert hash_registry_module.HASH_CORE_TOOLS == (
         "tools/hash_resolve.py",

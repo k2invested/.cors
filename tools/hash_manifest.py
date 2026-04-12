@@ -28,9 +28,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from system.hash_registry import HASH_MANIFEST_ROUTES
 
-CORS_ROOT = str(Path(__file__).resolve().parent.parent)
+CORS_ROOT = str(ROOT)
 
 
 def git(cmd: list[str]) -> str:
