@@ -11,33 +11,6 @@
     "lineage": "tinchy.stryka",
     "version_strategy": "hash_pinned"
   },
-  "identity": {
-    "external_id": "discord:719157451496357949",
-    "username": "tinchystricker",
-    "discord_user_id": "719157451496357949",
-    "name": "Clinton",
-    "source": "identity mapping from clinton:bfa1a96aea7c",
-    "context": "Auto-bootstrapped from a first inbound message. Minimal identity only until init is completed.",
-    "role": "cyber security developer",
-    "location": "London",
-    "current_stay": "Northampton",
-    "current_status": "studying",
-    "specialty": "backend systems",
-    "previous_location": "Lagos",
-    "collaborated_with": [
-      "72b1d5ffc964"
-    ],
-    "project_history": [
-      "v3"
-    ]
-  },
-  "init": {
-    "status": "pending",
-    "mode": "first_contact",
-    "ask_profile_questions": true,
-    "seed_message": "hi",
-    "next_action": "Ask a small number of concise onboarding questions when useful. When enough stable profile is known, reprogramme this entity to set init.status to complete."
-  },
   "preferences": {
     "onboarding": {
       "deterministic_reprogramme_mode": "bootstrap_only",
@@ -71,6 +44,33 @@
     "compile": false,
     "activate_existing": false,
     "mutate": false
+  },
+  "identity": {
+    "external_id": "discord:719157451496357949",
+    "username": "tinchystricker",
+    "discord_user_id": "719157451496357949",
+    "name": "Clinton",
+    "source": "identity mapping from clinton:bfa1a96aea7c",
+    "context": "Auto-bootstrapped from a first inbound message. Minimal identity only until init is completed.",
+    "role": "cyber security developer",
+    "location": "London",
+    "current_stay": "Northampton",
+    "current_status": "studying",
+    "specialty": "backend systems",
+    "previous_location": "Lagos",
+    "collaborated_with": [
+      "72b1d5ffc964"
+    ],
+    "project_history": [
+      "v3"
+    ]
+  },
+  "init": {
+    "status": "complete",
+    "mode": "first_contact",
+    "ask_profile_questions": true,
+    "seed_message": "hi",
+    "next_action": "Onboarding complete. No further onboarding actions required."
   },
   "steps": [
     {
