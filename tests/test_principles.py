@@ -6087,8 +6087,8 @@ def test_p12_inline_skill_activation_only_admits_root_phase():
     assert {gap.phase_id for gap in planned} >= {
         "phase_resolve_principles_2",
         "phase_resolve_docs_3",
-        "phase_resolve_tests_4",
-        "phase_analyse_and_handoff_fix_5",
+        "phase_analyse_and_handoff_docs_fix_4",
+        "phase_embed_test_flow_5",
     }
 
 
@@ -6125,19 +6125,51 @@ def test_p12_architect_workflow_predeclares_fixed_audit_surfaces():
         "docs/security_compile.md",
         "docs/trace_tree.md",
     ]
-    assert phases["phase_resolve_tests_4"]["gap_template"]["content_refs"] == [
+    docs_fix_desc = phases["phase_analyse_and_handoff_docs_fix_4"]["gap_template"]["desc"]
+    assert "editable runtime documentation/spec surface" in docs_fix_desc
+    assert "before any corroborating test workflow runs" in docs_fix_desc
+    assert "Do not include source-code files, tests, or PRINCIPLES.md in the edit set for this phase" in docs_fix_desc
+
+    assert phases["phase_embed_test_flow_5"]["embedding"]["block_ref"] == "@test_principles_block"
+    assert phases["phase_embed_test_flow_5"]["embedding"]["activation_mode"] == "named_default"
+    assert phases["phase_embed_test_flow_5"]["gap_template"]["content_refs"] == [
+        "step.py",
+        "compile.py",
+        "loop.py",
+        "execution_engine.py",
+        "manifest_engine.py",
+        "skills/loader.py",
+        "system/tool_registry.py",
+        "system/chain_registry.py",
+        "system/hash_registry.py",
+        "system/security_compile.py",
+        "system/trace_tree_build.py",
+        "tools/hash_resolve.py",
+        "tools/hash_manifest.py",
+        "tools/validate_chain.py",
+        "docs/PRINCIPLES.md",
+        "docs/ARCHITECTURE.md",
+        "docs/step.md",
+        "docs/compile.md",
+        "docs/loop.md",
+        "docs/execution_engine.md",
+        "docs/manifest_engine.md",
+        "docs/skills.md",
+        "docs/tools.md",
+        "docs/security_compile.md",
+        "docs/trace_tree.md",
         "tests/test_principles.py",
         "tests/test_semantic_runtime.py",
         "tests/test_law9.py",
         "tests/test_security_compile.py",
         "tests/test_trace_tree_build.py",
+        "@test_principles_block",
     ]
+    assert data["refs"]["test_principles_block"] == skill("test_principles").hash
 
-    final_desc = phases["phase_analyse_and_handoff_fix_5"]["gap_template"]["desc"]
-    assert "fixed editable documentation/spec surface" in final_desc
-    assert "fixed corroborating test surface" in final_desc
-    assert "Do not include source-code files, tests, or PRINCIPLES.md in the edit set" in final_desc
-    assert "surface continuing work instead of claiming reconciliation" in final_desc
+    embed_desc = phases["phase_embed_test_flow_5"]["gap_template"]["desc"]
+    assert "after the runtime documentation phase has closed" in embed_desc
+    assert "child workflow owns corroborating test reasoning" in embed_desc
 
 
 def test_p12_inline_architect_activation_carries_fixed_root_and_test_refs():
@@ -6167,13 +6199,35 @@ def test_p12_inline_architect_activation_carries_fixed_root_and_test_refs():
     )
 
     root_gap = next(gap for gap in activation_step.gaps if gap.phase_id == "phase_resolve_source_1")
-    tests_gap = next(gap for gap in activation_step.gaps if gap.phase_id == "phase_resolve_tests_4")
+    tests_gap = next(gap for gap in activation_step.gaps if gap.phase_id == "phase_embed_test_flow_5")
+    docs_fix_gap = next(gap for gap in activation_step.gaps if gap.phase_id == "phase_analyse_and_handoff_docs_fix_4")
 
     assert "step.py" in root_gap.content_refs
     assert "execution_engine.py" in root_gap.content_refs
     assert "tools/validate_chain.py" in root_gap.content_refs
+    assert docs_fix_gap.content_refs == [architect.hash]
+    assert "docs/PRINCIPLES.md" in tests_gap.content_refs
+    assert "docs/ARCHITECTURE.md" in tests_gap.content_refs
     assert "tests/test_principles.py" in tests_gap.content_refs
     assert "tests/test_law9.py" in tests_gap.content_refs
+    assert skill("test_principles").hash in tests_gap.content_refs
+
+
+def test_p12_test_principles_workflow_predeclares_fixed_test_surface():
+    data = skill_data("test_principles")
+    phases = {phase["id"]: phase for phase in data["phases"]}
+
+    assert phases["phase_resolve_tests_1"]["gap_template"]["content_refs"] == [
+        "tests/test_principles.py",
+        "tests/test_semantic_runtime.py",
+        "tests/test_law9.py",
+        "tests/test_security_compile.py",
+        "tests/test_trace_tree_build.py",
+    ]
+    final_desc = phases["phase_analyse_and_handoff_fix_2"]["gap_template"]["desc"]
+    assert "source, principles, and documentation refs" in final_desc
+    assert "only the fixed corroborating test surface" in final_desc
+    assert "Do not include source-code files, documentation, or PRINCIPLES.md in the edit set" in final_desc
 
 
 def test_p12_inline_skill_activation_promotes_successor_phase_on_resolution():
