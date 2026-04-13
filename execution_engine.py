@@ -29,12 +29,14 @@ import manifest_engine as me
 import note_engine
 from step import Chain, Epistemic, Gap, Step, StepNote
 from system.chain_registry import public_chain_ref_map, render_public_chain_registry
-from system.control_surface import render_admin_surface, render_system_control_surface
+from system.control_surface import render_admin_surface, render_reason_owned_vocab_surface, render_system_control_surface
 from tools import st_builder as st_builder_module
 from system.tool_contract import ToolContract, load_tool_contract
 from system.tool_registry import public_tool_ref_map, render_public_tool_registry
 from skills.loader import load_all
 from vocab_registry import FOUNDATIONAL_BRIDGE_POST_OBSERVE, find_vocab_for_tool_ref, get_vocab, render_configurable_vocab_registry
+
+REASON_OWNED_VOCABS = {"clarify_needed", "tool_needed", "vocab_reg_needed"}
 
 
 @dataclass
@@ -169,8 +171,47 @@ def _reason_controller_prompt(gap: Gap) -> str:
     )
 
 
+def natural_step_prompt(
+    *,
+    gap: Gap | None = None,
+    user_message: str | None = None,
+    extra_guidance: str = "",
+) -> str:
+    if gap is not None:
+        lead = f"Emit the next natural step for resolved gap:{gap.hash} \"{gap.desc}\"."
+    else:
+        lead = "Emit the next natural step for the current turn."
+
+    message_clause = ""
+    if isinstance(user_message, str) and user_message.strip():
+        message_clause = f'\nCurrent user message: "{user_message.strip()}"'
+
+    return (
+        f"{lead}{message_clause}\n"
+        "Use the same natural step-emission contract used everywhere in the runtime.\n"
+        "Reason from the injected semantic tree, step notes, resolved refs, workspace context, and user message.\n"
+        "If direct synthesis is already sufficient, emit no gaps.\n"
+        "Before any clarify_needed, tool_needed, or vocab_reg_needed action, you must first surface reason_needed.\n"
+        "Do not surface clarify_needed, tool_needed, or vocab_reg_needed directly from this prompt.\n"
+        "Those abstractions are reason-owned. If one of them may be needed, emit reason_needed describing the judgment that still must be made.\n"
+        "When the user explicitly asks to run, start, or activate a named loaded workflow/flow, emit that workflow's trigger vocab directly rather than clarify_needed.\n"
+        "Do not emit another hash_resolve_needed for the same already-resolved surface unless genuinely new evidence or a different unresolved surface is required.\n"
+        f"{extra_guidance}".rstrip()
+    )
+
+
 def _render_public_tool_registry(cors_root: Path) -> str:
     return render_public_tool_registry(cors_root)
+
+
+def _rewrite_reason_owned_child_gaps(child_gaps: list[Gap]) -> int:
+    rewrites = 0
+    for gap in child_gaps:
+        if gap.vocab in REASON_OWNED_VOCABS:
+            gap.vocab = "reason_needed"
+            gap.vocab_score = 0.8
+            rewrites += 1
+    return rewrites
 
 
 def _merge_dedupe_refs(*groups: list[str] | tuple[str, ...] | None) -> list[str]:
@@ -1518,10 +1559,13 @@ def execute_iteration(
             if pre_step_note is not None:
                 session.inject(_render_note_for_injection(pre_step_note, title=f"## Pre-step note for gap:{gap.hash}"))
             raw = session.call(
-                f"You resolved gap:{gap.hash} \"{gap.desc}\". What do you observe? Articulate any new gaps.\n"
-                "Treat the resolved evidence and pre-step note as the observed surface.\n"
-                "Do not emit another hash_resolve_needed for the same hash, path, package, or content surface merely because the observed artifact is sparse, scaffolded, or missing internal payloads.\n"
-                "If the same surface is already observed and the remaining issue is interpretation, incompleteness, or user-only missing information, prefer reason_needed and then clarify_needed or a mutate gap as appropriate."
+                natural_step_prompt(
+                    gap=gap,
+                    extra_guidance=(
+                        "\nTreat the resolved evidence and pre-step note as the observed surface.\n"
+                        "If the same surface is already observed and the remaining issue is interpretation, incompleteness, or user-only missing information, prefer reason_needed and then clarify_needed or a mutate gap as appropriate."
+                    ),
+                )
             )
             print(f"  LLM: {raw[:150]}...")
             step_result, child_gaps = hooks.parse_step_output(
@@ -1536,6 +1580,9 @@ def execute_iteration(
             rewrites = _sanitize_observation_child_gaps(gap, child_gaps)
             if rewrites:
                 print(f"  → rewrote {rewrites} recursive observe gap(s) to reason_needed")
+            ownership_rewrites = _rewrite_reason_owned_child_gaps(child_gaps)
+            if ownership_rewrites:
+                print(f"  → rewrote {ownership_rewrites} reason-owned gap(s) to reason_needed")
             compiler.record_execution("hash_resolve_needed", False)
             if child_gaps:
                 compiler.emit(step_result)
@@ -1727,9 +1774,7 @@ def execute_iteration(
                 "If the same surface is already observed and the remaining issue is interpretation, incompleteness, or user-only missing information, prefer reason_needed and then clarify_needed or a mutate gap as appropriate."
             )
 
-        raw = session.call(
-            f"You resolved gap:{gap.hash} \"{gap.desc}\". What do you observe? Articulate any new gaps.{follow_on_guidance}"
-        )
+        raw = session.call(natural_step_prompt(gap=gap, extra_guidance=follow_on_guidance))
         print(f"  LLM: {raw[:150]}...")
         step_result, child_gaps = hooks.parse_step_output(
             raw,
@@ -1743,6 +1788,9 @@ def execute_iteration(
         rewrites = _sanitize_observation_child_gaps(gap, child_gaps)
         if rewrites:
             print(f"  → rewrote {rewrites} recursive observe gap(s) to reason_needed")
+        ownership_rewrites = _rewrite_reason_owned_child_gaps(child_gaps)
+        if ownership_rewrites:
+            print(f"  → rewrote {ownership_rewrites} reason-owned gap(s) to reason_needed")
         if child_gaps:
             compiler.emit(step_result)
         else:
@@ -2267,7 +2315,7 @@ def execute_iteration(
         elif resolved_data:
             session.inject(f"## Resolved data\n{resolved_data}")
 
-        raw = session.call(f"You resolved gap:{gap.hash} \"{gap.desc}\". What do you observe? Articulate any new gaps.")
+        raw = session.call(natural_step_prompt(gap=gap))
         print(f"  LLM: {raw[:150]}...")
         step_result, child_gaps = hooks.parse_step_output(
             raw,
@@ -2275,6 +2323,9 @@ def execute_iteration(
             content_refs=gap.content_refs,
             chain_id=entry.chain_id,
         )
+        ownership_rewrites = _rewrite_reason_owned_child_gaps(child_gaps)
+        if ownership_rewrites:
+            print(f"  → rewrote {ownership_rewrites} reason-owned gap(s) to reason_needed")
         compiler.record_execution(vocab, False)
         if child_gaps:
             compiler.emit(step_result)
@@ -2286,6 +2337,7 @@ def execute_iteration(
         reason_context = _render_reason_context(gap, trajectory=trajectory, hooks=hooks, registry=registry)
         if reason_context:
             session.inject(reason_context)
+        session.inject(render_reason_owned_vocab_surface())
         pre_reason_context = reason_context or (f"## Current Gap Resolved Content\n{resolved_data}" if resolved_data else "")
         pre_step_note = _generate_pre_step_note(
             gap=gap,

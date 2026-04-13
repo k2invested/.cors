@@ -9,6 +9,8 @@ from typing import Any
 from system.tool_registry import render_public_tool_registry
 from vocab_registry import CONFIGURABLE_VOCABS, FOUNDATIONAL_BRIDGES
 
+MAIN_AGENT_HIDDEN_BRIDGE_VOCABS = {"clarify_needed", "tool_needed", "vocab_reg_needed"}
+
 
 def render_admin_surface(skill: Any, *, cors_root: Path) -> str:
     data = skill.payload or {}
@@ -71,6 +73,7 @@ def render_system_control_surface(
     cors_root: Path,
     title: str = "## System Control Surface",
     sections: set[str] | None = None,
+    include_reason_owned_vocab: bool = False,
 ) -> str:
     selected = sections or {"entities", "workflows", "vocab"}
     lines = [title]
@@ -99,6 +102,8 @@ def render_system_control_surface(
             target = spec.target_ref or spec.target_kind or "internal"
             lines.append(f"  - {name} -> {target}")
         for name in sorted(FOUNDATIONAL_BRIDGES):
+            if not include_reason_owned_vocab and name in MAIN_AGENT_HIDDEN_BRIDGE_VOCABS:
+                continue
             lines.append(f"  - {name} -> bridge")
 
     if "tools" in selected:
@@ -106,3 +111,10 @@ def render_system_control_surface(
 
     return "\n".join(lines)
 
+
+def render_reason_owned_vocab_surface(title: str = "## Reason-Owned Vocab") -> str:
+    lines = [title]
+    for name in ("clarify_needed", "tool_needed", "vocab_reg_needed"):
+        spec = FOUNDATIONAL_BRIDGES[name]
+        lines.append(f"  - {name} -> bridge | {spec.desc}")
+    return "\n".join(lines)

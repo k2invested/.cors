@@ -575,6 +575,8 @@ P5_CASES = [
     ("render_identity_excludes_system_control_surface", lambda: "## System Control Surface" not in loop._render_identity(skill("admin"))),
     ("render_system_control_surface_has_available_workflows", lambda: "## Available Workflows" in control_surface_module.render_system_control_surface(registry(), cors_root=ROOT)),
     ("render_system_control_surface_has_vocab_map", lambda: "## Vocab Map" in control_surface_module.render_system_control_surface(registry(), cors_root=ROOT)),
+    ("render_system_control_surface_hides_reason_owned_vocab_from_main_agent", lambda: all(term not in control_surface_module.render_system_control_surface(registry(), cors_root=ROOT) for term in ("clarify_needed -> bridge", "tool_needed -> bridge", "vocab_reg_needed -> bridge"))),
+    ("render_reason_owned_vocab_surface_exposes_hidden_outcomes", lambda: all(term in control_surface_module.render_reason_owned_vocab_surface() for term in ("clarify_needed", "tool_needed", "vocab_reg_needed"))),
     ("render_identity_has_access_rules_when_present", lambda: "## Access Rules" in loop._render_identity(skill("admin")) if "access_rules" in skill_data("admin") else True),
     ("render_identity_pending_bootstrap_shows_initiation", lambda: "## Initiation" in render_bootstrap_identity()),
     ("reprogramme_skill_trigger_is_vocab", lambda: skill("reprogramme").trigger == "on_vocab:reprogramme_needed"),
@@ -586,6 +588,7 @@ P5_CASES = [
     ("pre_diff_prompt_says_tool_vocab_and_clarify_activate_through_reason", lambda: "`tool_needed`, `vocab_reg_needed`, and `clarify_needed` may only be activated through `reason_needed`." in loop.PRE_DIFF_SYSTEM),
     ("pre_diff_prompt_describes_reprogramme_as_profile_maintenance", lambda: "`reprogramme_needed` = gap requires writing semantic state into entity/admin-style profiles after that judgment is already warranted. It edits semantic profile state only, not delete/remove/unlink/move operations." in loop.PRE_DIFF_SYSTEM),
     ("pre_diff_prompt_describes_clarify_as_user_only_after_context", lambda: "`clarify_needed` = gap requires user-only information only after available semantic context is exhausted." in loop.PRE_DIFF_SYSTEM),
+    ("pre_diff_prompt_enforces_reason_before_reason_owned_actions", lambda: "Before any clarify_needed, tool_needed, or vocab_reg_needed action, you must first surface reason_needed." in loop.PRE_DIFF_SYSTEM),
     ("pre_diff_prompt_says_profile_defaults_to_entity_record", lambda: "when a user refers to a person's \"profile\", default to the semantic entity record in their .st file" in loop.PRE_DIFF_SYSTEM.lower()),
     ("pre_diff_prompt_enforces_hash_grounding_for_step_and_content", lambda: "always reference both step history and content through hashes or repo paths when they are available" in loop.PRE_DIFF_SYSTEM.lower()),
     ("pre_diff_prompt_says_step_hashes_enable_tree_traversal", lambda: "step hashes are causal memory and let you traverse the reasoning path through the semantic tree" in loop.PRE_DIFF_SYSTEM.lower()),
@@ -596,6 +599,8 @@ P5_CASES = [
     ("pre_diff_prompt_restores_scoring_section", lambda: "## Scoring" in loop.PRE_DIFF_SYSTEM and "`relevance` = how directly resolving the gap advances the user's goal." in loop.PRE_DIFF_SYSTEM),
     ("pre_diff_prompt_names_builtin_abstractions", lambda: "`hash_resolve_needed` = gap requires resolving hashes, packages, repo paths, or semantic records into context." in loop.PRE_DIFF_SYSTEM and "`hash_edit_needed` = gap requires ordinary in-place workspace file patch/rewrite, not delete/remove/unlink/move." in loop.PRE_DIFF_SYSTEM and "`bash_needed` = gap requires shell-level workspace mutation, including delete/remove/unlink/move/rename." in loop.PRE_DIFF_SYSTEM and "`pattern_needed` = gap requires deterministic workspace search." in loop.PRE_DIFF_SYSTEM),
     ("pre_diff_prompt_says_custom_surfaces_are_runtime_injected", lambda: "Other observe and mutate surfaces may be injected at runtime through vocab-to-tool or vocab-to-chain routing." in loop.PRE_DIFF_SYSTEM),
+    ("natural_step_prompt_keeps_reason_owned_gaps_under_reason", lambda: "Do not surface clarify_needed, tool_needed, or vocab_reg_needed directly from this prompt." in execution_engine_module.natural_step_prompt(user_message="Run architect workflow")),
+    ("natural_step_prompt_explicit_workflow_invocation_prefers_trigger_vocab", lambda: "emit that workflow's trigger vocab directly rather than clarify_needed" in execution_engine_module.natural_step_prompt(user_message="Run architect workflow")),
     ("reason_prompt_treats_tree_as_historical_progress", lambda: "Treat the injected trajectory and active chain as your historical progress while processing the user's message." in execution_engine_module._reason_controller_prompt(make_gap("reason about deletion", vocab="reason_needed"))),
     ("reason_prompt_forbids_same_surface_reresolve", lambda: "Do not emit another hash_resolve_needed for the same resolved hash, path, package, or content surface" in execution_engine_module._reason_controller_prompt(make_gap("reason about deletion", vocab="reason_needed"))),
     ("reason_prompt_keeps_bridge_activation_under_reason", lambda: "tool_needed, vocab_reg_needed, and clarify_needed may only be surfaced through reason_needed." in execution_engine_module._reason_controller_prompt(make_gap("reason about deletion", vocab="reason_needed"))),
@@ -5346,6 +5351,35 @@ def test_p12_extract_written_path_reads_first_json_artifact():
     output = json.dumps({"status": "ok", "artifacts": ["assets/clip1.mp4", "assets/clip2.mp4"]})
 
     assert loop._extract_written_path(output) == "assets/clip1.mp4"
+
+
+def test_p12_normalize_reason_owned_gaps_rewrites_initial_clarify_to_reason():
+    clarify = make_gap("Clarify the audit target.", vocab="clarify_needed")
+    tool = make_gap("Create the missing tool.", vocab="tool_needed")
+    vocab_gap = make_gap("Register a new vocab route.", vocab="vocab_reg_needed")
+
+    normalized, rewrites = loop._normalize_reason_owned_gaps([clarify, tool, vocab_gap])
+
+    assert rewrites == 3
+    assert [gap.vocab for gap in normalized] == ["reason_needed", "reason_needed", "reason_needed"]
+
+
+def test_p12_explicit_workflow_invocation_upgrades_reason_gap_to_architect_needed():
+    reg = registry()
+    gap = make_gap(
+        "Clarify the audit target for the architect workflow.",
+        vocab="reason_needed",
+    )
+
+    upgraded, activated = loop._upgrade_explicit_workflow_invocation_gaps(
+        user_message="Please run the architect workflow",
+        origin_gaps=[gap],
+        registry=reg,
+    )
+
+    assert activated == "architect"
+    assert upgraded[0].vocab == "architect_needed"
+    assert skill("architect").hash in upgraded[0].content_refs
 
 
 def test_p12_email_needed_executes_tool_and_post_observes_written_artifact():

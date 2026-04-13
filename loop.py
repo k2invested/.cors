@@ -46,7 +46,13 @@ from compile import (
 from skills.loader import load_all, SkillRegistry, Skill
 import manifest_engine as me
 import action_foundations as action_foundations_module
-from execution_engine import ExecutionConfig, ExecutionHooks, execute_iteration
+from execution_engine import (
+    ExecutionConfig,
+    ExecutionHooks,
+    REASON_OWNED_VOCABS,
+    execute_iteration,
+    natural_step_prompt,
+)
 from tools import st_builder as st_builder_module
 from system.chain_registry import public_chain_ref_map
 from system.control_surface import render_admin_surface, render_system_control_surface
@@ -1322,6 +1328,10 @@ Core bridge abstractions:
 - `await_needed` = gap requires keeping background work synchronized with the parent chain.
 - `clarify_needed` = gap requires user-only information only after available semantic context is exhausted.
 
+Main-agent enforcement:
+- Before any clarify_needed, tool_needed, or vocab_reg_needed action, you must first surface reason_needed.
+- In general step emission, treat clarify_needed, tool_needed, and vocab_reg_needed as unavailable direct outputs. They are reason-owned outcomes, not first-order choices.
+
 Built-in observe and mutate abstractions:
 - `hash_resolve_needed` = gap requires resolving hashes, packages, repo paths, or semantic records into context.
 - `pattern_needed` = gap requires deterministic workspace search.
@@ -1465,8 +1475,9 @@ def _upgrade_identity_linkage_clarify_gaps(
 ) -> list[Gap]:
     """Upgrade premature clarify gaps into identity resolution when possible.
 
-    First-step runs before identity injection, so it can surface clarify_needed
-    simply because it has not yet traversed the current user's identity file.
+    First-step still runs before any gap execution, so it can surface
+    clarify_needed simply because it has not yet traversed the current user's
+    identity file deeply enough.
     If the ambiguity is likely reducible by that identity context, resolve the
     identity hash first instead of asking the user.
     """
@@ -1492,6 +1503,68 @@ def _upgrade_identity_linkage_clarify_gaps(
             continue
         upgraded.append(gap)
     return upgraded
+
+
+def _trigger_vocab_for_skill(skill: Skill | None) -> str | None:
+    if skill is None:
+        return None
+    trigger = str(getattr(skill, "trigger", "") or "").strip()
+    if trigger.startswith("on_vocab:"):
+        vocab = trigger.split(":", 1)[1].strip()
+        return vocab or None
+    return None
+
+
+def _normalize_reason_owned_gaps(origin_gaps: list[Gap]) -> tuple[list[Gap], int]:
+    rewrites = 0
+    normalized: list[Gap] = []
+    for gap in origin_gaps:
+        if gap.vocab in REASON_OWNED_VOCABS:
+            gap.vocab = "reason_needed"
+            gap.vocab_score = 0.8
+            rewrites += 1
+        normalized.append(gap)
+    return normalized, rewrites
+
+
+def _upgrade_explicit_workflow_invocation_gaps(
+    *,
+    user_message: str,
+    origin_gaps: list[Gap],
+    registry: SkillRegistry,
+) -> tuple[list[Gap], str | None]:
+    lowered = str(user_message).lower()
+    if not any(token in lowered for token in ("workflow", "flow")):
+        return origin_gaps, None
+    if not any(token in lowered for token in ("run", "start", "activate")):
+        return origin_gaps, None
+
+    for skill in registry.by_name.values():
+        if getattr(skill, "artifact_kind", "") != "action":
+            continue
+        skill_name = str(skill.name or "").strip().lower()
+        if not skill_name or skill_name not in lowered:
+            continue
+        trigger_vocab = _trigger_vocab_for_skill(skill)
+        if not trigger_vocab:
+            continue
+        if any(g.vocab == trigger_vocab for g in origin_gaps):
+            return origin_gaps, None
+        upgraded: list[Gap] = []
+        changed = False
+        for gap in origin_gaps:
+            if gap.vocab == "reason_needed":
+                gap_lower = gap.desc.lower()
+                if skill_name in gap_lower and any(token in gap_lower for token in ("clarify", "workflow", "flow", "audit target")):
+                    gap.desc = f"Activate the {skill.name} workflow as explicitly requested."
+                    gap.vocab = trigger_vocab
+                    gap.vocab_score = 0.8
+                    gap.content_refs = _canonicalize_content_refs([skill.hash, *gap.content_refs])
+                    changed = True
+            upgraded.append(gap)
+        if changed:
+            return upgraded, skill.name
+    return origin_gaps, None
 
 
 # ── Turn loop ────────────────────────────────────────────────────────────
@@ -1587,8 +1660,7 @@ def run_turn(
 ## HEAD: commit:{head}
 {head_tree}
 
-## Current User Message
-"{user_message}"
+{natural_step_prompt(user_message=user_message)}
 """
 
     print("\n── FIRST STEP (origin) ──")
@@ -1605,6 +1677,20 @@ def run_turn(
     for g in origin_gaps:
         tag = f" [{g.vocab}]" if g.vocab else ""
         print(f"    gap:{g.hash} \"{g.desc}\"{tag}")
+
+    origin_gaps, reason_owned_rewrites = _normalize_reason_owned_gaps(origin_gaps)
+    if reason_owned_rewrites:
+        origin_step.gaps = origin_gaps
+        print(f"  → rewrote {reason_owned_rewrites} reason-owned initial gap(s) to reason_needed")
+
+    origin_gaps, activated_workflow = _upgrade_explicit_workflow_invocation_gaps(
+        user_message=user_message,
+        origin_gaps=origin_gaps,
+        registry=registry,
+    )
+    if activated_workflow:
+        origin_step.gaps = origin_gaps
+        print(f"  → upgraded explicit workflow invocation to {activated_workflow}")
 
     # ── 3. IDENTITY-AWARE GAP REWRITE ────────────────────────────────
     #
